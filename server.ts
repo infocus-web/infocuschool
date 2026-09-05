@@ -21,7 +21,7 @@ function getResendClient(): Resend | null {
 }
 
 // 1. Estado de la integración de Resend
-app.get('/api/resend/status', (req, res) => {
+app.get(['/api/resend/status', '/resend/status'], (req, res) => {
   const apiKey = process.env.RESEND_API_KEY;
   const isConfigured = Boolean(apiKey && apiKey.trim().length > 0);
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
@@ -35,7 +35,7 @@ app.get('/api/resend/status', (req, res) => {
 });
 
 // 2. Endpoint para enviar las fotos en HD a la familia automáticamente
-app.post('/api/enviar-fotos-hd', async (req, res) => {
+app.post(['/api/enviar-fotos-hd', '/enviar-fotos-hd'], async (req, res) => {
   try {
     const {
       to,
@@ -205,7 +205,7 @@ app.post('/api/enviar-fotos-hd', async (req, res) => {
 });
 
 // 3. Endpoint para probar el envío de un correo desde el panel de administración
-app.post('/api/resend/test', async (req, res) => {
+app.post(['/api/resend/test', '/resend/test'], async (req, res) => {
   try {
     const { to } = req.body;
     if (!to || !to.includes('@')) {
