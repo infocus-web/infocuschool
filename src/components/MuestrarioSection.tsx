@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sparkles, Check, Image as ImageIcon, Frame, Bookmark, CreditCard, ChevronRight } from 'lucide-react';
+import { Sparkles, Check, Image as ImageIcon, Frame, Bookmark, CreditCard, ChevronRight, ChevronDown } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 
 interface MuestrarioSectionProps {
@@ -149,11 +149,17 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
                   Disponible en todos los colegios asociados
                 </span>
                 <button
-                  onClick={() => onSelectKit('kit-clasico')}
-                  className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  id="btn-ver-kits-precios"
+                  onClick={() => {
+                    const el = document.getElementById('seccion-kits-precios') || document.getElementById('familias');
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth' });
+                    }
+                  }}
+                  className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-98"
                 >
                   <span>Ver Kits y Precios</span>
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronDown className="w-4 h-4" />
                 </button>
               </div>
             </div>
@@ -161,7 +167,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
         </div>
 
         {/* Kits Comparison Grid */}
-        <div id="familias" className="mt-20">
+        <div id="seccion-kits-precios" className="mt-20 scroll-mt-24">
           <div className="text-center max-w-3xl mx-auto mb-12">
             <span className="text-xs font-bold text-emerald-700 uppercase tracking-widest px-3 py-1 bg-emerald-50 rounded-full border border-emerald-200 inline-block mb-3">
               Modelo Comercial · Elección Voluntaria
