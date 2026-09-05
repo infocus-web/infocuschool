@@ -93,6 +93,11 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     </h3>
                     <p className="text-xs text-slate-600">
                       Alumno/a: <strong className="text-slate-900">{familiaActiva.alumnoNombre} {familiaActiva.alumnoApellido}</strong> · {familiaActiva.grado} {familiaActiva.division} ({familiaActiva.turno})
+                      {familiaActiva.hermanos && familiaActiva.hermanos.length > 0 && (
+                        <span className="block mt-0.5 text-amber-900 font-semibold text-[11px]">
+                          + {familiaActiva.hermanos.length} hermano/s: {familiaActiva.hermanos.map((h) => `${h.alumnoNombre} (${h.grado} ${h.division})`).join(', ')}
+                        </span>
+                      )}
                     </p>
                   </div>
                   <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
@@ -101,7 +106,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       onClick={() => onOpenFamilias(familiaActiva.colegioId)}
                       className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-xs shadow-amber-400/30 flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                     >
-                      <span>Ver fotos de {familiaActiva.alumnoNombre}</span>
+                      <span>Ver fotos de la familia</span>
                       <ArrowRight className="w-4 h-4" />
                     </button>
                     {onOpenInscripcion && (
@@ -136,10 +141,10 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       Primer Paso para Familias
                     </span>
                     <h3 className="text-base sm:text-lg font-bold text-slate-900">
-                      ¿Sos padre o madre de un alumno?
+                      ¿Tenés hijos en la institución?
                     </h3>
                     <p className="text-xs text-slate-600">
-                      Inscribite con tu número de WhatsApp y los datos de tu hijo/a (grado, turno y división) para acceder a las fotos.
+                      ¡Un solo registro para toda tu familia! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>Código Familiar único</strong>.
                     </p>
                   </div>
                   {onOpenInscripcion && (
@@ -150,14 +155,14 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                         className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-sm rounded-xl transition-all shadow-md shadow-amber-400/40 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                       >
                         <UserPlus className="w-4 h-4" />
-                        <span>Inscribirme / Crear usuario</span>
+                        <span>Anotarme con mis hijos</span>
                         <ArrowRight className="w-4 h-4" />
                       </button>
                       <button
                         onClick={onOpenInscripcion}
                         className="text-[11px] text-center text-amber-800 hover:text-amber-900 underline font-medium cursor-pointer"
                       >
-                        ¿Ya te inscribiste? Ingresar aquí
+                        ¿Ya te inscribiste? Consultar código
                       </button>
                     </div>
                   )}
@@ -175,7 +180,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Ingresá tu código de curso o sala (ej: SALA3TM)..."
+                    placeholder="Ingresá tu Código Familiar (ej: FAM-4821) o código de curso..."
                     className="w-full pl-11 pr-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent border-0 focus:outline-hidden focus:ring-0"
                   />
                   {searchTerm && (

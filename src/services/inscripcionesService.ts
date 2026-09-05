@@ -1,12 +1,24 @@
 export type EstadoInscripcion = 'pendiente' | 'aceptado' | 'rechazado';
 
+export interface AlumnoHermano {
+  id: string;
+  alumnoNombre: string;
+  alumnoApellido: string;
+  grado: string;
+  division: string;
+  turno: string;
+  colegioId?: string;
+  colegioNombre?: string;
+  codigoCurso?: string;
+}
+
 export interface InscripcionFamilia {
   id: string;
   padreNombre: string;       // Nombre y apellido del padre o madre / tutor
   telefonoWhatsApp: string;  // Número de teléfono de WhatsApp
   email: string;             // Correo electrónico
-  alumnoNombre: string;      // Nombre del alumno
-  alumnoApellido: string;    // Apellido del alumno
+  alumnoNombre: string;      // Nombre del primer alumno/hijo
+  alumnoApellido: string;    // Apellido del primer alumno/hijo
   turno: string;             // Turno (Mañana, Tarde, Jornada Completa)
   grado: string;             // Grado o Sala
   division: string;          // División
@@ -14,7 +26,10 @@ export interface InscripcionFamilia {
   colegioNombre: string;
   fechaInscripcion: string;
   estado: EstadoInscripcion;
-  codigoAsignado?: string;   // Código de curso asignado (ej: SALA3TM)
+  codigoAsignado?: string;   // Código de curso asignado o código de acceso
+  codigoFamiliar: string;    // Código Familiar único para todos los hermanos (ej: FAM-4821)
+  solicitaFotoHermanos?: boolean; // Si los padres desean toma conjunta de hermanos
+  hermanos?: AlumnoHermano[]; // Lista de hermanos adicionales
   fechaAprobacion?: string;
   notificacionWhatsAppEnviada?: boolean;
   notificacionEmailEnviada?: boolean;
@@ -22,6 +37,16 @@ export interface InscripcionFamilia {
 
 const STORAGE_KEY_INSCRIPCIONES = 'infocus_familias_inscriptas_v1';
 const STORAGE_KEY_ACTIVO = 'infocus_familia_activa_v1';
+
+export function generarCodigoFamiliarUnico(existentes: InscripcionFamilia[] = []): string {
+  const usados = new Set(existentes.map((f) => (f.codigoFamiliar || '').toUpperCase()));
+  let codigo = '';
+  do {
+    const num = Math.floor(1000 + Math.random() * 9000);
+    codigo = `FAM-${num}`;
+  } while (usados.has(codigo));
+  return codigo;
+}
 
 // Registro inicial de inscripciones (vacío por defecto para que las familias no vean datos ficticios)
 const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [];
@@ -74,10 +99,13 @@ export function obtenerInscripciones(): InscripcionFamilia[] {
     if (cleaned.length !== parsed.length) {
       localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(cleaned));
     }
-    return cleaned.map((item) => ({
+    return cleaned.map((item, idx) => ({
       ...item,
       estado: item.estado || 'pendiente',
-      codigoAsignado: item.codigoAsignado || determinarCodigoParaInscripcion(item)
+      codigoFamiliar: item.codigoFamiliar || `FAM-${String(1000 + idx).slice(-4)}`,
+      codigoAsignado: item.codigoAsignado || item.codigoFamiliar || determinarCodigoParaInscripcion(item),
+      hermanos: item.hermanos || [],
+      solicitaFotoHermanos: item.solicitaFotoHermanos ?? Boolean(item.hermanos && item.hermanos.length > 0)
     }));
   } catch (err) {
     console.error('Error al leer inscripciones:', err);
@@ -86,13 +114,16 @@ export function obtenerInscripciones(): InscripcionFamilia[] {
 }
 
 export function guardarInscripcion(
-  datos: Omit<InscripcionFamilia, 'id' | 'fechaInscripcion' | 'estado'>
+  datos: Omit<InscripcionFamilia, 'id' | 'fechaInscripcion' | 'estado' | 'codigoFamiliar'> & {
+    codigoFamiliar?: string;
+  }
 ): InscripcionFamilia {
   const lista = obtenerInscripciones();
   const idNuevo = `INS-2026-${String(lista.length + 1).padStart(3, '0')}`;
   const now = new Date();
   const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
+  const codigoFamiliar = (datos.codigoFamiliar || generarCodigoFamiliarUnico(lista)).trim().toUpperCase();
   const codigoSugerido = determinarCodigoParaInscripcion(datos);
 
   const nueva: InscripcionFamilia = {
@@ -100,7 +131,10 @@ export function guardarInscripcion(
     id: idNuevo,
     fechaInscripcion: fechaStr,
     estado: 'pendiente',
-    codigoAsignado: codigoSugerido,
+    codigoFamiliar,
+    codigoAsignado: codigoFamiliar, // El código de acceso principal ahora es el Código Familiar único
+    hermanos: datos.hermanos || [],
+    solicitaFotoHermanos: datos.solicitaFotoHermanos ?? Boolean(datos.hermanos && datos.hermanos.length > 0),
     notificacionWhatsAppEnviada: false,
     notificacionEmailEnviada: false
   };
@@ -134,11 +168,17 @@ export function aprobarInscripcion(
   const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const item = lista[index];
-  const codigoFinal = (codigoPersonalizado || item.codigoAsignado || determinarCodigoParaInscripcion(item)).trim().toUpperCase();
+  const codigoFinal = (
+    codigoPersonalizado ||
+    item.codigoFamiliar ||
+    item.codigoAsignado ||
+    generarCodigoFamiliarUnico(lista)
+  ).trim().toUpperCase();
 
   const familiaActualizada: InscripcionFamilia = {
     ...item,
     estado: 'aceptado',
+    codigoFamiliar: item.codigoFamiliar || codigoFinal,
     codigoAsignado: codigoFinal,
     fechaAprobacion: fechaStr,
     notificacionWhatsAppEnviada: true,
@@ -188,14 +228,25 @@ export function rechazarInscripcion(id: string): InscripcionFamilia | null {
 }
 
 /**
- * Formats official WhatsApp approval text
+ * Formats official WhatsApp approval text with single family code and siblings
  */
 export function generarMensajeWhatsAppAprobacion(familia: InscripcionFamilia, codigo: string): string {
-  return `¡Hola ${familia.padreNombre}! Tu inscripción en el portal de fotos escolares para tu hijo/a ${familia.alumnoNombre} ${familia.alumnoApellido} (${familia.grado} "${familia.division}", Turno ${familia.turno} - ${familia.colegioNombre}) ha sido APROBADA con éxito por el equipo fotográfico.\n\n🔑 Tu Código de Curso para acceder a ver las fotos es: *${codigo}*\n\nCon este código podrás ingresar al portal, ver la muestra con marca de agua y seleccionar las fotos individuales y grupales para tu kit.\n\nAccedé aquí: https://retratoescolar.com.ar`;
+  const hijosNombres = [
+    `${familia.alumnoNombre} (${familia.grado} ${familia.division} - Turno ${familia.turno})`,
+    ...(familia.hermanos || []).map(
+      (h) => `${h.alumnoNombre} (${h.grado} ${h.division} - Turno ${h.turno})`
+    )
+  ].join(', ');
+
+  const fotoHermanosNota = familia.solicitaFotoHermanos
+    ? `\n📸 *Foto de hermanos:* Incluida en la sesión fotográfica.`
+    : '';
+
+  return `¡Hola ${familia.padreNombre}! Tu inscripción familiar en el portal de fotos escolares para *${hijosNombres}* (${familia.colegioNombre}) ha sido APROBADA con éxito por el equipo fotográfico.\n\n🔑 Tu *CÓDIGO FAMILIAR ÚNICO* es: *${codigo}*${fotoHermanosNota}\n\nCon este único código podrás ingresar al portal, ver las galerías protegidas de todos tus hijos en un solo lugar y armar tu pedido o combos con un solo pago.\n\nAccedé directamente aquí: https://retratoescolar.com.ar`;
 }
 
 /**
- * Builds WhatsApp link to send the access code to the parent
+ * Builds WhatsApp link to send the family access code to the parent
  */
 export function generarEnlaceWhatsAppAprobacion(familia: InscripcionFamilia, codigo: string): string {
   const cleanPhone = familia.telefonoWhatsApp.replace(/[^\d]/g, '');
@@ -204,14 +255,21 @@ export function generarEnlaceWhatsAppAprobacion(familia: InscripcionFamilia, cod
 }
 
 /**
- * Prepara el contenido y asunto formal del correo de aprobación con el código asignado
+ * Prepara el contenido y asunto formal del correo de aprobación con el código familiar asignado
  */
 export function prepararEmailAprobacion(familia: InscripcionFamilia, codigo: string) {
   const now = new Date();
   const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-  const asunto = `Retrato Escolar: Código de Acceso para las fotos de ${familia.alumnoNombre} (${codigo})`;
-  const contenido = `Estimado/a ${familia.padreNombre},\n\nLe confirmamos que su solicitud de acceso para las fotografías escolares del ciclo 2026 de ${familia.alumnoNombre} ${familia.alumnoApellido} (${familia.grado} "${familia.division}", Turno ${familia.turno} - ${familia.colegioNombre}) ha sido verificada y aceptada por la coordinación fotográfica.\n\n=========================================\nCÓDIGO DE CURSO ASIGNADO: ${codigo}\n=========================================\n\nPasos a seguir:\n1. Ingrese a la plataforma retratoescolar.com.ar.\n2. Ingrese su código de curso "${codigo}".\n3. Seleccione a ${familia.alumnoNombre} de la nómina y elija sus tomas favoritas (individual, grupal y con docente).\n\nPara consultas adicionales o asistencia, nuestro equipo está a su disposición.\n\nAtentamente,\nEquipo de Fotografía Escolar · Retrato Escolar (retratoescolar.com.ar)`;
+  const listaHijos = [
+    `• ${familia.alumnoNombre} ${familia.alumnoApellido} (${familia.grado} "${familia.division}", Turno ${familia.turno})`,
+    ...(familia.hermanos || []).map(
+      (h) => `• ${h.alumnoNombre} ${h.alumnoApellido} (${h.grado} "${h.division}", Turno ${h.turno})`
+    )
+  ].join('\n');
+
+  const asunto = `Retrato Escolar: Tu Código Familiar Único (${codigo}) - ${familia.colegioNombre}`;
+  const contenido = `Estimado/a ${familia.padreNombre},\n\nLe confirmamos que su registro familiar para el ciclo escolar 2026 en ${familia.colegioNombre} ha sido validado con éxito.\n\nAlumnos vinculados a su cuenta familiar:\n${listaHijos}\n${familia.solicitaFotoHermanos ? '✓ Foto de hermanos juntos: Solicitada y programada\n' : ''}\n=========================================\nSU CÓDIGO FAMILIAR ÚNICO: ${codigo}\n=========================================\n\nCon este único código de familia podrá:\n1. Ingresar a retratoescolar.com.ar\n2. Ver las galerías individuales y grupales de todos sus hijos sin tener que usar códigos diferentes.\n3. Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago.\n\nPara cualquier consulta, nuestro equipo fotográfico está a su entera disposición.\n\nAtentamente,\nEquipo de Fotografía Escolar · Retrato Escolar (retratoescolar.com.ar)`;
 
   return {
     asunto,
@@ -253,16 +311,32 @@ export function cerrarSesionFamilia(): void {
   guardarFamiliaActiva(null);
 }
 
-export function buscarFamiliaPorContacto(query: string): InscripcionFamilia | undefined {
-  if (!query || query.trim().length < 3) return undefined;
-  const q = query.trim().toLowerCase().replace(/[\s-+()]/g, '');
+export function buscarFamiliaPorCodigoOFamilia(query: string): InscripcionFamilia | undefined {
+  if (!query || query.trim().length < 2) return undefined;
+  const q = query.trim().toUpperCase();
+  const qClean = q.replace(/[\s-+()]/g, '');
   const lista = obtenerInscripciones();
+
   return lista.find((item) => {
-    const emailMatch = item.email.toLowerCase().includes(query.trim().toLowerCase());
+    // 1. Coincidencia exacta con Código Familiar (ej: FAM-4821)
+    if (item.codigoFamiliar && item.codigoFamiliar.toUpperCase() === q) return true;
+    // 2. Coincidencia con código asignado anterior
+    if (item.codigoAsignado && item.codigoAsignado.toUpperCase() === q) return true;
+    // 3. Email
+    if (item.email.trim().toLowerCase() === query.trim().toLowerCase()) return true;
+    // 4. Celular limpio
     const telClean = item.telefonoWhatsApp.replace(/[\s-+()]/g, '');
-    const telMatch = telClean.includes(q) || q.includes(telClean);
-    const alumnoMatch = `${item.alumnoNombre} ${item.alumnoApellido}`.toLowerCase().includes(query.trim().toLowerCase());
-    const padreMatch = item.padreNombre.toLowerCase().includes(query.trim().toLowerCase());
-    return emailMatch || telMatch || alumnoMatch || padreMatch;
+    if (telClean && (telClean.includes(qClean) || qClean.includes(telClean)) && qClean.length >= 6) return true;
+    // 5. Nombre de alumno principal o hermanos
+    const nombreCompleto = `${item.alumnoNombre} ${item.alumnoApellido}`.toUpperCase();
+    if (nombreCompleto.includes(q)) return true;
+    if (item.hermanos && item.hermanos.some((h) => `${h.alumnoNombre} ${h.alumnoApellido}`.toUpperCase().includes(q))) {
+      return true;
+    }
+    return false;
   });
+}
+
+export function buscarFamiliaPorContacto(query: string): InscripcionFamilia | undefined {
+  return buscarFamiliaPorCodigoOFamilia(query);
 }

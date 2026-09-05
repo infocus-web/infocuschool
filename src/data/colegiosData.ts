@@ -166,9 +166,9 @@ export const PREGUNTAS_FRECUENTES = [
       'Podés abonar 100% online y seguro mediante Mercado Pago (tarjeta de débito, crédito o saldo en cuenta) o por Transferencia Bancaria directa con comprobante. No se maneja efectivo ni sobres en la escuela.',
   },
   {
-    pregunta: '¿Qué pasa si tengo más de un hijo en el colegio?',
+    pregunta: '¿Qué pasa si tengo más de un hijo en el colegio? ¿Tengo que hacer todo doble?',
     respuesta:
-      'Podés ingresar con el código o sala correspondiente a cada uno de tus hijos para ver la galería de su curso, donde encontrarás las tomas del grupo y podrás elegir las fotos de cada uno por separado.',
+      '¡No, para nada! Ahora funciona con 1 solo Código Familiar para todos tus hijos. Al anotarte en la web, cargás a tu primer hijo/a y hacés clic en "Agregar Hermano/a" para sumar a los demás (sin importar si van a distintas salas, turnos o grados). El sistema te entrega un único código familiar (ej: FAM-4821) que te llega por WhatsApp y Email. Al entrar a la web con ese código podés ver las fotos de todos tus hijos en la misma pantalla y alternar entre ellos con un solo toque. Además, podés pedir la toma de foto de hermanos juntos.',
   },
   {
     pregunta: '¿Es obligatorio comprar las fotos?',

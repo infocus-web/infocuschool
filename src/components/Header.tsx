@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Camera, Search, Menu, X, PhoneCall, Lock, Sparkles, UserPlus } from 'lucide-react';
 import { useWhatsAppConfig } from '../services/configuracionService';
+import RetratoEscolarLogo from './RetratoEscolarLogo';
 
 interface HeaderProps {
   onOpenFamilias: (colegioId?: string) => void;
@@ -62,28 +63,14 @@ export default function Header({
       {/* Main Navbar */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-18">
-          {/* Brand Logo */}
+          {/* Brand Logo - Official Retrato Escolar Branding */}
           <div
             id="brand-logo"
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="flex items-center gap-3 cursor-pointer group"
+            className="flex items-center cursor-pointer group py-1"
+            title="Retrato Escolar - retratoescolar.com.ar"
           >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
-              <Camera className="w-5 h-5 stroke-[2.2]" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xl font-extrabold tracking-tight text-slate-900 font-['Outfit']">
-                  Retrato<span className="text-amber-600">Escolar</span>
-                </span>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
-                  .com.ar
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 -mt-0.5 font-medium tracking-wide">
-                retratoescolar.com.ar · Portal de fotos escolares
-              </p>
-            </div>
+            <RetratoEscolarLogo variant="full" size="md" />
           </div>
 
           {/* Desktop Nav Links */}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, FormEvent } from 'react';
+import { ViewfinderFocusIcon } from './RetratoEscolarLogo';
 import {
   X,
   Search,
@@ -36,13 +37,20 @@ import {
   Minus,
   MessageCircle,
   ChevronDown,
+  Users,
 } from 'lucide-react';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
-import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
+import {
+  obtenerFamiliaActiva,
+  cerrarSesionFamilia,
+  InscripcionFamilia,
+  buscarFamiliaPorCodigoOFamilia,
+  guardarFamiliaActiva
+} from '../services/inscripcionesService';
 import { obtenerFotosParaGaleria } from '../services/fotosSubidasService';
 import WatermarkOverlay from './WatermarkOverlay';
 import { Colegio, KitProducto, Foto } from '../types';
@@ -149,6 +157,28 @@ export default function PortalFamiliasModal({
   const [numeroPedido, setNumeroPedido] = useState('');
   const [pedidoGenerado, setPedidoGenerado] = useState<PedidoEscolarCompleto | null>(null);
 
+  // Sibling selector inside Family Portal (1 code for all children)
+  const [hijoSeleccionadoId, setHijoSeleccionadoId] = useState<string>('principal');
+
+  const seleccionarHijo = (id: string) => {
+    setHijoSeleccionadoId(id);
+    if (!familiaActiva) return;
+    if (id === 'principal') {
+      setNombreAlumno(`${familiaActiva.alumnoNombre} ${familiaActiva.alumnoApellido}`);
+      if (familiaActiva.grado) setGrado(familiaActiva.grado);
+      if (familiaActiva.division) setDivision(familiaActiva.division);
+      if (familiaActiva.turno) setTurno(familiaActiva.turno);
+    } else {
+      const h = familiaActiva.hermanos?.find((item) => item.id === id);
+      if (h) {
+        setNombreAlumno(`${h.alumnoNombre} ${h.alumnoApellido}`);
+        if (h.grado) setGrado(h.grado);
+        if (h.division) setDivision(h.division);
+        if (h.turno) setTurno(h.turno);
+      }
+    }
+  };
+
   // Sync preselected options and active family registration
   useEffect(() => {
     if (isOpen) {
@@ -162,6 +192,10 @@ export default function PortalFamiliasModal({
         if (fam.turno) setTurno(fam.turno);
         if (fam.grado) setGrado(fam.grado);
         if (fam.division) setDivision(fam.division);
+        if (fam.codigoFamiliar) {
+          setCodigoAcceso(fam.codigoFamiliar);
+          setCodigoValidadoMsg(`Código Familiar activo: ${fam.codigoFamiliar}`);
+        }
         if (fam.colegioId) {
           const col = colegios.find((c) => c.id === fam.colegioId);
           if (col) setSelectedColegio(col);
@@ -205,6 +239,37 @@ export default function PortalFamiliasModal({
       setCodigoErrorMsg('Por favor ingresá un código para validar.');
       setCodigoValidadoMsg(null);
       return false;
+    }
+
+    // 0. Search for Family Code (e.g. FAM-4821 or search by parent/code)
+    const famFound = buscarFamiliaPorCodigoOFamilia(clean);
+    if (famFound) {
+      guardarFamiliaActiva(famFound);
+      setFamiliaActiva(famFound);
+      setHijoSeleccionadoId('principal');
+
+      setTutorNombre(famFound.padreNombre);
+      setTutorWhatsapp(famFound.telefonoWhatsApp);
+      setTutorEmail(famFound.email);
+      setNombreAlumno(`${famFound.alumnoNombre} ${famFound.alumnoApellido}`);
+      if (famFound.turno) setTurno(famFound.turno);
+      if (famFound.grado) setGrado(famFound.grado);
+      if (famFound.division) setDivision(famFound.division);
+
+      const colMatch = colegios.find((c) => c.id === famFound.colegioId) || colegios[0];
+      if (colMatch) setSelectedColegio(colMatch);
+
+      const totalHijos = 1 + (famFound.hermanos?.length || 0);
+      const nombresHijos = [
+        famFound.alumnoNombre,
+        ...(famFound.hermanos?.map((h) => h.alumnoNombre) || [])
+      ].join(', ');
+
+      setCodigoValidadoMsg(
+        `¡Código Familiar verificado (${famFound.codigoFamiliar})! Familia ${famFound.padreNombre} · ${totalHijos} hijo${totalHijos > 1 ? 's' : ''} (${nombresHijos})`
+      );
+      setCodigoErrorMsg(null);
+      return true;
     }
 
     // 1. Search for course section by nemotecnico or PIN
@@ -373,20 +438,18 @@ export default function PortalFamiliasModal({
         {/* Top Modal Bar */}
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-400 text-slate-950 flex items-center justify-center font-bold">
-              <School className="w-4 h-4" />
-            </div>
+            <ViewfinderFocusIcon className="w-8 h-8 shrink-0" theme="dark" />
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-base font-bold font-['Outfit'] tracking-wide">
-                  Retrato Escolar
+                <span className="text-base font-extrabold font-['Outfit'] tracking-tight">
+                  Retrato<span className="text-amber-400">Escolar</span>
                 </span>
                 <span className="text-[10px] bg-slate-800 text-amber-400 font-bold px-2 py-0.5 rounded border border-slate-700">
                   Portal de Familias
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                {selectedColegio ? `${selectedColegio.nombre} · Ciclo 2026` : 'Portal de Familias · Ciclo Escolar 2026'}
+                {selectedColegio ? `${selectedColegio.nombre} · Ciclo 2026` : 'retratoescolar.com.ar · Ciclo Escolar 2026'}
               </p>
             </div>
           </div>

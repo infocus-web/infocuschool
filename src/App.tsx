@@ -73,7 +73,8 @@ export default function App() {
 
         {/* How it Works / 5-Step Process */}
         <ProcesoSection
-          onOpenFamilias={() => handleOpenFamilias('col-5')}
+          onOpenFamilias={() => handleOpenFamilias()}
+          onOpenInscripcion={handleOpenInscripcion}
         />
 
         {/* Physical Products, Prints, Watermark Showcase & Pricing Kits */}

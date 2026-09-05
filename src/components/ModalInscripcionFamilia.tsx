@@ -20,10 +20,14 @@ import {
   Copy,
   Check,
   Send,
-  UserCheck
+  UserCheck,
+  Users,
+  Trash2,
+  Plus
 } from 'lucide-react';
 import {
   InscripcionFamilia,
+  AlumnoHermano,
   guardarInscripcion,
   buscarFamiliaPorContacto,
   guardarFamiliaActiva,
@@ -64,6 +68,47 @@ export default function ModalInscripcionFamilia({
   const { colegios } = useColegiosLista();
   const { config: configWhatsApp } = useWhatsAppConfig();
   const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-divino-pastor-2026');
+
+  // Sibling states (1 family code for all children)
+  const [hermanos, setHermanos] = useState<
+    Array<{
+      id: string;
+      alumnoNombre: string;
+      alumnoApellido: string;
+      turno: string;
+      grado: string;
+      division: string;
+    }>
+  >([]);
+  const [solicitaFotoHermanos, setSolicitaFotoHermanos] = useState(true);
+
+  const handleAgregarHermano = () => {
+    setHermanos((prev) => [
+      ...prev,
+      {
+        id: `hermano-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        alumnoNombre: '',
+        alumnoApellido: alumnoApellido.trim() || '',
+        turno: turno || 'Mañana',
+        grado: 'Sala 4 años',
+        division: 'A'
+      }
+    ]);
+  };
+
+  const handleActualizarHermano = (
+    id: string,
+    campo: 'alumnoNombre' | 'alumnoApellido' | 'turno' | 'grado' | 'division',
+    valor: string
+  ) => {
+    setHermanos((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, [campo]: valor } : h))
+    );
+  };
+
+  const handleEliminarHermano = (id: string) => {
+    setHermanos((prev) => prev.filter((h) => h.id !== id));
+  };
 
   const selectedColegio = colegios.find((c) => c.id === colegioId) || colegios[0];
   const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
@@ -161,6 +206,19 @@ export default function ModalInscripcionFamilia({
       return;
     }
 
+    const hermanosValidados: AlumnoHermano[] = hermanos
+      .filter((h) => h.alumnoNombre.trim())
+      .map((h) => ({
+        id: h.id,
+        alumnoNombre: h.alumnoNombre.trim(),
+        alumnoApellido: h.alumnoApellido.trim() || alumnoApellido.trim(),
+        grado: h.grado,
+        division: h.division,
+        turno: h.turno,
+        colegioId: colegioSeleccionado.id,
+        colegioNombre: colegioSeleccionado.nombre
+      }));
+
     const nuevaFamilia = guardarInscripcion({
       padreNombre: padreNombre.trim(),
       telefonoWhatsApp: telefonoWhatsApp.trim(),
@@ -171,7 +229,9 @@ export default function ModalInscripcionFamilia({
       grado,
       division,
       colegioId: colegioSeleccionado.id,
-      colegioNombre: colegioSeleccionado.nombre
+      colegioNombre: colegioSeleccionado.nombre,
+      hermanos: hermanosValidados,
+      solicitaFotoHermanos: hermanosValidados.length > 0 ? solicitaFotoHermanos : false
     });
 
     setFamiliaCreada(nuevaFamilia);
@@ -182,8 +242,19 @@ export default function ModalInscripcionFamilia({
     const raw = codigoAProbar !== undefined ? codigoAProbar : codigoIngresado;
     const clean = raw.trim().toUpperCase();
     if (!clean) {
-      setCodigoError('Ingresá el código de curso provisto por la institución.');
+      setCodigoError('Ingresá el código familiar o código provisto por la institución.');
       setCodigoValidado(null);
+      return;
+    }
+
+    // 0. Search if it matches a family code (e.g. FAM-4821)
+    const famFound = buscarFamiliaPorContacto(clean);
+    if (famFound) {
+      setCodigoValidado({
+        seccionNombre: `Código Familiar: ${famFound.codigoFamiliar || clean} (${famFound.padreNombre})`,
+        codigoValido: famFound.codigoFamiliar || clean
+      });
+      setCodigoError(null);
       return;
     }
 
@@ -215,7 +286,7 @@ export default function ModalInscripcionFamilia({
 
   const handleAccederConCodigo = () => {
     if (!familiaCreada) return;
-    const cod = codigoValidado?.codigoValido || codigoIngresado.trim().toUpperCase();
+    const cod = codigoValidado?.codigoValido || familiaCreada.codigoFamiliar || codigoIngresado.trim().toUpperCase();
     onInscripcionExitosa(familiaCreada, cod);
   };
 
@@ -224,7 +295,7 @@ export default function ModalInscripcionFamilia({
     setLoginError(null);
 
     if (!loginQuery.trim()) {
-      setLoginError('Ingresá tu teléfono o correo para buscar tu usuario.');
+      setLoginError('Ingresá tu Código Familiar (ej: FAM-1234), teléfono o correo para ingresar.');
       return;
     }
 
@@ -232,9 +303,10 @@ export default function ModalInscripcionFamilia({
     if (encontrada) {
       guardarFamiliaActiva(encontrada);
       setFamiliaCreada(encontrada);
+      setCodigoIngresado(encontrada.codigoFamiliar || encontrada.codigoAsignado || '');
       setPaso('solicitar_codigo');
     } else {
-      setLoginError('No encontramos una inscripción con ese teléfono o correo. Verificá los datos o completá la pestaña "Inscribirme".');
+      setLoginError('No encontramos una inscripción con ese código, teléfono o correo. Verificá los datos o completá la pestaña "Inscribirme".');
     }
   };
 
@@ -381,19 +453,33 @@ export default function ModalInscripcionFamilia({
                 <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/20">
                   <CheckCircle2 className="w-6 h-6" />
                 </div>
-                <div>
+                <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                      Inscripción Registrada
+                      Inscripción Familiar Registrada
                     </span>
-                    <span className="text-xs text-slate-500">Listo para el siguiente paso</span>
+                    <span className="text-xs text-slate-500 font-medium">1 Código para toda la familia</span>
                   </div>
                   <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
-                    ¡Hola {tutorDisplay}! Registramos a {alumnoDisplay}
+                    ¡Hola {tutorDisplay}! Registramos a tu familia
                   </h3>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    {gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay} · {colegioDisplay}
-                  </p>
+                  <div className="text-xs text-slate-700 space-y-0.5">
+                    <p className="font-semibold text-slate-800">
+                      • {alumnoDisplay} ({gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay})
+                    </p>
+                    {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0 && (
+                      familiaCreada.hermanos.map((h, i) => (
+                        <p key={h.id || i} className="font-semibold text-slate-800">
+                          • {h.alumnoNombre} {h.alumnoApellido} ({h.grado} "{h.division}" · Turno {h.turno})
+                        </p>
+                      ))
+                    )}
+                    {familiaCreada?.solicitaFotoHermanos && (
+                      <span className="inline-block mt-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
+                        📸 Foto especial de hermanos juntos: Solicitada
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -407,15 +493,15 @@ export default function ModalInscripcionFamilia({
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                          Inscripción Confirmada
+                          Inscripción Aprobada
                         </span>
-                        <span className="text-xs text-emerald-800 font-semibold">Código Despachado</span>
+                        <span className="text-xs text-emerald-800 font-semibold">Código Familiar Habilitado</span>
                       </div>
                       <h4 className="text-lg font-black text-slate-900 font-['Outfit']">
-                        ¡Tu inscripción fue confirmada con éxito!
+                        ¡Tu Código Familiar ya está activo!
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Tu solicitud fue verificada y despachamos tu <strong>Código de Curso</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
+                        Tu solicitud fue verificada por el equipo fotográfico. Te despachamos tu <strong>Código Familiar Único</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
                       </p>
                     </div>
                   </div>
@@ -424,17 +510,20 @@ export default function ModalInscripcionFamilia({
                   <div className="p-4 bg-emerald-500/10 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
                     <div>
                       <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-900 block">
-                        Tu Código de Curso para ver las fotos:
+                        Tu Código Familiar Único para todos tus hijos:
                       </span>
                       <span className="text-2xl sm:text-3xl font-black font-mono tracking-widest text-emerald-950">
-                        {familiaCreada.codigoAsignado || 'SALA5B'}
+                        {familiaCreada.codigoFamiliar || familiaCreada.codigoAsignado || 'FAM-1001'}
+                      </span>
+                      <span className="text-[11px] text-emerald-800 font-medium block mt-0.5">
+                        Acceso unificado para todos tus hijos en {colegioDisplay}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 w-full sm:w-auto">
                       <button
                         type="button"
                         onClick={() => {
-                          const code = familiaCreada.codigoAsignado || 'SALA5B';
+                          const code = familiaCreada.codigoFamiliar || familiaCreada.codigoAsignado || 'FAM-1001';
                           navigator.clipboard.writeText(code);
                           setMensajeCopiado(true);
                           setTimeout(() => setMensajeCopiado(false), 2000);
@@ -447,7 +536,7 @@ export default function ModalInscripcionFamilia({
                       <button
                         type="button"
                         onClick={() => {
-                          const code = familiaCreada.codigoAsignado || 'SALA5B';
+                          const code = familiaCreada.codigoFamiliar || familiaCreada.codigoAsignado || 'FAM-1001';
                           onInscripcionExitosa(familiaCreada, code);
                         }}
                         className="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
@@ -471,19 +560,32 @@ export default function ModalInscripcionFamilia({
                         </span>
                         <span className="text-xs text-amber-900 font-semibold flex items-center gap-1">
                           <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                          Pendiente de entrega de código
+                          Pendiente de validación
                         </span>
                       </div>
                       <h4 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit']">
-                        ¡Recibimos tus datos correctamente!
+                        ¡Tu Código Familiar ha sido generado!
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Tu registro quedó completado. A la brevedad te enviaremos tu <strong>Código de Curso</strong> por WhatsApp y por Email para que puedas acceder de inmediato a la galería y pedidos de tu curso.
+                        Tu solicitud quedó registrada. A la brevedad te validaremos tu <strong>Código Familiar Único</strong> ({familiaCreada?.codigoFamiliar}) por WhatsApp y por Email para que puedas acceder a las galerías y pedidos de todos tus hijos.
                       </p>
                     </div>
                   </div>
 
-                  {/* Dispatch Channels Summary */}
+                  {/* Pre-assigned Family Code Box */}
+                  <div className="p-3.5 bg-amber-100/60 border border-amber-300 rounded-2xl flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider font-extrabold text-amber-900 block">
+                        Código Familiar Asignado:
+                      </span>
+                      <span className="text-xl sm:text-2xl font-black font-mono tracking-widest text-slate-900">
+                        {familiaCreada?.codigoFamiliar || 'FAM-1001'}
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-bold text-amber-950 bg-amber-200/80 px-2.5 py-1 rounded-lg border border-amber-300">
+                      1 código para todos tus hijos
+                    </span>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                     <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-2xl flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
@@ -815,6 +917,183 @@ export default function ModalInscripcionFamilia({
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Sibling Section / Múltiples Hijos (Un solo código familiar) */}
+              <div className="bg-white p-5 rounded-2xl border-2 border-amber-200/90 space-y-4 text-left shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-100 pb-3">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-amber-600" />
+                      <span>Hermanos en la Institución</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      ¿Tenés más de un hijo en el colegio? Agregalos aquí para recibir <strong>un único código familiar</strong> y acceder a todos juntos.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAgregarHermano}
+                    className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0 active:scale-98"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Agregar Hermano/a</span>
+                  </button>
+                </div>
+
+                {hermanos.length === 0 ? (
+                  <div className="p-3.5 bg-amber-50/50 rounded-xl border border-dashed border-amber-300 flex items-center justify-between gap-3 text-xs text-amber-900">
+                    <span className="text-[11px] text-slate-600">
+                      Si tenés otro hijo/a en otra sala, grado o turno, hacé clic en <strong>+ Agregar Hermano/a</strong>.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAgregarHermano}
+                      className="text-xs font-extrabold text-amber-700 hover:text-amber-900 underline shrink-0 cursor-pointer"
+                    >
+                      Agregar ahora
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {hermanos.map((hermano, idx) => (
+                      <div
+                        key={hermano.id}
+                        className="p-4 bg-slate-50 border border-slate-300 rounded-2xl space-y-3 relative text-left"
+                      >
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                          <span className="text-xs font-extrabold text-slate-800 flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] flex items-center justify-center">
+                              {idx + 2}
+                            </span>
+                            <span>Hermano/a #{idx + 1}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleEliminarHermano(hermano.id)}
+                            className="text-slate-400 hover:text-red-600 text-xs flex items-center gap-1 cursor-pointer transition-colors"
+                            title="Quitar este hermano"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Quitar</span>
+                          </button>
+                        </div>
+
+                        {/* Nombre y Apellido Hermano */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              Nombre <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={hermano.alumnoNombre}
+                              onChange={(e) =>
+                                handleActualizarHermano(hermano.id, 'alumnoNombre', e.target.value)
+                              }
+                              placeholder="Ej: Sofía"
+                              className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">
+                              Apellido <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={hermano.alumnoApellido}
+                              onChange={(e) =>
+                                handleActualizarHermano(hermano.id, 'alumnoApellido', e.target.value)
+                              }
+                              placeholder="Ej: Gómez"
+                              className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Turno, Grado, División Hermano */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              Turno
+                            </label>
+                            <select
+                              value={hermano.turno}
+                              onChange={(e) =>
+                                handleActualizarHermano(hermano.id, 'turno', e.target.value)
+                              }
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                            >
+                              <option value="Mañana">Mañana</option>
+                              <option value="Tarde">Tarde</option>
+                              <option value="Jornada Extendida">Jornada Extendida</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              Grado / Sala
+                            </label>
+                            <select
+                              value={hermano.grado}
+                              onChange={(e) =>
+                                handleActualizarHermano(hermano.id, 'grado', e.target.value)
+                              }
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                            >
+                              <option value="Sala 3 años">Sala 3 años</option>
+                              <option value="Sala 4 años">Sala 4 años</option>
+                              <option value="Sala 5 años">Sala 5 años</option>
+                              <option value="1° Grado">1° Grado</option>
+                              <option value="2° Grado">2° Grado</option>
+                              <option value="3° Grado">3° Grado</option>
+                              <option value="4° Grado">4° Grado</option>
+                              <option value="5° Grado">5° Grado</option>
+                              <option value="6° Grado">6° Grado</option>
+                              <option value="7° Grado">7° Grado</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              División
+                            </label>
+                            <select
+                              value={hermano.division}
+                              onChange={(e) =>
+                                handleActualizarHermano(hermano.id, 'division', e.target.value)
+                              }
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold"
+                            >
+                              {divisionesDisponibles.map((div) => (
+                                <option key={div} value={div}>
+                                  {div.toLowerCase().includes('extendida') || div.toLowerCase().includes('jornada')
+                                    ? div
+                                    : `División ${div}`}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Checkbox Foto Hermanos */}
+                    <div className="p-3.5 bg-amber-50/80 border border-amber-300 rounded-xl flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        id="chk-foto-hermanos"
+                        checked={solicitaFotoHermanos}
+                        onChange={(e) => setSolicitaFotoHermanos(e.target.checked)}
+                        className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer shrink-0"
+                      />
+                      <label
+                        htmlFor="chk-foto-hermanos"
+                        className="text-xs text-amber-950 font-semibold cursor-pointer select-none leading-tight"
+                      >
+                        📸 Deseamos la toma especial de <strong>Foto de Hermanos juntos</strong> durante la sesión fotográfica escolar
+                      </label>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Security Privacy Notice */}

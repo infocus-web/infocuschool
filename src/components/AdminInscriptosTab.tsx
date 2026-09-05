@@ -17,7 +17,8 @@ import {
   Copy,
   AlertCircle,
   School,
-  X
+  X,
+  Users
 } from 'lucide-react';
 import {
   InscripcionFamilia,
@@ -374,15 +375,46 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                       </div>
                     </td>
 
-                    {/* Alumno & Curso */}
+                    {/* Alumno & Curso (Con soporte de Hermanos) */}
                     <td className="py-3.5 px-4 align-top">
-                      <div>
-                        <h4 className="font-extrabold text-sm text-slate-900">
-                          {item.alumnoNombre} {item.alumnoApellido}
-                        </h4>
-                        <p className="text-xs text-slate-600 font-medium mt-0.5">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="font-extrabold text-sm text-slate-900">
+                            {item.alumnoNombre} {item.alumnoApellido}
+                          </h4>
+                          {item.hermanos && item.hermanos.length > 0 && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                              +{item.hermanos.length} hermano{item.hermanos.length > 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 font-medium">
                           {item.grado} · Div. {item.division} · Turno {item.turno}
                         </p>
+
+                        {/* Listado de hermanos vinculados */}
+                        {item.hermanos && item.hermanos.length > 0 && (
+                          <div className="pt-1 space-y-1 border-t border-slate-200/80">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                              Hermanos en la Institución:
+                            </span>
+                            {item.hermanos.map((h, i) => (
+                              <div key={h.id || i} className="text-[11px] text-slate-700 bg-slate-100 px-2 py-1 rounded-md">
+                                <span className="font-bold text-slate-900">• {h.alumnoNombre} {h.alumnoApellido}</span>
+                                <span className="text-slate-500 block text-[10px]">
+                                  {h.grado} · Div. {h.division} · Turno {h.turno}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {item.solicitaFotoHermanos && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300 mt-1">
+                            📸 Foto de Hermanos solicitada
+                          </span>
+                        )}
+
                         <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                           <School className="w-3 h-3 text-slate-400" />
                           <span>{item.colegioNombre}</span>
@@ -408,46 +440,59 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                       </div>
                     </td>
 
-                    {/* Course Code Assigned */}
+                    {/* Course Code & Family Code Assigned */}
                     <td className="py-3.5 px-4 align-top">
-                      {esPendiente ? (
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-amber-800 font-semibold uppercase tracking-wider block">
-                            Código a Asignar:
+                      <div className="space-y-2">
+                        {/* Código Familiar */}
+                        <div>
+                          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block mb-0.5">
+                            Código Familiar:
                           </span>
-                          <input
-                            type="text"
-                            value={codigoSugerido}
-                            onChange={(e) =>
-                              setCodigosEditables((prev) => ({
-                                ...prev,
-                                [item.id]: e.target.value.toUpperCase()
-                              }))
-                            }
-                            className="px-2 py-1 text-xs font-mono font-bold uppercase tracking-wider bg-white border-2 border-amber-300 rounded-lg w-28 text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
-                          />
-                          <span className="text-[10px] text-slate-400 block">
-                            Sugerido por sala y turno
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-mono font-black text-xs shadow-2xs">
+                            <Users className="w-3 h-3" />
+                            <span>{item.codigoFamiliar || 'FAM-1001'}</span>
                           </span>
                         </div>
-                      ) : (
-                        <div className="space-y-1">
-                          <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 text-amber-300 font-mono font-extrabold text-xs shadow-2xs">
-                            <Key className="w-3 h-3 text-amber-400" />
-                            <span>{item.codigoAsignado}</span>
+
+                        {/* Código de Curso */}
+                        {esPendiente ? (
+                          <div className="space-y-1 pt-1 border-t border-slate-100">
+                            <span className="text-[10px] text-amber-800 font-semibold uppercase tracking-wider block">
+                              Código Curso:
+                            </span>
+                            <input
+                              type="text"
+                              value={codigoSugerido}
+                              onChange={(e) =>
+                                setCodigosEditables((prev) => ({
+                                  ...prev,
+                                  [item.id]: e.target.value.toUpperCase()
+                                }))
+                              }
+                              className="px-2 py-1 text-xs font-mono font-bold uppercase tracking-wider bg-white border-2 border-amber-300 rounded-lg w-28 text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                            />
+                            <span className="text-[10px] text-slate-400 block">
+                              Sugerido por sala
+                            </span>
                           </div>
-                          {onProbarCodigo && item.codigoAsignado && (
-                            <button
-                              type="button"
-                              onClick={() => onProbarCodigo(item.codigoAsignado!)}
-                              className="text-[10px] text-amber-700 hover:text-amber-900 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
-                            >
-                              <Eye className="w-2.5 h-2.5" />
-                              <span>Ver en Portal</span>
-                            </button>
-                          )}
-                        </div>
-                      )}
+                        ) : (
+                          <div className="space-y-1 pt-1 border-t border-slate-100">
+                            <span className="text-[10px] text-slate-500 font-semibold block">
+                              Curso: <strong className="font-mono text-slate-800">{item.codigoAsignado}</strong>
+                            </span>
+                            {onProbarCodigo && (
+                              <button
+                                type="button"
+                                onClick={() => onProbarCodigo(item.codigoFamiliar || item.codigoAsignado!)}
+                                className="text-[10px] text-amber-700 hover:text-amber-900 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                              >
+                                <Eye className="w-2.5 h-2.5" />
+                                <span>Probar en Portal</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </td>
 
                     {/* Delivery channels state */}
