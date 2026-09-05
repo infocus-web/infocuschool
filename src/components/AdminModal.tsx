@@ -31,6 +31,7 @@ import { descargarLibroExcel } from '../services/excelDownloadHelper';
 import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
 import AdminInscriptosTab from './AdminInscriptosTab';
+import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
 import { CircularImprimibleModal } from './CircularImprimibleModal';
 import { Colegio, Foto } from '../types';
 
@@ -46,7 +47,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [pinError, setPinError] = useState('');
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp'>('inscriptos');
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -107,7 +108,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [mostrarCircularModal, setMostrarCircularModal] = useState(false);
   const [seccionParaCircular, setSeccionParaCircular] = useState<string | undefined>(undefined);
 
-  const colegioActualNombre = colegiosList[0]?.nombre || 'Instituto Superior Buenos Aires';
+  const colegioActualNombre = colegiosList[0]?.nombre || 'Colegio Modelo';
 
   const handleDescargarExcelLegible = () => {
     try {
@@ -268,6 +269,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [nuevaLocalidad, setNuevaLocalidad] = useState('');
   const [nuevaZona, setNuevaZona] = useState<'CABA' | 'Zona Norte' | 'Zona Sur' | 'Zona Oeste'>('CABA');
   const [nuevoCodigo, setNuevoCodigo] = useState('');
+  const [nuevoWhatsapp, setNuevoWhatsapp] = useState('');
 
   if (!isOpen) return null;
 
@@ -364,11 +366,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
       localidad: nuevaLocalidad.trim() || 'Buenos Aires',
       zona: nuevaZona,
       codigoAcceso: nuevoCodigo.toUpperCase().trim(),
+      whatsappContacto: nuevoWhatsapp.trim() || undefined,
     });
 
     setNuevoNombre('');
     setNuevaLocalidad('');
     setNuevoCodigo('');
+    setNuevoWhatsapp('');
   };
 
   const totalRecaudado = pedidos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
@@ -488,6 +492,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
                 { id: 'alumnos', label: `Nómina 2026 (${ALUMNOS_NOMINA_2026.length})`, icon: Users },
                 { id: 'colegios', label: 'Colegios y Códigos', icon: School },
+                { id: 'whatsapp', label: 'WhatsApp Solicitud Códigos', icon: MessageSquare },
               ].map(t => {
                 const Icon = t.icon;
                 const active = activeTab === t.id;
@@ -1114,6 +1119,20 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     />
                   </div>
 
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-700">WhatsApp de Solicitud de Códigos (Opcional)</label>
+                    <input
+                      type="text"
+                      value={nuevoWhatsapp}
+                      onChange={e => setNuevoWhatsapp(e.target.value)}
+                      placeholder="Ej: 54911xxxxxxxx (vacío para usar número general)"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500">
+                      Si lo dejás en blanco, usará el número configurado en la pestaña WhatsApp.
+                    </p>
+                  </div>
+
                   <button
                     type="submit"
                     className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow"
@@ -1133,6 +1152,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           <h4 className="text-xs font-bold text-slate-900">{c.nombre}</h4>
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] text-slate-500">{c.localidad} ({c.zona})</span>
+                            {c.whatsappContacto && (
+                              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-mono font-bold px-1.5 py-0.5 rounded">
+                                WA: {c.whatsappContacto}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1159,6 +1183,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   </div>
                 </div>
               </div>
+            )}
+
+            {/* TAB: WHATSAPP CONFIG & SUPABASE */}
+            {activeTab === 'whatsapp' && (
+              <AdminConfigWhatsAppTab />
             )}
 
           </div>

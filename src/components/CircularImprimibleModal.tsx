@@ -17,7 +17,7 @@ export function CircularImprimibleModal({
   onClose,
   secciones,
   codigosMap,
-  colegioNombre = 'Instituto Superior Buenos Aires',
+  colegioNombre = 'Colegio Modelo',
   seccionSeleccionadaInicial,
 }: CircularImprimibleModalProps) {
   const [seccionFiltro, setSeccionFiltro] = useState<string>(seccionSeleccionadaInicial || 'todas');
@@ -356,7 +356,7 @@ export function CircularImprimibleModal({
                       </div>
 
                       <div className="pt-4 border-t border-slate-200 text-center text-xs text-slate-400">
-                        Equipo de Fotografía Escolar · InFocus Escuelas
+                        Equipo de Fotografía Escolar · Retrato Escolar
                       </div>
                     </div>
                   );

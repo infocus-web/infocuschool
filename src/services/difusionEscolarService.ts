@@ -18,7 +18,7 @@ const DEFAULT_WEB_URL = 'https://retratoescolar.com.ar';
 export function generarMensajeWhatsApp(
   seccion: SeccionEscolar,
   codigo: string,
-  colegioNombre: string = 'Instituto Superior Buenos Aires',
+  colegioNombre: string = 'Colegio Modelo',
   urlWeb: string = DEFAULT_WEB_URL
 ): string {
   return `📸 *FOTOGRAFÍAS ESCOLARES 2026*
@@ -55,7 +55,7 @@ ${urlWeb}
 export function generarGuiaWhatsAppColegioTexto(
   secciones: SeccionEscolar[],
   codigosMap: Record<string, string>,
-  colegioNombre: string = 'Instituto Superior Buenos Aires',
+  colegioNombre: string = 'Colegio Modelo',
   urlWeb: string = DEFAULT_WEB_URL
 ): string {
   const line = '='.repeat(68);
@@ -98,7 +98,7 @@ ${msg}
 export function descargarGuiaWhatsAppTxt(
   secciones: SeccionEscolar[],
   codigosMap: Record<string, string>,
-  colegioNombre: string = 'Instituto Superior Buenos Aires'
+  colegioNombre: string = 'Colegio Modelo'
 ) {
   const contenido = generarGuiaWhatsAppColegioTexto(secciones, codigosMap, colegioNombre);
   const blob = new Blob([contenido], { type: 'text/plain;charset=utf-8' });
@@ -121,7 +121,7 @@ export function descargarGuiaWhatsAppTxt(
 export function descargarExcelLegibleColegio(
   secciones: SeccionEscolar[],
   codigosMap: Record<string, string>,
-  colegioNombre: string = 'Instituto Superior Buenos Aires',
+  colegioNombre: string = 'Colegio Modelo',
   urlWeb: string = DEFAULT_WEB_URL
 ) {
   const wb = XLSX.utils.book_new();
@@ -204,7 +204,7 @@ export function descargarExcelLegibleColegio(
     },
     {
       'Paso': '4. Soporte y Consultas',
-      '¿Qué debe hacer el colegio?': 'Por dudas de padres o personal directivo, comunicarse con el equipo de fotografía escolar de InFocus.'
+      '¿Qué debe hacer el colegio?': 'Por dudas de padres o personal directivo, comunicarse con el equipo de fotografía escolar de Retrato Escolar.'
     }
   ];
   const wsGuia = XLSX.utils.json_to_sheet(dataGuia);
@@ -228,7 +228,7 @@ export const descargarExcelXLSX = descargarExcelLegibleColegio;
 export function descargarCSVEspañolCompatible(
   secciones: SeccionEscolar[],
   codigosMap: Record<string, string>,
-  colegioNombre: string = 'Instituto Superior Buenos Aires'
+  colegioNombre: string = 'Colegio Modelo'
 ) {
   const encabezados = [
     'Curso / Sección',

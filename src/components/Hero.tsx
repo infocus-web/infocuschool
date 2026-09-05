@@ -61,7 +61,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
           <div className="lg:col-span-7 space-y-6 text-left">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-100/80 border border-amber-200/80 text-amber-900 text-xs font-semibold tracking-wide">
               <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-              <span>Portal exclusivo para familias y padres</span>
+              <span>Portal exclusivo para padres y familiares</span>
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.12] font-['Outfit']">
@@ -229,7 +229,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
               >
                 <img
                   src="/alumna_instituto.jpg"
-                  alt="Muestra de fotografía escolar oficial - Instituto Superior Buenos Aires"
+                  alt="Muestra de fotografía escolar oficial - Retrato Escolar"
                   referrerPolicy="no-referrer"
                   draggable={false}
                   className="w-full h-full object-cover object-center transform group-hover:scale-102 transition-transform duration-500 pointer-events-none select-none"
@@ -239,7 +239,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                   <span className="px-3 py-1.5 rounded-full bg-slate-900/85 backdrop-blur-md text-white text-xs font-semibold flex items-center gap-1.5 shadow-md">
                     <School className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Instituto Superior Buenos Aires</span>
+                    <span>Retrato Escolar Oficial</span>
                   </span>
                   <span className="px-2.5 py-1 rounded-md bg-amber-400 text-slate-950 text-[10px] font-bold tracking-wider uppercase shadow-xs">
                     Ciclo 2026

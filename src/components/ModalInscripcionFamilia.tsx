@@ -34,6 +34,7 @@ import {
 } from '../services/inscripcionesService';
 import { COLEGIOS_EJEMPLO } from '../data/colegiosData';
 import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
+import { useWhatsAppConfig } from '../services/configuracionService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 
 interface ModalInscripcionFamiliaProps {
@@ -61,7 +62,11 @@ export default function ModalInscripcionFamilia({
   const [grado, setGrado] = useState('Sala 5 años');
   const [division, setDivision] = useState('Celeste');
   const { colegios } = useColegiosLista();
+  const { config: configWhatsApp } = useWhatsAppConfig();
   const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-isba-2026');
+
+  const selectedColegio = colegios.find((c) => c.id === colegioId);
+  const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
 
   // Code verification states in Step "solicitar_codigo"
   const [codigoIngresado, setCodigoIngresado] = useState('');
@@ -474,6 +479,21 @@ export default function ModalInscripcionFamilia({
                       </div>
                     </div>
                   </div>
+
+                  {/* Direct WhatsApp button to request course code */}
+                  <div className="pt-2">
+                    <a
+                      href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
+                        `Hola, completé la inscripción para las fotos de ${alumnoNombre.trim()} ${alumnoApellido.trim()} (${grado} "${division}", Turno ${turno}, ${selectedColegio?.nombre || 'Colegio'}). ¿Me podrían indicar el código de curso para poder acceder a ver las fotos? ¡Muchas gracias!`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-3 px-4 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                    >
+                      <MessageCircle className="w-4 h-4 fill-white" />
+                      <span>Solicitar Código por WhatsApp ahora</span>
+                    </a>
+                  </div>
                 </div>
               )}
 
@@ -862,12 +882,12 @@ export default function ModalInscripcionFamilia({
         <div className="p-4 bg-slate-50 border-t border-slate-200 text-center text-[11px] text-slate-500">
           ¿Tenés dudas o necesitás asistencia? Contactanos por{' '}
           <a
-            href="https://wa.me/5491128625916?text=Hola%20infocus,%20necesito%20ayuda%20con%20la%20inscripción"
+            href={`https://wa.me/${configWhatsApp.numeroTelefono}?text=Hola%20Retrato%20Escolar,%20necesito%20ayuda%20con%20la%20inscripción`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-emerald-600 font-bold hover:underline"
           >
-            WhatsApp al 11 2862-5916
+            WhatsApp al {configWhatsApp.numeroFormateado}
           </a>
         </div>
       </div>

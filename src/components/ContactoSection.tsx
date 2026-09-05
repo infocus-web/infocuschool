@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, MessageCircle } from 'lucide-react';
+import { useWhatsAppConfig, formatearNumeroVisual } from '../services/configuracionService';
 
 export default function ContactoSection() {
   const [nombre, setNombre] = useState('');
@@ -8,6 +9,9 @@ export default function ContactoSection() {
   const [asunto, setAsunto] = useState('Consulta general');
   const [mensaje, setMensaje] = useState('');
   const [enviado, setEnviado] = useState(false);
+  const { config } = useWhatsAppConfig();
+  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
+  const displayNum = formatearNumeroVisual(whatsappNum);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -39,9 +43,9 @@ export default function ContactoSection() {
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-900">WhatsApp Oficial</p>
-                  <p className="text-xs text-slate-600 mt-0.5">+54 9 11 2862-5916</p>
+                  <p className="text-xs text-slate-600 mt-0.5">{displayNum}</p>
                   <a
-                    href="https://wa.me/5491128625916?text=Hola%20Retrato%20Escolar,%20quisiera%20hacer%20una%20consulta%20desde%20retratoescolar.com.ar"
+                    href={`https://wa.me/${whatsappNum}?text=Hola%20Retrato%20Escolar,%20quisiera%20hacer%20una%20consulta%20desde%20retratoescolar.com.ar`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-[11px] font-bold text-emerald-700 hover:underline block mt-1"
@@ -103,7 +107,7 @@ export default function ContactoSection() {
                 </div>
                 <h4 className="text-lg font-bold text-slate-900">¡Mensaje enviado con éxito!</h4>
                 <p className="text-xs text-slate-600">
-                  Muchas gracias por comunicarte con InFocus Schools. Te escribiremos pronto a tu email o WhatsApp.
+                  Muchas gracias por comunicarte con Retrato Escolar. Te escribiremos pronto a tu email o WhatsApp.
                 </p>
                 <button
                   onClick={() => setEnviado(false)}

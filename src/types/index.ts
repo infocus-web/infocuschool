@@ -41,6 +41,7 @@ export interface Colegio {
   turnos: string[];
   codigoAcceso: string;
   website?: string;
+  whatsappContacto?: string;
 }
 
 export interface Pedido {

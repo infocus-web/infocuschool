@@ -1,8 +1,12 @@
 import { useState } from 'react';
 import { MessageCircle, X, Send, KeyRound, User, HelpCircle } from 'lucide-react';
+import { useWhatsAppConfig, formatearNumeroVisual } from '../services/configuracionService';
 
 export default function WhatsAppFloating() {
   const [isOpen, setIsOpen] = useState(false);
+  const { config } = useWhatsAppConfig();
+  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
+  const displayNum = formatearNumeroVisual(whatsappNum);
 
   const predefined = [
     {
@@ -34,9 +38,9 @@ export default function WhatsAppFloating() {
               </div>
               <div>
                 <p className="text-xs font-bold font-['Outfit'] leading-tight">
-                  Atención Retrato Escolar
+                  {config.nombreContacto || 'Atención Retrato Escolar'}
                 </p>
-                <p className="text-[10px] text-emerald-100">retratoescolar.com.ar · +54 9 11 2862-5916</p>
+                <p className="text-[10px] text-emerald-100">retratoescolar.com.ar · {displayNum}</p>
               </div>
             </div>
             <button
@@ -56,7 +60,7 @@ export default function WhatsAppFloating() {
               return (
                 <a
                   key={idx}
-                  href={`https://wa.me/5491128625916?text=${item.encoded}`}
+                  href={`https://wa.me/${whatsappNum}?text=${item.encoded}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-2.5 bg-white hover:bg-emerald-50 rounded-xl border border-slate-200 hover:border-emerald-300 text-xs text-slate-800 transition-all flex items-center gap-2.5 group shadow-2xs block"
@@ -70,7 +74,7 @@ export default function WhatsAppFloating() {
 
           <div className="p-3 border-t border-slate-100 text-center bg-white">
             <a
-              href="https://wa.me/5491128625916?text=Hola%20InFocus%20Schools,%20quisiera%20hacer%20una%20consulta"
+              href={`https://wa.me/${whatsappNum}?text=Hola,%20quisiera%20hacer%20una%20consulta`}
               target="_blank"
               rel="noopener noreferrer"
               className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-colors"

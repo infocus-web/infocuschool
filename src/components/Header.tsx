@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Camera, Search, Menu, X, PhoneCall, Lock, Sparkles, UserPlus } from 'lucide-react';
+import { useWhatsAppConfig } from '../services/configuracionService';
 
 interface HeaderProps {
   onOpenFamilias: (colegioId?: string) => void;
@@ -15,6 +16,8 @@ export default function Header({
   onOpenInscripcion,
 }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { config } = useWhatsAppConfig();
+  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
 
   const handleNavClick = (id: string) => {
     onScrollTo(id);
@@ -44,7 +47,7 @@ export default function Header({
               </>
             )}
             <a
-              href="https://wa.me/5491128625916?text=Hola%20Retrato%20Escolar,%20quisiera%20hacer%20una%20consulta%20sobre%20las%20fotos%20de%20mi%20hijo/a"
+              href={`https://wa.me/${whatsappNum}?text=Hola%20Retrato%20Escolar,%20quisiera%20hacer%20una%20consulta%20sobre%20las%20fotos%20de%20mi%20hijo/a`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition-colors"

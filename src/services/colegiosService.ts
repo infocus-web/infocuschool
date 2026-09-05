@@ -4,13 +4,13 @@ import { Colegio } from '../types';
 const STORAGE_KEY = 'colegios_escolares_v2';
 
 export const COLEGIO_POR_DEFECTO: Colegio = {
-  id: 'col-isba-2026',
-  slug: 'instituto-superior-buenos-aires',
-  nombre: 'Instituto Superior Buenos Aires',
+  id: 'col-modelo-2026',
+  slug: 'colegio-modelo',
+  nombre: 'Colegio Modelo',
   localidad: 'Buenos Aires',
   zona: 'CABA',
   eventoActual: 'Temporada Oficial Retratos y Fotos Escolares 2026',
-  codigoAcceso: 'ISBA2026',
+  codigoAcceso: 'MODELO26',
   grados: [
     'Sala 3 años',
     'Sala 4 años',
@@ -53,14 +53,18 @@ export function obtenerColegios(): Colegio[] {
       return [COLEGIO_POR_DEFECTO];
     }
 
-    // Filtrar / sanitizar: nunca incluir website y actualizar nombres viejos si existieran
+    // Filtrar / sanitizar: nunca incluir website y actualizar nombres viejos o de ejemplo
     const sanitizados = parsed.map((col) => {
       const limpio = { ...col };
       delete limpio.website;
-      if (limpio.nombre.includes('Divino Pastor')) {
-        limpio.nombre = 'Instituto Superior Buenos Aires';
-        limpio.slug = 'instituto-superior-buenos-aires';
-        limpio.codigoAcceso = 'ISBA2026';
+      if (
+        limpio.nombre.includes('Divino Pastor') ||
+        limpio.nombre.includes('Instituto Superior Buenos Aires')
+      ) {
+        limpio.id = 'col-modelo-2026';
+        limpio.nombre = 'Colegio Modelo';
+        limpio.slug = 'colegio-modelo';
+        limpio.codigoAcceso = 'MODELO26';
         limpio.localidad = 'Buenos Aires';
         limpio.zona = 'CABA';
       }
@@ -79,6 +83,7 @@ export function guardarNuevoColegio(datos: {
   localidad?: string;
   zona?: 'CABA' | 'Zona Norte' | 'Zona Sur' | 'Zona Oeste';
   codigoAcceso: string;
+  whatsappContacto?: string;
 }): Colegio {
   const listaActual = obtenerColegios();
   const slug = datos.nombre
@@ -96,6 +101,7 @@ export function guardarNuevoColegio(datos: {
     zona: datos.zona || 'CABA',
     eventoActual: 'Temporada Oficial Retratos y Fotos Escolares 2026',
     codigoAcceso: datos.codigoAcceso.toUpperCase().trim(),
+    whatsappContacto: datos.whatsappContacto ? datos.whatsappContacto.replace(/\D/g, '') : undefined,
     grados: [
       'Sala 3 años',
       'Sala 4 años',
@@ -128,6 +134,23 @@ export function guardarNuevoColegio(datos: {
   return nuevoColegio;
 }
 
+export function actualizarWhatsappColegio(colegioId: string, whatsapp: string): Colegio[] {
+  const listaActual = obtenerColegios();
+  const limpio = whatsapp.replace(/\D/g, '');
+  const actualizada = listaActual.map((c) => {
+    if (c.id === colegioId) {
+      return { ...c, whatsappContacto: limpio || undefined };
+    }
+    return c;
+  });
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(actualizada));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('colegios_actualizados', { detail: actualizada }));
+  }
+  return actualizada;
+}
+
 export function eliminarColegio(id: string): Colegio[] {
   const listaActual = obtenerColegios();
   // Evitar eliminar si es el único colegio existente
@@ -155,6 +178,7 @@ export function useColegiosLista(): {
     localidad?: string;
     zona?: 'CABA' | 'Zona Norte' | 'Zona Sur' | 'Zona Oeste';
     codigoAcceso: string;
+    whatsappContacto?: string;
   }) => Colegio;
   borrarColegio: (id: string) => void;
   recargarColegios: () => void;

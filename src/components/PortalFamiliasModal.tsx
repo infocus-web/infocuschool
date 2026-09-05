@@ -35,9 +35,11 @@ import {
   Plus,
   Minus,
   MessageCircle,
+  ChevronDown,
 } from 'lucide-react';
 import { COLEGIOS_EJEMPLO, FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
+import { useWhatsAppConfig } from '../services/configuracionService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
 import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
@@ -79,11 +81,15 @@ export default function PortalFamiliasModal({
   // Step 1: School & Student Selection
   const [searchColegio, setSearchColegio] = useState('');
   const { colegios } = useColegiosLista();
+  const { config: configWhatsApp } = useWhatsAppConfig();
   const [selectedColegio, setSelectedColegio] = useState<Colegio | null>(null);
   const [grado, setGrado] = useState('');
   const [division, setDivision] = useState('');
   const [turno, setTurno] = useState('');
   const [nombreAlumno, setNombreAlumno] = useState('');
+
+  // Dynamic WhatsApp number: prioritized by selected school, or global configuration
+  const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
   const [codigoAcceso, setCodigoAcceso] = useState('');
   const [seccionDetectada, setSeccionDetectada] = useState<any | null>(null);
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
@@ -168,8 +174,6 @@ export default function PortalFamiliasModal({
     if (preselectedColegioId) {
       const col = colegios.find((c) => c.id === preselectedColegioId);
       if (col) setSelectedColegio(col);
-    } else if (!selectedColegio && colegios.length > 0) {
-      setSelectedColegio(colegios[0]);
     }
   }, [preselectedColegioId, colegios]);
 
@@ -206,8 +210,8 @@ export default function PortalFamiliasModal({
     // 1. Search for course section by nemotecnico or PIN
     const match = buscarSeccionPorCodigo(clean);
     if (match) {
-      const colInicial = colegios.find((c) => c.id === 'col-isba-2026') || colegios[0];
-      setSelectedColegio(colInicial);
+      const colInicial = colegios[0] || null;
+      if (colInicial) setSelectedColegio(colInicial);
       setGrado(match.seccion.sala);
       setTurno(match.seccion.turno);
       setDivision(match.seccion.division);
@@ -277,8 +281,8 @@ export default function PortalFamiliasModal({
       const codCurso = codigoAcceso.trim() || seccionDetectada?.nemotecnico || 'SALA3TM';
 
       const nuevoPedido = registrarPedidoDesdePortal({
-        colegioId: selectedColegio?.id || 'col-divino-pastor',
-        colegioNombre: selectedColegio?.nombre || 'Instituto Superior Buenos Aires',
+        colegioId: selectedColegio?.id || 'col-general',
+        colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
         cursoCodigo: codCurso,
         grado: grado || 'Sala 3',
         division: division || 'Única',
@@ -360,8 +364,8 @@ export default function PortalFamiliasModal({
 
     const mockOrders = [
       {
-        id: 'IFS-2026-8812',
-        colegio: 'Instituto Superior Buenos Aires',
+        id: 'RE-2026-8812',
+        colegio: 'Colegio Modelo',
         alumno: 'Valentina Rossi (3° A)',
         tutor: 'Mariana Gómez',
         telefono: '1154893210',
@@ -376,8 +380,8 @@ export default function PortalFamiliasModal({
         descargaLista: true,
       },
       {
-        id: 'IFS-2026-8809',
-        colegio: 'Instituto Superior Buenos Aires',
+        id: 'RE-2026-8809',
+        colegio: 'Colegio Modelo',
         alumno: 'Mateo Benítez (1° B)',
         tutor: 'Diego Benítez',
         telefono: '1144559988',
@@ -392,8 +396,8 @@ export default function PortalFamiliasModal({
         descargaLista: true,
       },
       {
-        id: 'IFS-2026-8795',
-        colegio: 'Instituto Superior Buenos Aires',
+        id: 'RE-2026-8795',
+        colegio: 'Colegio Modelo',
         alumno: 'Sofía Álvarez (5° Verde)',
         tutor: 'Luciana Álvarez',
         telefono: '1167221100',
@@ -418,8 +422,8 @@ export default function PortalFamiliasModal({
     } else {
       // Create dynamically matching order for user's query if it resembles a code
       setSearchedOrder({
-        id: query.startsWith('IFS-') ? query : `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-        colegio: selectedColegio ? selectedColegio.nombre : 'Instituto Superior Buenos Aires',
+        id: query.startsWith('RE-') ? query : `RE-2026-${Math.floor(1000 + Math.random() * 9000)}`,
+        colegio: selectedColegio ? selectedColegio.nombre : 'Colegio Escolar',
         alumno: nombreAlumno || 'Alumno Escolar',
         tutor: tutorNombre || 'Tutor Familiar',
         telefono: tutorWhatsapp || '11 5489-3210',
@@ -448,14 +452,14 @@ export default function PortalFamiliasModal({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-base font-bold font-['Outfit'] tracking-wide">
-                  Mi InFocus Schools
+                  Retrato Escolar
                 </span>
                 <span className="text-[10px] bg-slate-800 text-amber-400 font-bold px-2 py-0.5 rounded border border-slate-700">
                   Portal de Familias
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                {selectedColegio ? selectedColegio.nombre : 'Seleccioná tu colegio'} · Ciclo 2026
+                {selectedColegio ? `${selectedColegio.nombre} · Ciclo 2026` : 'Portal de Familias · Ciclo Escolar 2026'}
               </p>
             </div>
           </div>
@@ -673,7 +677,7 @@ export default function PortalFamiliasModal({
 
                     <div className="flex gap-2 w-full sm:w-auto">
                       <a
-                        href={`https://wa.me/5491128625916?text=Hola%20InFocus%20Schools,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
+                        href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex-1 sm:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
@@ -750,34 +754,6 @@ export default function PortalFamiliasModal({
                   </div>
                 </div>
 
-                {/* Quick Sample Code Chips */}
-                <div className="pt-1 flex flex-wrap items-center gap-1.5 text-left border-t border-amber-200/60">
-                  <span className="text-[11px] font-semibold text-amber-900 mr-1">
-                    Códigos de prueba rápidos:
-                  </span>
-                  {[
-                    { code: 'SALA3TM', desc: 'Sala 3 TM' },
-                    { code: 'SALA3TT', desc: 'Sala 3 TT' },
-                    { code: 'SALA4A', desc: 'Sala 4 A (TT)' },
-                    { code: 'SALA5BTT', desc: 'Sala 5 B (TT)' },
-                    { code: 'ISBA2026', desc: 'Instituto Superior Buenos Aires' },
-                    { code: 'PASTOR26', desc: 'Acceso Histórico' },
-                  ].map((item) => (
-                    <button
-                      key={item.code}
-                      type="button"
-                      onClick={() => {
-                        setCodigoAcceso(item.code);
-                        validarCodigoIngresado(item.code);
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100/80 text-slate-800 hover:text-slate-950 text-[11px] font-mono font-bold border border-amber-300 shadow-2xs transition-all cursor-pointer flex items-center gap-1"
-                    >
-                      <span className="text-amber-700">{item.code}</span>
-                      <span className="text-[10px] text-slate-500 font-sans font-normal">({item.desc})</span>
-                    </button>
-                  ))}
-                </div>
-
                 {/* Validation Success Feedback Banner */}
                 {codigoValidadoMsg && (
                   <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl text-left flex items-start justify-between gap-3 animate-in fade-in duration-200">
@@ -823,7 +799,7 @@ export default function PortalFamiliasModal({
                     </p>
                   </div>
                   <a
-                    href={`https://wa.me/5491128625916?text=${encodeURIComponent(
+                    href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
                       nombreAlumno.trim()
                         ? `Hola, me inscribí en el portal para las fotos de ${nombreAlumno.trim()} (${grado} "${division}", Turno ${turno}, ${selectedColegio?.nombre || 'Colegio'}). ¿Me podrían facilitar el código de curso para poder acceder a ver las fotos? ¡Muchas gracias!`
                         : `Hola, me inscribí en el portal de fotos escolares para ${selectedColegio?.nombre || 'mi colegio'}. ¿Me podrían facilitar el código de curso con el que podré acceder a ver las fotos? ¡Muchas gracias!`
@@ -838,52 +814,67 @@ export default function PortalFamiliasModal({
                 </div>
               </div>
 
-              {/* School Search List */}
-              <div className="space-y-4">
+              {/* Desplegable de Colegios */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs text-left space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    O elegí tu colegio de la lista:
+                  <label htmlFor="select-colegio-dropdown" className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <School className="w-4 h-4 text-amber-500" />
+                    <span>O elegí tu colegio de la lista:</span>
                   </label>
+                  {selectedColegio && (
+                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      Colegio seleccionado
+                    </span>
+                  )}
                 </div>
 
                 <div className="relative">
-                  <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchColegio}
-                    onChange={(e) => setSearchColegio(e.target.value)}
-                    placeholder="Escribí el nombre del colegio o localidad (ej: Divino Pastor, Pilar)..."
-                    className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 shadow-xs"
-                  />
+                  <select
+                    id="select-colegio-dropdown"
+                    value={selectedColegio?.id || ''}
+                    onChange={(e) => {
+                      const colId = e.target.value;
+                      if (!colId) {
+                        setSelectedColegio(null);
+                        return;
+                      }
+                      const col = colegios.find((c) => c.id === colId);
+                      if (col) {
+                        setSelectedColegio(col);
+                        setCodigoErrorMsg(null);
+                        setCodigoValidadoMsg(`Colegio seleccionado: ${col.nombre}`);
+                      }
+                    }}
+                    className="w-full pl-4 pr-10 py-3 text-xs sm:text-sm font-semibold text-slate-800 bg-slate-50 hover:bg-white border-2 border-slate-300 hover:border-amber-400 focus:border-amber-500 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400/20 transition-all cursor-pointer shadow-2xs appearance-none"
+                  >
+                    <option value="">-- Seleccioná tu colegio de la lista ({colegios.length} disponibles) --</option>
+                    {colegios.map((col) => (
+                      <option key={col.id} value={col.id}>
+                        {col.nombre} {col.localidad ? `(${col.localidad} · ${col.zona})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-500">
+                    <ChevronDown className="w-4 h-4 text-slate-600" />
+                  </div>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">
-                  {colegiosFiltrados.map((col) => {
-                    const isSelected = selectedColegio?.id === col.id;
-                    return (
-                      <div
-                        key={col.id}
-                        onClick={() => setSelectedColegio(col)}
-                        className={`p-3.5 rounded-xl border text-left cursor-pointer transition-all ${
-                          isSelected
-                            ? 'bg-amber-50/80 border-amber-400 shadow-xs ring-1 ring-amber-400'
-                            : 'bg-white border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="text-xs font-bold text-slate-900">{col.nombre}</p>
-                            <p className="text-[11px] text-slate-500">{col.localidad} · {col.zona}</p>
-                          </div>
-                          {isSelected && (
-                            <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <p className="text-[11px] text-slate-500">
+                  Desplegá la lista para elegir el establecimiento escolar y habilitar la carga de curso, división y alumno.
+                </p>
               </div>
+
+              {/* Mensaje de guía cuando aún no se eligió colegio */}
+              {!selectedColegio && (
+                <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-5 text-center space-y-1">
+                  <p className="text-xs font-bold text-amber-950">
+                    Elegí tu colegio en el desplegable de arriba o ingresá tu código de curso
+                  </p>
+                  <p className="text-[11px] text-amber-800">
+                    Al seleccionar tu colegio podrás indicar el nombre de tu hijo/a, sala o grado, división y turno para acceder a la galería oficial.
+                  </p>
+                </div>
+              )}
 
               {/* Student details form */}
               {selectedColegio && (
@@ -2103,7 +2094,7 @@ export default function PortalFamiliasModal({
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
                 <a
-                  href={`https://wa.me/5491128625916?text=Hola%20InFocus%20Schools,%20hice%20el%20pedido%20${numeroPedido}%20para%20${encodeURIComponent(
+                  href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20hice%20el%20pedido%20${numeroPedido}%20para%20${encodeURIComponent(
                     nombreAlumno
                   )}`}
                   target="_blank"

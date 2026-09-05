@@ -24,7 +24,7 @@ interface AdminLaboratorioTabProps {
 export default function AdminLaboratorioTab({
   pedidos,
   onActualizarPedidos,
-  colegioNombre = 'Instituto Superior Buenos Aires'
+  colegioNombre = 'Colegio Modelo'
 }: AdminLaboratorioTabProps) {
   const [cursoFiltro, setCursoFiltro] = useState<string>('todos');
   const [modoEstructuraCarpetas, setModoEstructuraCarpetas] = useState<'solo_2_carpetas_tamano' | 'por_alumno'>('solo_2_carpetas_tamano');

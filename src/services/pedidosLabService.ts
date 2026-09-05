@@ -128,8 +128,8 @@ const PEDIDOS_INICIALES: PedidoEscolarCompleto[] = [
   {
     id: 'IFS-2026-9001',
     fecha: '05/09/2026 09:15',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     cursoCodigo: '3ATT',
     grado: 'Sala 3 Años',
     division: 'TT',
@@ -195,8 +195,8 @@ const PEDIDOS_INICIALES: PedidoEscolarCompleto[] = [
   {
     id: 'IFS-2026-8812',
     fecha: '02/09/2026 10:30',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     cursoCodigo: 'SALA3TM',
     grado: 'Sala 3',
     division: 'Única',
@@ -255,8 +255,8 @@ const PEDIDOS_INICIALES: PedidoEscolarCompleto[] = [
   {
     id: 'IFS-2026-8809',
     fecha: '02/09/2026 11:45',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     cursoCodigo: 'SALA3TM',
     grado: 'Sala 3',
     division: 'Única',
@@ -305,8 +305,8 @@ const PEDIDOS_INICIALES: PedidoEscolarCompleto[] = [
   {
     id: 'IFS-2026-8795',
     fecha: '01/09/2026 16:20',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     cursoCodigo: 'SALA4A',
     grado: 'Sala 4',
     division: 'A',
@@ -898,7 +898,7 @@ export async function descargarLoteLaboratorioZip(
 5. De este modo, tanto la copia original como la copia extra tendrán estampado en el reverso:
    "3ATT_FABRICIO_PEREZ" y "3ATT_FABRICIO_PEREZ_COPIA2"
 6. En la mesa de ensobrado, basta con hacer coincidir ambos dorsos para colocarlos en el sobre del alumno.
-Muchas gracias. InFocus Fotografía Escolar.`;
+Muchas gracias. Retrato Escolar.`;
 
   zip.file(`00_LEAME_OPERADOR_LABORATORIO.txt`, readmeLab);
 

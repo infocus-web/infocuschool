@@ -68,13 +68,13 @@ export const KITS_DISPONIBLES: KitProducto[] = [
 
 export const COLEGIOS_EJEMPLO: Colegio[] = [
   {
-    id: 'col-isba-2026',
-    slug: 'instituto-superior-buenos-aires',
-    nombre: 'Instituto Superior Buenos Aires',
+    id: 'col-modelo-2026',
+    slug: 'colegio-modelo',
+    nombre: 'Colegio Modelo',
     localidad: 'Buenos Aires',
     zona: 'CABA',
     eventoActual: 'Temporada Oficial Retratos y Fotos Escolares 2026',
-    codigoAcceso: 'ISBA2026',
+    codigoAcceso: 'MODELO26',
     grados: [
       'Sala 3 años',
       'Sala 4 años',

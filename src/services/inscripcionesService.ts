@@ -35,11 +35,11 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
     turno: 'Tarde',
     grado: 'Sala 5 años',
     division: 'Celeste',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     fechaInscripcion: '05/03/2026 09:15',
     estado: 'pendiente',
-    codigoAsignado: 'ISBA-S5B'
+    codigoAsignado: 'MODELO-S5B'
   },
   {
     id: 'INS-2026-002',
@@ -51,11 +51,11 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
     turno: 'Mañana',
     grado: 'Sala 4 años',
     division: 'Verde',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     fechaInscripcion: '04/03/2026 14:30',
     estado: 'aceptado',
-    codigoAsignado: 'ISBA-S4A',
+    codigoAsignado: 'MODELO-S4A',
     fechaAprobacion: '04/03/2026 15:10',
     notificacionWhatsAppEnviada: true,
     notificacionEmailEnviada: true
@@ -70,11 +70,11 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
     turno: 'Mañana',
     grado: 'Sala 3 años',
     division: 'Roja',
-    colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Superior Buenos Aires',
+    colegioId: 'col-modelo-2026',
+    colegioNombre: 'Colegio Modelo',
     fechaInscripcion: '05/03/2026 08:45',
     estado: 'pendiente',
-    codigoAsignado: 'ISBA-S3TM'
+    codigoAsignado: 'MODELO-S3TM'
   }
 ];
 

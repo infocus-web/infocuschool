@@ -180,8 +180,8 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
       turno: rndSala.turno,
       grado: rndSala.grado,
       division: rndSala.div,
-      colegioId: 'col-divino-pastor',
-      colegioNombre: 'Instituto Superior Buenos Aires'
+      colegioId: 'col-modelo-2026',
+      colegioNombre: 'Colegio Modelo'
     });
 
     setInscripciones(obtenerInscripciones());
