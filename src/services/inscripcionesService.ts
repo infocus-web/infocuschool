@@ -23,60 +23,8 @@ export interface InscripcionFamilia {
 const STORAGE_KEY_INSCRIPCIONES = 'infocus_familias_inscriptas_v1';
 const STORAGE_KEY_ACTIVO = 'infocus_familia_activa_v1';
 
-// Registro inicial de inscripciones
-const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
-  {
-    id: 'INS-2026-001',
-    padreNombre: 'Mariana Gómez',
-    telefonoWhatsApp: '+54 9 11 5489-3210',
-    email: 'mariana.gomez@gmail.com',
-    alumnoNombre: 'Benjamín',
-    alumnoApellido: 'Gómez',
-    turno: 'Tarde',
-    grado: 'Sala 5 años',
-    division: 'Celeste',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    fechaInscripcion: '05/03/2026 09:15',
-    estado: 'pendiente',
-    codigoAsignado: 'MODELO-S5B'
-  },
-  {
-    id: 'INS-2026-002',
-    padreNombre: 'Diego Benítez',
-    telefonoWhatsApp: '+54 9 11 2384-9912',
-    email: 'diego.benitez@outlook.com',
-    alumnoNombre: 'Mateo',
-    alumnoApellido: 'Benítez',
-    turno: 'Mañana',
-    grado: 'Sala 4 años',
-    division: 'Verde',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    fechaInscripcion: '04/03/2026 14:30',
-    estado: 'aceptado',
-    codigoAsignado: 'MODELO-S4A',
-    fechaAprobacion: '04/03/2026 15:10',
-    notificacionWhatsAppEnviada: true,
-    notificacionEmailEnviada: true
-  },
-  {
-    id: 'INS-2026-003',
-    padreNombre: 'Carla Rossi',
-    telefonoWhatsApp: '+54 9 11 4120-7761',
-    email: 'carla.rossi@yahoo.com.ar',
-    alumnoNombre: 'Sofía',
-    alumnoApellido: 'Rossi',
-    turno: 'Mañana',
-    grado: 'Sala 3 años',
-    division: 'Roja',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    fechaInscripcion: '05/03/2026 08:45',
-    estado: 'pendiente',
-    codigoAsignado: 'MODELO-S3TM'
-  }
-];
+// Registro inicial de inscripciones (vacío por defecto para que las familias no vean datos ficticios)
+const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [];
 
 /**
  * Determines the recommended course code based on the student's sala, turno, and division.
@@ -105,23 +53,32 @@ export function determinarCodigoParaInscripcion(datos: { grado: string; turno: s
 }
 
 export function obtenerInscripciones(): InscripcionFamilia[] {
-  if (typeof window === 'undefined') return INSCRIPCIONES_INICIALES;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY_INSCRIPCIONES);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(INSCRIPCIONES_INICIALES));
-      return INSCRIPCIONES_INICIALES;
+      return [];
     }
     const parsed: InscripcionFamilia[] = JSON.parse(raw);
-    // Ensure all items have estado
-    return parsed.map((item) => ({
+    // Remove sample/mock registrations (Benjamín Gómez, Mateo Benítez, Sofía Rossi)
+    const cleaned = parsed.filter(
+      (item) =>
+        !['INS-2026-001', 'INS-2026-002', 'INS-2026-003'].includes(item.id) &&
+        !['Benjamín Gómez', 'Mateo Benítez', 'Sofía Rossi'].includes(
+          `${item.alumnoNombre} ${item.alumnoApellido}`.trim()
+        )
+    );
+    if (cleaned.length !== parsed.length) {
+      localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(cleaned));
+    }
+    return cleaned.map((item) => ({
       ...item,
       estado: item.estado || 'pendiente',
       codigoAsignado: item.codigoAsignado || determinarCodigoParaInscripcion(item)
     }));
   } catch (err) {
     console.error('Error al leer inscripciones:', err);
-    return INSCRIPCIONES_INICIALES;
+    return [];
   }
 }
 
@@ -244,9 +201,9 @@ export function generarEnlaceWhatsAppAprobacion(familia: InscripcionFamilia, cod
 }
 
 /**
- * Generates email content simulation for approval
+ * Prepara el contenido y asunto formal del correo de aprobación con el código asignado
  */
-export function simularEnvioEmailAprobacion(familia: InscripcionFamilia, codigo: string) {
+export function prepararEmailAprobacion(familia: InscripcionFamilia, codigo: string) {
   const now = new Date();
   const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
@@ -261,6 +218,9 @@ export function simularEnvioEmailAprobacion(familia: InscripcionFamilia, codigo:
     timestamp: fechaStr
   };
 }
+
+// Alias para compatibilidad
+export const simularEnvioEmailAprobacion = prepararEmailAprobacion;
 
 export function obtenerFamiliaActiva(): InscripcionFamilia | null {
   if (typeof window === 'undefined') return null;

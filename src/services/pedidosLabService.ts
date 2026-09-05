@@ -68,7 +68,7 @@ export function sanitizarParaMinilab(texto: string): string {
 
 /**
  * Genera el código de cliente normalizado para el minilab del laboratorio fotográfico.
- * Ejemplo solicitado por el usuario: curso '3ATT', alumno 'Pérez, Fabricio' o 'Fabricio Pérez' -> '3ATT_FABRICIO_PEREZ'
+ * Formato especificado: curso '3ATT', alumno 'Pérez, Fabricio' o 'Fabricio Pérez' -> '3ATT_FABRICIO_PEREZ'
  */
 export function formatearCodigoCliente(cursoCodigo: string, alumnoNombre: string): string {
   const cleanCurso = sanitizarParaMinilab(cursoCodigo);
@@ -123,260 +123,33 @@ export function generarNombreArchivoLab(
   return `${codigoCliente}.jpg`;
 }
 
-// Pedidos iniciales registrados en el sistema
-const PEDIDOS_INICIALES: PedidoEscolarCompleto[] = [
-  {
-    id: 'IFS-2026-9001',
-    fecha: '05/09/2026 09:15',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    cursoCodigo: '3ATT',
-    grado: 'Sala 3 Años',
-    division: 'TT',
-    turno: 'Tarde',
-    alumnoId: 'alu-fab-01',
-    alumnoNumeroLista: 15,
-    alumnoNombre: 'Fabricio Pérez',
-    codigoAlumno: '3ATT_FABRICIO_PEREZ',
-    tutorNombre: 'Lorena Pérez',
-    tutorTelefono: '1165432198',
-    tutorEmail: 'lorena.perez@gmail.com',
-    kitId: 'kit-impreso-digital',
-    kitNombre: 'Kit Impreso + Digital',
-    total: 33800,
-    metodoPago: 'mercadopago',
-    estadoPago: 'aprobado',
-    estadoEntrega: 'en_laboratorio',
-    fotosSeleccionadas: {
-      individualId: 'f-ind-1',
-      grupalId: 'f-grup-1'
-    },
-    copiasExtras: {
-      individual15x21: 1,
-      grupal20x30: 0
-    },
-    archivosParaLaboratorio: [
-      {
-        id: 'arch-fab-1',
-        tipo: 'individual',
-        nombreArchivoOriginal: 'IMG_4901_HD.jpg',
-        nombreArchivoLab: '3ATT_FABRICIO_PEREZ.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[0].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[0].url,
-        numeroCopia: 1
-      },
-      {
-        id: 'arch-fab-1-dup',
-        tipo: 'individual',
-        nombreArchivoOriginal: 'IMG_4901_HD.jpg',
-        nombreArchivoLab: '3ATT_FABRICIO_PEREZ_COPIA2.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[0].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[0].url,
-        esCopiaExtra: true,
-        numeroCopia: 2
-      },
-      {
-        id: 'arch-fab-2',
-        tipo: 'grupal',
-        nombreArchivoOriginal: 'IMG_4920_GRUPAL_HD.jpg',
-        nombreArchivoLab: '3ATT_FABRICIO_PEREZ.jpg',
-        tamanoImpresion: '20x30',
-        urlMuestra: FOTOS_MUESTRA[3].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[3].url,
-        numeroCopia: 1
-      }
-    ],
-    linkDescargaHD: 'https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/3ATT/3ATT_FABRICIO_PEREZ.zip',
-    emailEnviado: true,
-    fechaEnvioEmail: '05/09/2026 09:16'
-  },
-  {
-    id: 'IFS-2026-8812',
-    fecha: '02/09/2026 10:30',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    cursoCodigo: 'SALA3TM',
-    grado: 'Sala 3',
-    division: 'Única',
-    turno: 'Mañana',
-    alumnoId: 'alu-01',
-    alumnoNumeroLista: 1,
-    alumnoNombre: 'Abba Fazio, Agustín',
-    codigoAlumno: 'SALA3TM_01_ABBA_FAZIO_AGUSTIN',
-    tutorNombre: 'Mariana Fazio',
-    tutorTelefono: '1154893210',
-    tutorEmail: 'mariana.fazio@gmail.com',
-    kitId: 'kit-impreso-digital',
-    kitNombre: 'Kit Impreso + Digital',
-    total: 30000,
-    metodoPago: 'mercadopago',
-    estadoPago: 'aprobado',
-    estadoEntrega: 'en_laboratorio',
-    fotosSeleccionadas: {
-      individualId: 'f-ind-1',
-      grupalId: 'f-grup-1',
-      docenteId: 'f-doc-1'
-    },
-    archivosParaLaboratorio: [
-      {
-        id: 'arch-1',
-        tipo: 'individual',
-        nombreArchivoOriginal: 'IMG_4901_HD.jpg',
-        nombreArchivoLab: 'SALA3TM_01_ABBA_FAZIO_AGUSTIN_INDIVIDUAL_15x21.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[0].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[0].url
-      },
-      {
-        id: 'arch-2',
-        tipo: 'grupal',
-        nombreArchivoOriginal: 'IMG_4920_GRUPAL_HD.jpg',
-        nombreArchivoLab: 'SALA3TM_01_ABBA_FAZIO_AGUSTIN_GRUPAL_20x30.jpg',
-        tamanoImpresion: '20x30',
-        urlMuestra: FOTOS_MUESTRA[3].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[3].url
-      },
-      {
-        id: 'arch-3',
-        tipo: 'docente',
-        nombreArchivoOriginal: 'IMG_4935_DOCENTE_HD.jpg',
-        nombreArchivoLab: 'SALA3TM_01_ABBA_FAZIO_AGUSTIN_DOCENTE_15x21.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[5].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[5].url
-      }
-    ],
-    linkDescargaHD: 'https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/SALA3TM/01_ABBA_FAZIO_AGUSTIN.zip',
-    emailEnviado: true,
-    fechaEnvioEmail: '02/09/2026 10:31'
-  },
-  {
-    id: 'IFS-2026-8809',
-    fecha: '02/09/2026 11:45',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    cursoCodigo: 'SALA3TM',
-    grado: 'Sala 3',
-    division: 'Única',
-    turno: 'Mañana',
-    alumnoId: 'alu-02',
-    alumnoNumeroLista: 2,
-    alumnoNombre: 'Amigorena, Lucas',
-    codigoAlumno: 'SALA3TM_02_AMIGORENA_LUCAS',
-    tutorNombre: 'Esteban Amigorena',
-    tutorTelefono: '1144559988',
-    tutorEmail: 'esteban.amigorena@hotmail.com',
-    kitId: 'kit-solo-digital',
-    kitNombre: 'Solo Digital HD',
-    total: 15000,
-    metodoPago: 'transferencia',
-    estadoPago: 'aprobado',
-    estadoEntrega: 'listo_descarga',
-    fotosSeleccionadas: {
-      individualId: 'f-ind-2',
-      grupalId: 'f-grup-1'
-    },
-    archivosParaLaboratorio: [
-      {
-        id: 'arch-4',
-        tipo: 'individual',
-        nombreArchivoOriginal: 'IMG_4905_HD.jpg',
-        nombreArchivoLab: 'SALA3TM_02_AMIGORENA_LUCAS_INDIVIDUAL_15x21.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[1].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[1].url
-      },
-      {
-        id: 'arch-5',
-        tipo: 'grupal',
-        nombreArchivoOriginal: 'IMG_4920_GRUPAL_HD.jpg',
-        nombreArchivoLab: 'SALA3TM_02_AMIGORENA_LUCAS_GRUPAL_20x30.jpg',
-        tamanoImpresion: '20x30',
-        urlMuestra: FOTOS_MUESTRA[3].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[3].url
-      }
-    ],
-    linkDescargaHD: 'https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/SALA3TM/02_AMIGORENA_LUCAS.zip',
-    emailEnviado: true,
-    fechaEnvioEmail: '02/09/2026 11:46'
-  },
-  {
-    id: 'IFS-2026-8795',
-    fecha: '01/09/2026 16:20',
-    colegioId: 'col-modelo-2026',
-    colegioNombre: 'Colegio Modelo',
-    cursoCodigo: 'SALA4A',
-    grado: 'Sala 4',
-    division: 'A',
-    turno: 'Tarde',
-    alumnoId: 'alu-04',
-    alumnoNumeroLista: 4,
-    alumnoNombre: 'Balbi, Paz',
-    codigoAlumno: 'SALA4A_04_BALBI_PAZ',
-    tutorNombre: 'Carolina Balbi',
-    tutorTelefono: '1167221100',
-    tutorEmail: 'caro.balbi@yahoo.com.ar',
-    kitId: 'kit-impreso-digital',
-    kitNombre: 'Kit Impreso + Digital',
-    total: 36700,
-    metodoPago: 'mercadopago',
-    estadoPago: 'aprobado',
-    estadoEntrega: 'en_laboratorio',
-    fotosSeleccionadas: {
-      individualId: 'f-ind-3',
-      grupalId: 'f-grup-1',
-      docenteId: 'f-doc-1'
-    },
-    archivosParaLaboratorio: [
-      {
-        id: 'arch-6',
-        tipo: 'individual',
-        nombreArchivoOriginal: 'IMG_5102_HD.jpg',
-        nombreArchivoLab: 'SALA4A_04_BALBI_PAZ_INDIVIDUAL_15x21.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[2].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[2].url
-      },
-      {
-        id: 'arch-7',
-        tipo: 'grupal',
-        nombreArchivoOriginal: 'IMG_5150_GRUPAL_HD.jpg',
-        nombreArchivoLab: 'SALA4A_04_BALBI_PAZ_GRUPAL_20x30.jpg',
-        tamanoImpresion: '20x30',
-        urlMuestra: FOTOS_MUESTRA[3].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[3].url
-      },
-      {
-        id: 'arch-8',
-        tipo: 'docente',
-        nombreArchivoOriginal: 'IMG_5180_DOCENTE_HD.jpg',
-        nombreArchivoLab: 'SALA4A_04_BALBI_PAZ_DOCENTE_15x21.jpg',
-        tamanoImpresion: '15x21',
-        urlMuestra: FOTOS_MUESTRA[5].thumbnail,
-        urlOriginalHD: FOTOS_MUESTRA[5].url
-      }
-    ],
-    linkDescargaHD: 'https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/SALA4A/04_BALBI_PAZ.zip',
-    emailEnviado: true,
-    fechaEnvioEmail: '01/09/2026 16:21'
-  }
-];
+// Pedidos iniciales registrados en el sistema (vacío para entorno de producción real)
+const PEDIDOS_INICIALES: PedidoEscolarCompleto[] = [];
 
 const LOCAL_STORAGE_PEDIDOS_KEY = 'infocus_pedidos_escolares_v1';
 
 export function obtenerPedidosGuardados(): PedidoEscolarCompleto[] {
-  if (typeof window === 'undefined') return PEDIDOS_INICIALES;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_PEDIDOS_KEY);
     if (!raw) {
-      localStorage.setItem(LOCAL_STORAGE_PEDIDOS_KEY, JSON.stringify(PEDIDOS_INICIALES));
-      return PEDIDOS_INICIALES;
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed: PedidoEscolarCompleto[] = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    // Filter out all sample / mock demo orders
+    const cleaned = parsed.filter(
+      (p) =>
+        !['IFS-2026-9001', 'IFS-2026-8812', 'IFS-2026-8809', 'IFS-2026-8795', 'RE-2026-8812', 'RE-2026-8809', 'RE-2026-8795'].includes(p.id) &&
+        !['Fabricio Pérez', 'Abba Fazio, Agustín', 'Amigorena, Lucas', 'Balbi, Paz', 'Valentina Rossi', 'Mateo Benítez', 'Sofía Álvarez'].includes(p.alumnoNombre)
+    );
+    if (cleaned.length !== parsed.length) {
+      localStorage.setItem(LOCAL_STORAGE_PEDIDOS_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
-    return PEDIDOS_INICIALES;
+    return [];
   }
 }
 

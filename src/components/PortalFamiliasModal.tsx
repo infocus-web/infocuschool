@@ -37,7 +37,7 @@ import {
   MessageCircle,
   ChevronDown,
 } from 'lucide-react';
-import { COLEGIOS_EJEMPLO, FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
+import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
@@ -289,9 +289,9 @@ export default function PortalFamiliasModal({
         turno: turno || 'Mañana',
         alumnoNombre: nombreAlumno || 'Alumno Escolar',
         alumnoNumeroLista: numLista,
-        tutorNombre: tutorNombre || 'Familia',
-        tutorTelefono: tutorWhatsapp || '1154893210',
-        tutorEmail: tutorEmail || 'familia@ejemplo.com',
+        tutorNombre: tutorNombre.trim(),
+        tutorTelefono: tutorWhatsapp.trim(),
+        tutorEmail: tutorEmail.trim(),
         kitId: selectedKit.id,
         kitNombre: selectedKit.nombre,
         total: total,
@@ -362,82 +362,9 @@ export default function PortalFamiliasModal({
       return;
     }
 
-    const mockOrders = [
-      {
-        id: 'RE-2026-8812',
-        colegio: 'Colegio Modelo',
-        alumno: 'Valentina Rossi (3° A)',
-        tutor: 'Mariana Gómez',
-        telefono: '1154893210',
-        kit: 'Kit Impreso + Digital',
-        total: 30000,
-        fecha: '02/09/2026',
-        estado: 'en_laboratorio',
-        estadoTexto: 'En Laboratorio Fotográfico',
-        descripcionEstado: 'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.',
-        pasoActual: 3,
-        entregaEstimada: 'Entrega en el colegio: Jueves 10 de Septiembre',
-        descargaLista: true,
-      },
-      {
-        id: 'RE-2026-8809',
-        colegio: 'Colegio Modelo',
-        alumno: 'Mateo Benítez (1° B)',
-        tutor: 'Diego Benítez',
-        telefono: '1144559988',
-        kit: 'Solo Digital HD',
-        total: 15000,
-        fecha: '02/09/2026',
-        estado: 'listo_descarga',
-        estadoTexto: 'Descarga Digital HD Disponible',
-        descripcionEstado: 'Tu pago fue acreditado y los archivos digitales en alta definición ya están disponibles para descargar.',
-        pasoActual: 4,
-        entregaEstimada: 'Archivos listos para guardar en tu dispositivo',
-        descargaLista: true,
-      },
-      {
-        id: 'RE-2026-8795',
-        colegio: 'Colegio Modelo',
-        alumno: 'Sofía Álvarez (5° Verde)',
-        tutor: 'Luciana Álvarez',
-        telefono: '1167221100',
-        kit: 'Kit Impreso + Digital',
-        total: 30000,
-        fecha: '01/09/2026',
-        estado: 'en_camino',
-        estadoTexto: 'Empacado & Rotulado',
-        descripcionEstado: 'La carpeta conmemorativa y fotos ampliadas están empaquetadas en sobre individual rotulado para ser entregadas en la institución escolar.',
-        pasoActual: 4,
-        entregaEstimada: 'Fecha de entrega pautada con el colegio: Viernes 5 de Septiembre',
-        descargaLista: true,
-      },
-    ];
-
-    const found = mockOrders.find(
-      (o) => o.id.includes(query) || (cleanNumber.length >= 6 && o.telefono.includes(cleanNumber))
-    );
-
-    if (found) {
-      setSearchedOrder(found);
-    } else {
-      // Create dynamically matching order for user's query if it resembles a code
-      setSearchedOrder({
-        id: query.startsWith('RE-') ? query : `RE-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-        colegio: selectedColegio ? selectedColegio.nombre : 'Colegio Escolar',
-        alumno: nombreAlumno || 'Alumno Escolar',
-        tutor: tutorNombre || 'Tutor Familiar',
-        telefono: tutorWhatsapp || '11 5489-3210',
-        kit: selectedKit.nombre,
-        total: total,
-        fecha: new Date().toLocaleDateString('es-AR'),
-        estado: 'en_laboratorio',
-        estadoTexto: 'En Proceso de Laboratorio',
-        descripcionEstado: 'Tu pedido ha sido recibido y se encuentra en etapa de copiado y control de calidad.',
-        pasoActual: 3,
-        entregaEstimada: 'Fecha estimada de entrega en el colegio: dentro de los 7 a 10 días hábiles.',
-        descargaLista: true,
-      });
-    }
+    // Si no se encuentra en los pedidos registrados reales
+    setSearchedOrder(null);
+    setTrackingError('No se encontró ningún pedido registrado con ese número o teléfono. Verificá los datos ingresados.');
   };
 
   return (
@@ -482,9 +409,6 @@ export default function PortalFamiliasModal({
                 type="button"
                 onClick={() => {
                   setModalMode('seguimiento');
-                  if (!searchedOrder) {
-                    setTrackingQuery('IFS-2026-8812');
-                  }
                 }}
                 className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                   modalMode === 'seguimiento'
@@ -532,7 +456,7 @@ export default function PortalFamiliasModal({
                   Consultar Estado de Mi Pedido
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto">
-                  Ingresá el número de pedido provisto al momento del pago (ej: <strong className="font-mono">IFS-2026-8812</strong>) o tu número de WhatsApp para conocer el estado en tiempo real.
+                  Ingresá el número de pedido provisto al momento del pago o tu número de WhatsApp para conocer el estado en tiempo real.
                 </p>
               </div>
 
@@ -545,7 +469,7 @@ export default function PortalFamiliasModal({
                       type="text"
                       value={trackingQuery}
                       onChange={(e) => setTrackingQuery(e.target.value)}
-                      placeholder="Ej: IFS-2026-8812 o 1154893210..."
+                      placeholder="Ingresá tu N° de pedido o WhatsApp..."
                       className="w-full pl-10 pr-3 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 bg-slate-50 rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                     />
                   </div>
@@ -560,24 +484,6 @@ export default function PortalFamiliasModal({
                 {trackingError && (
                   <p className="text-[11px] text-red-600 mt-2 text-left px-2">{trackingError}</p>
                 )}
-
-                {/* Quick Examples */}
-                <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-                  <span className="font-medium text-slate-400">Probar ejemplos:</span>
-                  {['IFS-2026-8812', 'IFS-2026-8809', 'IFS-2026-8795'].map((code) => (
-                    <button
-                      key={code}
-                      type="button"
-                      onClick={() => {
-                        setTrackingQuery(code);
-                        setTimeout(() => handleConsultarSeguimiento(), 50);
-                      }}
-                      className="px-2 py-0.5 rounded bg-slate-100 hover:bg-amber-100 text-slate-700 font-mono text-[10px] transition-colors cursor-pointer"
-                    >
-                      {code}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Order Result Card */}

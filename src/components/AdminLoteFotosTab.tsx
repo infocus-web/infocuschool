@@ -5,7 +5,6 @@ import {
   AlertCircle, Database, Copy, HardDrive, Key,
   Sliders, Image as ImageIcon, Sparkles, User
 } from 'lucide-react';
-import { COLEGIOS_EJEMPLO } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { SECCIONES_INICIAL_2026, ALUMNOS_NOMINA_2026 } from '../data/alumnosData';
 import { CODIGOS_CURSOS_INICIALES } from '../data/codigosCursos';
@@ -266,7 +265,7 @@ export default function AdminLoteFotosTab() {
 
   const handleLimpiarSupabaseCompleto = async () => {
     const confirmar = window.confirm(
-      '¿Estás seguro de vaciar el almacenamiento de Supabase y eliminar las fotos de prueba?\n\nEsta acción dejará los buckets "fotos-web" y "fotos-hd" limpios para comenzar de cero.'
+      '¿Estás seguro de vaciar el almacenamiento de Supabase y eliminar las fotos subidas?\n\nEsta acción dejará los buckets "fotos-web" y "fotos-hd" limpios.'
     );
     if (!confirmar) return;
 
@@ -278,7 +277,7 @@ export default function AdminLoteFotosTab() {
       setFotosLote([]);
       recargarFotosActivas();
 
-      setStatusMessage(`¡Supabase Storage limpiado con éxito! Se eliminaron ${resWeb.eliminados + resHD.eliminados} archivos de prueba. Listo para la subida de fotos escolares.`);
+      setStatusMessage(`¡Supabase Storage limpiado con éxito! Se eliminaron ${resWeb.eliminados + resHD.eliminados} archivos. Listo para la subida de fotos escolares.`);
       setTimeout(() => setStatusMessage(null), 5000);
       handleEjecutarDiagnostico();
     } catch (err: any) {

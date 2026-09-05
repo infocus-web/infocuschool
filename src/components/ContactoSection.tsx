@@ -158,7 +158,7 @@ export default function ContactoSection() {
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="tuemail@ejemplo.com"
+                      placeholder="contacto@institucion.edu.ar"
                       className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                     />
                   </div>

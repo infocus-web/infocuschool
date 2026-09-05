@@ -6,7 +6,7 @@ import {
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
   FileSpreadsheet, Scissors, FileText, UserCheck, Trash2
 } from 'lucide-react';
-import { COLEGIOS_EJEMPLO, FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
+import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { ALUMNOS_NOMINA_2026, SECCIONES_INICIAL_2026 } from '../data/alumnosData';
 import { 
@@ -213,46 +213,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     });
   }, [filtroSeccionAlumnos, busquedaAlumnos]);
 
-  // Simulated orders with real students from roster
-  const [pedidos, setPedidos] = useState([
-    {
-      id: 'FOC-2026-8812',
-      fecha: '02/09/2026 10:30',
-      colegio: 'Nivel Inicial 2026',
-      alumno: 'Abba Fazio, Agustín (Sala 3 TM)',
-      tutor: 'Mariana Fazio (11 5489-3210)',
-      kit: 'Kit Impreso + Digital',
-      total: 30000,
-      metodoPago: 'mercadopago',
-      estadoPago: 'aprobado',
-      estadoEntrega: 'en_laboratorio'
-    },
-    {
-      id: 'FOC-2026-8809',
-      fecha: '02/09/2026 09:15',
-      colegio: 'Nivel Inicial 2026',
-      alumno: 'Arbelo, Niza (Sala 4 A)',
-      tutor: 'Diego Arbelo (11 4455-9988)',
-      kit: 'Solo Digital HD',
-      total: 15000,
-      metodoPago: 'transferencia',
-      estadoPago: 'pendiente',
-      estadoEntrega: 'recibido'
-    },
-    {
-      id: 'FOC-2026-8795',
-      fecha: '01/09/2026 18:40',
-      colegio: 'Nivel Inicial 2026',
-      alumno: 'Amigo, Justina Lucía (Sala 5 A)',
-      tutor: 'Luciana Amigo (11 6722-1100)',
-      kit: 'Kit Impreso + Digital',
-      total: 30000,
-      metodoPago: 'mercadopago',
-      estadoPago: 'aprobado',
-      estadoEntrega: 'listo_descarga'
-    }
-  ]);
-
   // Upload photo state
   const [targetColegioId, setTargetColegioId] = useState(() => colegiosList[0]?.id || 'col-isba-2026');
   const [targetCategoria, setTargetCategoria] = useState<'individual' | 'grupal' | 'docente'>('individual');
@@ -375,7 +335,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     setNuevoWhatsapp('');
   };
 
-  const totalRecaudado = pedidos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
+  const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
@@ -462,7 +422,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
                 <span className="text-xs text-slate-500">Pedidos Totales</span>
                 <div className="text-2xl font-black text-slate-900 font-['Outfit']">
-                  {pedidos.length} pedidos
+                  {pedidosCompletos.length} pedidos
                 </div>
               </div>
 
@@ -560,7 +520,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {pedidosCompletos.map(p => (
+                      {pedidosCompletos.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
+                            Aún no se han registrado pedidos de familias en el sistema.
+                          </td>
+                        </tr>
+                      ) : (
+                        pedidosCompletos.map(p => (
                         <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-3 px-4 font-mono font-bold text-slate-900">
                             {p.id}
@@ -616,7 +583,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                             )}
                           </td>
                         </tr>
-                      ))}
+                      )))}
                     </tbody>
                   </table>
                 </div>

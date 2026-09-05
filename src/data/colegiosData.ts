@@ -66,37 +66,6 @@ export const KITS_DISPONIBLES: KitProducto[] = [
   },
 ];
 
-export const COLEGIOS_EJEMPLO: Colegio[] = [
-  {
-    id: 'col-modelo-2026',
-    slug: 'colegio-modelo',
-    nombre: 'Colegio Modelo',
-    localidad: 'Buenos Aires',
-    zona: 'CABA',
-    eventoActual: 'Temporada Oficial Retratos y Fotos Escolares 2026',
-    codigoAcceso: 'MODELO26',
-    grados: [
-      'Sala 3 años',
-      'Sala 4 años',
-      'Sala 5 años',
-      '1° grado',
-      '2° grado',
-      '3° grado',
-      '4° grado',
-      '5° grado',
-      '6° grado',
-      '1° año',
-      '2° año',
-      '3° año',
-      '4° año',
-      '5° año',
-      '6° año',
-    ],
-    divisiones: ['A', 'B', 'Celeste', 'Blanca', 'Verde', 'Azul'],
-    turnos: ['Mañana', 'Tarde', 'Jornada Completa'],
-  },
-];
-
 export const FOTOS_MUESTRA: Foto[] = [
   {
     id: 'foto-ind-1',
@@ -174,7 +143,7 @@ export const PREGUNTAS_FRECUENTES = [
   {
     pregunta: '¿Cómo accedo a las fotos de mi hijo/a?',
     respuesta:
-      'Al momento de inscribirse en el portal como padre/madre, debés contactarte por WhatsApp con la institución educativa para solicitar el Código de Curso correspondiente a tu hijo/a. Con ese código (por ejemplo, SALA3TM, SALA4A o SALA5B) podrás acceder directamente a ver las fotografías escolares protegidas.',
+      'Al momento de inscribirse en el portal como padre/madre, debés contactarte por WhatsApp con la institución educativa para solicitar el Código de Curso correspondiente a tu hijo/a. Con ese código (como SALA3TM, SALA4A o SALA5B) podrás acceder directamente a ver las fotografías escolares protegidas.',
   },
   {
     pregunta: '¿Puedo comprar solo la versión digital HD sin imprimir?',

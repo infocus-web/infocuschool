@@ -27,12 +27,12 @@ import {
   guardarInscripcion,
   buscarFamiliaPorContacto,
   guardarFamiliaActiva,
+  obtenerFamiliaActiva,
   obtenerInscripciones,
   aprobarInscripcion,
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion
 } from '../services/inscripcionesService';
-import { COLEGIOS_EJEMPLO } from '../data/colegiosData';
 import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
@@ -228,8 +228,8 @@ export default function ModalInscripcionFamilia({
     setTimeout(() => setMensajeCopiado(false), 2500);
   };
 
-  // Recent registrations on this device
-  const inscripcionesGuardadas = obtenerInscripciones().slice(0, 3);
+  // Active family session on this browser
+  const miFamiliaActiva = obtenerFamiliaActiva();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
@@ -816,7 +816,7 @@ export default function ModalInscripcionFamilia({
                       type="text"
                       value={loginQuery}
                       onChange={(e) => setLoginQuery(e.target.value)}
-                      placeholder="Ej: 11 5489-3210 o mariana.gomez@gmail.com"
+                      placeholder="11 2345-6789 o tu-email@correo.com"
                       className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                     />
                   </div>
@@ -834,43 +834,37 @@ export default function ModalInscripcionFamilia({
                 </div>
               </form>
 
-              {/* Previously registered accounts on this browser */}
-              {inscripcionesGuardadas.length > 0 && (
+              {/* Only show the current user's active session if already logged in on this browser */}
+              {miFamiliaActiva && (
                 <div className="space-y-2.5">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Familias registradas en este dispositivo:
+                    Tu sesión guardada en este navegador:
                   </h4>
-                  <div className="space-y-2">
-                    {inscripcionesGuardadas.map((fam) => (
-                      <div
-                        key={fam.id}
-                        onClick={() => {
-                          guardarFamiliaActiva(fam);
-                          setFamiliaCreada(fam);
-                          setPaso('solicitar_codigo');
-                        }}
-                        className="p-3.5 bg-white hover:bg-amber-50/60 border border-slate-200 hover:border-amber-300 rounded-xl transition-all flex items-center justify-between gap-3 cursor-pointer group shadow-xs"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 font-bold flex items-center justify-center text-xs group-hover:bg-amber-400 transition-colors">
-                            {fam.alumnoNombre[0]}
-                          </div>
-                          <div>
-                            <p className="text-xs font-extrabold text-slate-900">
-                              {fam.alumnoNombre} {fam.alumnoApellido}
-                            </p>
-                            <p className="text-[11px] text-slate-500">
-                              {fam.grado} ({fam.division}) · Turno {fam.turno} · Tutor: {fam.padreNombre}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1 text-xs font-bold text-amber-700 group-hover:translate-x-0.5 transition-transform">
-                          <span>Continuar</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </div>
+                  <div
+                    onClick={() => {
+                      setFamiliaCreada(miFamiliaActiva);
+                      setPaso('solicitar_codigo');
+                    }}
+                    className="p-3.5 bg-amber-50/50 hover:bg-amber-100/60 border border-amber-200 hover:border-amber-300 rounded-xl transition-all flex items-center justify-between gap-3 cursor-pointer group shadow-xs"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 font-bold flex items-center justify-center text-xs">
+                        {miFamiliaActiva.alumnoNombre[0]}
                       </div>
-                    ))}
+                      <div>
+                        <p className="text-xs font-extrabold text-slate-900">
+                          {miFamiliaActiva.alumnoNombre} {miFamiliaActiva.alumnoApellido}
+                        </p>
+                        <p className="text-[11px] text-slate-600">
+                          {miFamiliaActiva.grado} ({miFamiliaActiva.division}) · Turno {miFamiliaActiva.turno} · Tutor: {miFamiliaActiva.padreNombre}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 text-xs font-bold text-amber-900 group-hover:translate-x-0.5 transition-transform">
+                      <span>Continuar</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </div>
                   </div>
                 </div>
               )}

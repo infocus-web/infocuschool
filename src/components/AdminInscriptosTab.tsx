@@ -13,7 +13,6 @@ import {
   Eye,
   MessageCircle,
   ShieldCheck,
-  UserPlus,
   ExternalLink,
   Copy,
   AlertCircle,
@@ -27,9 +26,8 @@ import {
   rechazarInscripcion,
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion,
-  simularEnvioEmailAprobacion,
-  determinarCodigoParaInscripcion,
-  guardarInscripcion
+  prepararEmailAprobacion,
+  determinarCodigoParaInscripcion
 } from '../services/inscripcionesService';
 import { getCodigosCursos } from '../data/codigosCursos';
 
@@ -51,7 +49,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
   const [detalleEnvioModal, setDetalleEnvioModal] = useState<{
     familia: InscripcionFamilia;
     codigo: string;
-    emailData: ReturnType<typeof simularEnvioEmailAprobacion>;
+    emailData: ReturnType<typeof prepararEmailAprobacion>;
     whatsappMsg: string;
     whatsappUrl: string;
   } | null>(null);
@@ -112,7 +110,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     const actualizadas = obtenerInscripciones();
     setInscripciones(actualizadas);
 
-    const emailData = simularEnvioEmailAprobacion(resultado.familia, resultado.codigo);
+    const emailData = prepararEmailAprobacion(resultado.familia, resultado.codigo);
     const whatsappMsg = generarMensajeWhatsAppAprobacion(resultado.familia, resultado.codigo);
     const whatsappUrl = generarEnlaceWhatsAppAprobacion(resultado.familia, resultado.codigo);
 
@@ -155,40 +153,6 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
       titulo: '¡Todas las solicitudes fueron aprobadas!',
       mensaje: `Se asignaron y enviaron los códigos correspondientes a las ${pendientes.length} familias pendientes.`,
       tipo: 'success'
-    });
-    setTimeout(() => setToastNotificacion(null), 5000);
-  };
-
-  const handleCrearInscripcionPrueba = () => {
-    const nombres = ['Valentina', 'Joaquín', 'Martina', 'Lucas', 'Camila', 'Santiago'];
-    const apellidos = ['Fernández', 'Álvarez', 'Romero', 'Sosa', 'Torres', 'Navarro'];
-    const salas = [
-      { grado: 'Sala 3 años', turno: 'Mañana', div: 'Amarilla' },
-      { grado: 'Sala 4 años', turno: 'Tarde', div: 'Verde' },
-      { grado: 'Sala 5 años', turno: 'Tarde', div: 'Celeste' },
-    ];
-    const rndNombre = nombres[Math.floor(Math.random() * nombres.length)];
-    const rndApellido = apellidos[Math.floor(Math.random() * apellidos.length)];
-    const rndSala = salas[Math.floor(Math.random() * salas.length)];
-
-    const nueva = guardarInscripcion({
-      padreNombre: `Lucía ${rndApellido}`,
-      telefonoWhatsApp: `+54 9 11 ${Math.floor(2000 + Math.random() * 8000)}-${Math.floor(1000 + Math.random() * 9000)}`,
-      email: `familia.${rndApellido.toLowerCase()}@ejemplo.com`,
-      alumnoNombre: rndNombre,
-      alumnoApellido: rndApellido,
-      turno: rndSala.turno,
-      grado: rndSala.grado,
-      division: rndSala.div,
-      colegioId: 'col-modelo-2026',
-      colegioNombre: 'Colegio Modelo'
-    });
-
-    setInscripciones(obtenerInscripciones());
-    setToastNotificacion({
-      titulo: 'Inscripción de prueba creada',
-      mensaje: `Se registró a ${nueva.alumnoNombre} ${nueva.alumnoApellido}. Aparece como "Pendiente" lista para aprobar y enviar código.`,
-      tipo: 'info'
     });
     setTimeout(() => setToastNotificacion(null), 5000);
   };
@@ -330,16 +294,6 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
               <span>Aceptar Todos ({pendientes.length})</span>
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={handleCrearInscripcionPrueba}
-            className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-semibold rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
-            title="Genera una inscripción ficticia para probar la aceptación"
-          >
-            <UserPlus className="w-3.5 h-3.5 text-amber-600" />
-            <span>Simular Inscripción</span>
-          </button>
         </div>
       </div>
 
@@ -364,12 +318,9 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                   <p className="text-sm font-semibold text-slate-600">
                     No se encontraron inscripciones con el criterio seleccionado.
                   </p>
-                  <button
-                    onClick={handleCrearInscripcionPrueba}
-                    className="text-xs text-amber-600 font-bold hover:underline"
-                  >
-                    Crear una inscripción de prueba
-                  </button>
+                  <p className="text-xs text-slate-400">
+                    Las inscripciones solicitadas por familias desde el portal aparecerán aquí para su validación.
+                  </p>
                 </td>
               </tr>
             ) : (
@@ -573,7 +524,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                                 setDetalleEnvioModal({
                                   familia: item,
                                   codigo,
-                                  emailData: simularEnvioEmailAprobacion(item, codigo),
+                                  emailData: prepararEmailAprobacion(item, codigo),
                                   whatsappMsg: generarMensajeWhatsAppAprobacion(item, codigo),
                                   whatsappUrl: generarEnlaceWhatsAppAprobacion(item, codigo)
                                 });

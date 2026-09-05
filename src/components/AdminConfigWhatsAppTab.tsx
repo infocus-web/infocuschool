@@ -60,8 +60,8 @@ export default function AdminConfigWhatsAppTab() {
   };
 
   const numeroSanitizado = sanitizarNumeroWhatsApp(numeroInput);
-  const enlacePrueba = `https://wa.me/${numeroSanitizado}?text=${encodeURIComponent(
-    'Hola, me comunico para solicitar el código de curso para ver las fotos escolares en el portal.'
+  const enlaceWhatsAppActivo = `https://wa.me/${numeroSanitizado}?text=${encodeURIComponent(
+    mensajePredeterminadoInput.trim() || 'Hola, me comunico para solicitar el código de curso para ver las fotos escolares en el portal.'
   )}`;
 
   const handleGuardarGeneral = async (e: React.FormEvent) => {
@@ -183,22 +183,11 @@ export default function AdminConfigWhatsAppTab() {
               <button
                 type="submit"
                 disabled={cargando || !numeroSanitizado}
-                className="w-full sm:flex-1 py-3 px-5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                className="w-full py-3 px-5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
               >
                 <Save className="w-4 h-4" />
                 <span>{cargando ? 'Guardando cambios...' : 'Guardar y Aplicar Número'}</span>
               </button>
-
-              <a
-                href={enlacePrueba}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full sm:w-auto px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
-                title="Abre WhatsApp en una nueva pestaña para comprobar que el número funcione"
-              >
-                <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Probar Enlace</span>
-              </a>
             </div>
 
             {/* Status indicators */}
@@ -254,7 +243,7 @@ export default function AdminConfigWhatsAppTab() {
               </div>
 
               <a
-                href={enlacePrueba}
+                href={enlaceWhatsAppActivo}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full px-4 py-2.5 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
