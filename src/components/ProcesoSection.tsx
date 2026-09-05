@@ -12,7 +12,7 @@ export default function ProcesoSection({ onOpenFamilias }: ProcesoSectionProps) 
       titulo: 'Recibís el código',
       subtitulo: 'Acceso directo a tu curso',
       descripcion:
-        'Con el código provisto (ej: SALA3TM o PASTOR26) ingresás directo al grado, división y turno exacto de tu hijo/a.',
+        'Con el código provisto por tu colegio o docente (ej: SALA3TM) ingresás directo al grado, división y turno exacto de tu hijo/a.',
       destacado: 'Código único por curso',
     },
     {
@@ -116,7 +116,7 @@ export default function ProcesoSection({ onOpenFamilias }: ProcesoSectionProps) 
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
-              onClick={() => onOpenFamilias('col-divino-pastor')}
+              onClick={() => onOpenFamilias('col-modelo-2026')}
               className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-md shadow-amber-400/20 flex items-center gap-2 cursor-pointer"
             >
               <span>Ingresar al Portal de Familias</span>

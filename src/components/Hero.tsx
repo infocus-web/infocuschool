@@ -175,7 +175,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Ingresá tu código de acceso escolar (ej: PASTOR26)..."
+                    placeholder="Ingresá tu código de curso o sala (ej: SALA3TM)..."
                     className="w-full pl-11 pr-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent border-0 focus:outline-hidden focus:ring-0"
                   />
                   {searchTerm && (
@@ -268,7 +268,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 </div>
                 <button
                   id="btn-ver-galeria-card"
-                  onClick={() => onOpenFamilias('col-divino-pastor')}
+                  onClick={() => onOpenFamilias('col-modelo-2026')}
                   className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-slate-900/10"
                 >
                   <span>Ingresar a Galería</span>

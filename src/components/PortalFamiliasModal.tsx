@@ -740,7 +740,7 @@ export default function PortalFamiliasModal({
                           handleIngresarCodigo();
                         }
                       }}
-                      placeholder="Ej: SALA3TM o PASTOR26"
+                      placeholder="Ej: SALA3TM"
                       className="px-3.5 py-2.5 text-xs sm:text-sm uppercase font-mono font-bold tracking-wider bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full sm:w-48 shadow-xs"
                     />
                     <button
@@ -916,15 +916,6 @@ export default function PortalFamiliasModal({
                           Cerrar sesión
                         </button>
                       </div>
-                    ) : onOpenInscripcion ? (
-                      <button
-                        type="button"
-                        onClick={onOpenInscripcion}
-                        className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-950 bg-amber-400 hover:bg-amber-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer shadow-xs"
-                      >
-                        <span>Inscribirme / Crear usuario</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
                     ) : null}
                   </div>
 

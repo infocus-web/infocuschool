@@ -37,6 +37,12 @@ export function getCodigosCursos(): Record<string, string> {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
+      // Clean any obsolete codes like PASTOR
+      for (const key of Object.keys(parsed)) {
+        if (typeof parsed[key] === 'string' && parsed[key].toUpperCase().includes('PASTOR')) {
+          delete parsed[key];
+        }
+      }
       return { ...CODIGOS_CURSOS_INICIALES, ...parsed };
     }
   } catch (e) {
@@ -108,14 +114,6 @@ export function buscarSeccionPorCodigo(codigo: string): { seccion: SeccionEscola
         return { seccion, codigoValido: codeVal };
       }
     }
-  }
-
-  // Also check if matches institution access codes
-  if (clean === 'PASTOR26' || clean === 'PASTOR2026' || clean === 'DIVINOPASTOR' || clean === 'PASTOR') {
-    return { seccion: SECCIONES_INICIAL_2026[0], codigoValido: 'PASTOR26' };
-  }
-  if (clean === 'JARDIN26' || clean === 'JARDIN2026') {
-    return { seccion: SECCIONES_INICIAL_2026[0], codigoValido: 'JARDIN26' };
   }
 
   return null;
