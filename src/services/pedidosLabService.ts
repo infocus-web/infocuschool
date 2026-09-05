@@ -14,8 +14,9 @@ export interface ArchivoFotoLab {
 }
 
 export interface CopiasExtrasConfig {
-  individual15x21: number;
-  grupal20x30: number;
+  carpetasExtras?: number;
+  individual15x21?: number;
+  grupal20x30?: number;
   docente15x21?: number;
   otras15x21?: number;
 }
@@ -459,7 +460,78 @@ export function registrarPedidoDesdePortal(params: {
     });
   }
 
-  // Generación automática de archivos duplicados para el laboratorio (Copia Extra 15x21)
+  // Generación automática de archivos duplicados para el laboratorio por Copia Extra de Carpeta
+  if (params.copiasExtras?.carpetasExtras && params.copiasExtras.carpetasExtras > 0) {
+    for (let c = 1; c <= params.copiasExtras.carpetasExtras; c++) {
+      const numCopia = c + 1;
+      // 1. Copia extra de foto individual 15x21
+      archivosLab.push({
+        id: `arch-${Date.now()}-extra-carp-ind-${c}`,
+        tipo: 'individual',
+        nombreArchivoOriginal: 'INDIVIDUAL_HD.jpg',
+        nombreArchivoLab: generarNombreArchivoLab(
+          params.cursoCodigo,
+          numLista,
+          params.alumnoNombre,
+          'INDIVIDUAL',
+          '15x21',
+          true,
+          numCopia
+        ),
+        tamanoImpresion: '15x21',
+        urlMuestra: individualFoto.thumbnail,
+        urlOriginalHD: individualFoto.url,
+        esCopiaExtra: true,
+        numeroCopia: numCopia
+      });
+
+      // 2. Copia extra de foto grupal 20x30
+      archivosLab.push({
+        id: `arch-${Date.now()}-extra-carp-grup-${c}`,
+        tipo: 'grupal',
+        nombreArchivoOriginal: 'GRUPAL_HD.jpg',
+        nombreArchivoLab: generarNombreArchivoLab(
+          params.cursoCodigo,
+          numLista,
+          params.alumnoNombre,
+          'GRUPAL',
+          '20x30',
+          true,
+          numCopia
+        ),
+        tamanoImpresion: '20x30',
+        urlMuestra: grupalFoto.thumbnail,
+        urlOriginalHD: grupalFoto.url,
+        esCopiaExtra: true,
+        numeroCopia: numCopia
+      });
+
+      // 3. Copia extra de foto docente 15x21 (si aplica)
+      if (docenteFoto) {
+        archivosLab.push({
+          id: `arch-${Date.now()}-extra-carp-doc-${c}`,
+          tipo: 'docente',
+          nombreArchivoOriginal: 'DOCENTE_HD.jpg',
+          nombreArchivoLab: generarNombreArchivoLab(
+            params.cursoCodigo,
+            numLista,
+            params.alumnoNombre,
+            'DOCENTE',
+            '15x21',
+            true,
+            numCopia
+          ),
+          tamanoImpresion: '15x21',
+          urlMuestra: docenteFoto.thumbnail,
+          urlOriginalHD: docenteFoto.url,
+          esCopiaExtra: true,
+          numeroCopia: numCopia
+        });
+      }
+    }
+  }
+
+  // Generación automática de archivos duplicados para el laboratorio (Copia Extra 15x21 suelta)
   if (params.copiasExtras?.individual15x21 && params.copiasExtras.individual15x21 > 0) {
     for (let c = 1; c <= params.copiasExtras.individual15x21; c++) {
       const numCopia = c + 1;

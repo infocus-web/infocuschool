@@ -102,11 +102,8 @@ export default function PortalFamiliasModal({
   const [extraStickers, setExtraStickers] = useState(false);
   const [extraPortarretrato, setExtraPortarretrato] = useState(false);
   const [extraLlavero, setExtraLlavero] = useState(false);
-  // Copias extras impresas para abuelos/familiares (duplicados automáticos para laboratorio)
-  const [extraCopiaIndividual, setExtraCopiaIndividual] = useState<number>(0);
-  const [extraCopiaGrupal, setExtraCopiaGrupal] = useState<number>(0);
-  const [extraCopiaDocente, setExtraCopiaDocente] = useState<number>(0);
-  const [extraCopiaOtras, setExtraCopiaOtras] = useState<number>(0);
+  // Copia extra de la carpeta completa para abuelos o familiares
+  const [extraCarpetas, setExtraCarpetas] = useState<number>(0);
 
   // Step 4: Checkout
   const [tutorNombre, setTutorNombre] = useState('');
@@ -226,19 +223,13 @@ export default function PortalFamiliasModal({
   );
 
   // Calculate Total
-  const PRECIO_COPIA_EXTRA_15x21 = 3800;
-  const PRECIO_COPIA_EXTRA_20x30 = 4900;
+  const PRECIO_CARPETA_EXTRA = 15000;
   const precioBase = selectedKit.precio;
   const precioStickers = extraStickers ? 2500 : 0;
   const precioPortarretrato = extraPortarretrato ? 4200 : 0;
   const precioLlavero = extraLlavero ? 2200 : 0;
-  const totalCopiasExtrasCantidad =
-    extraCopiaIndividual + extraCopiaGrupal + extraCopiaDocente + extraCopiaOtras;
-  const precioCopiasExtras =
-    extraCopiaIndividual * PRECIO_COPIA_EXTRA_15x21 +
-    extraCopiaGrupal * PRECIO_COPIA_EXTRA_20x30 +
-    extraCopiaDocente * PRECIO_COPIA_EXTRA_15x21 +
-    extraCopiaOtras * PRECIO_COPIA_EXTRA_15x21;
+  const totalCopiasExtrasCantidad = extraCarpetas;
+  const precioCopiasExtras = extraCarpetas * PRECIO_CARPETA_EXTRA;
   const total = precioBase + precioStickers + precioPortarretrato + precioLlavero + precioCopiasExtras;
 
   // Handlers
@@ -278,10 +269,11 @@ export default function PortalFamiliasModal({
           docenteId: fotoSeleccionadaDocente,
         },
         copiasExtras: {
-          individual15x21: extraCopiaIndividual,
-          grupal20x30: extraCopiaGrupal,
-          docente15x21: extraCopiaDocente,
-          otras15x21: extraCopiaOtras,
+          carpetasExtras: extraCarpetas,
+          individual15x21: extraCarpetas,
+          grupal20x30: extraCarpetas,
+          docente15x21: extraCarpetas,
+          otras15x21: 0,
         },
       });
 
@@ -1153,10 +1145,10 @@ export default function PortalFamiliasModal({
                   ))}
                 </div>
 
-                {totalCopiasExtrasCantidad > 0 && (
+                {extraCarpetas > 0 && (
                   <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-1.5 shadow-2xs">
                     <Copy className="w-3.5 h-3.5 text-amber-700" />
-                    <span>{totalCopiasExtrasCantidad} copia(s) extra(s) agregada(s)</span>
+                    <span>{extraCarpetas} carpeta(s) extra(s) agregada(s)</span>
                   </span>
                 )}
               </div>
@@ -1175,34 +1167,11 @@ export default function PortalFamiliasModal({
                     if (foto.categoria === 'docente') setFotoSeleccionadaDocente(foto.id);
                   };
 
-                  const getExtraCopiesForThisFoto = () => {
-                    if (foto.categoria === 'individual') return extraCopiaIndividual;
-                    if (foto.categoria === 'grupal') return extraCopiaGrupal;
-                    if (foto.categoria === 'docente') return extraCopiaDocente;
-                    return extraCopiaOtras;
-                  };
-
-                  const handleAddExtraCopy = () => {
-                    if (foto.categoria === 'individual') setExtraCopiaIndividual((prev) => prev + 1);
-                    else if (foto.categoria === 'grupal') setExtraCopiaGrupal((prev) => prev + 1);
-                    else if (foto.categoria === 'docente') setExtraCopiaDocente((prev) => prev + 1);
-                    else setExtraCopiaOtras((prev) => prev + 1);
-                  };
-
-                  const handleRemoveExtraCopy = () => {
-                    if (foto.categoria === 'individual') setExtraCopiaIndividual((prev) => Math.max(0, prev - 1));
-                    else if (foto.categoria === 'grupal') setExtraCopiaGrupal((prev) => Math.max(0, prev - 1));
-                    else if (foto.categoria === 'docente') setExtraCopiaDocente((prev) => Math.max(0, prev - 1));
-                    else setExtraCopiaOtras((prev) => Math.max(0, prev - 1));
-                  };
-
-                  const extraQty = getExtraCopiesForThisFoto();
-
                   return (
                     <div
                       key={foto.id}
                       className={`relative bg-white rounded-2xl overflow-hidden border transition-all duration-200 flex flex-col justify-between ${
-                        isSelected || extraQty > 0
+                        isSelected
                           ? 'border-2 border-amber-500 shadow-lg shadow-amber-500/10 ring-2 ring-amber-400/30'
                           : 'border-slate-200 hover:border-slate-300 shadow-xs'
                       }`}
@@ -1225,21 +1194,15 @@ export default function PortalFamiliasModal({
                         {/* Watermark overlay matching exact sample */}
                         <WatermarkOverlay visible={showWatermark} />
 
-                        {/* Status badges */}
-                        <div className="absolute top-2.5 left-2.5 flex flex-col gap-1.5">
-                          {isSelected && (
+                        {/* Status badge */}
+                        {isSelected && (
+                          <div className="absolute top-2.5 left-2.5">
                             <span className="px-2.5 py-1 rounded-md bg-amber-400 text-slate-950 text-[11px] font-extrabold flex items-center gap-1 shadow-md">
                               <Check className="w-3.5 h-3.5 stroke-[3]" />
                               <span>En el Pack Oficial</span>
                             </span>
-                          )}
-                          {extraQty > 0 && (
-                            <span className="px-2.5 py-1 rounded-md bg-slate-900 text-amber-300 text-[11px] font-extrabold flex items-center gap-1 shadow-md border border-amber-400/40">
-                              <Copy className="w-3 h-3 text-amber-400" />
-                              <span>+{extraQty} copia extra</span>
-                            </span>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
                         {/* Zoom button */}
                         <button
@@ -1253,242 +1216,124 @@ export default function PortalFamiliasModal({
                       </div>
 
                       {/* Card Details & Action Area */}
-                      <div className="p-3.5 flex flex-col gap-3 text-left bg-white">
-                        <div className="flex items-center justify-between gap-2">
+                      <div className="p-3.5 flex items-center justify-between gap-3 text-left bg-white">
+                        <div>
                           <h5 className="text-xs font-bold text-slate-900 truncate">{foto.titulo}</h5>
-
-                          {/* Primary Pack selection button */}
-                          {foto.categoria !== 'patio' && (
-                            <button
-                              type="button"
-                              onClick={handleSelectThisFoto}
-                              className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                                isSelected
-                                  ? 'bg-amber-400 text-slate-950 shadow-xs'
-                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                              }`}
-                            >
-                              {isSelected ? (
-                                <>
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
-                                  <span>Elegida</span>
-                                </>
-                              ) : (
-                                <span>Elegir</span>
-                              )}
-                            </button>
-                          )}
+                          <span className="text-[10px] text-slate-500">
+                            {foto.categoria === 'grupal' ? 'Formato 20x30 cm' : 'Formato 15x21 cm'}
+                          </span>
                         </div>
 
-                        {/* Direct Extra Copy Purchase on Card */}
-                        <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
-                          <div>
-                            <span className="text-[11px] font-bold text-slate-700 block">
-                              Copia extra {foto.categoria === 'grupal' ? '20x30' : '15x21'}
-                            </span>
-                            <span className="text-[10px] text-slate-500">
-                              {foto.categoria === 'grupal' ? '+$4.900 c/u' : '+$3.800 c/u'}
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-1.5">
-                            {extraQty > 0 ? (
-                              <div className="flex items-center gap-1 bg-amber-50 border border-amber-300 rounded-lg p-0.5">
-                                <button
-                                  type="button"
-                                  onClick={handleRemoveExtraCopy}
-                                  className="w-6 h-6 rounded bg-white hover:bg-slate-100 text-slate-700 font-bold flex items-center justify-center text-xs cursor-pointer shadow-2xs"
-                                  title="Restar copia"
-                                >
-                                  <Minus className="w-3 h-3" />
-                                </button>
-                                <span className="w-6 text-center text-xs font-black text-amber-950">
-                                  {extraQty}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={handleAddExtraCopy}
-                                  className="w-6 h-6 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center text-xs cursor-pointer shadow-2xs"
-                                  title="Sumar copia"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                </button>
-                              </div>
+                        {/* Primary Pack selection button */}
+                        {foto.categoria !== 'patio' && (
+                          <button
+                            type="button"
+                            onClick={handleSelectThisFoto}
+                            className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-400 text-slate-950 shadow-xs'
+                                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {isSelected ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
+                                <span>Elegida</span>
+                              </>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={handleAddExtraCopy}
-                                className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                              >
-                                <Plus className="w-3 h-3 text-amber-700" />
-                                <span>Pedir Copia Extra</span>
-                              </button>
+                              <span>Elegir</span>
                             )}
-                          </div>
-                        </div>
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Dedicated Extra Copies Section in Step 2 */}
-              <div className="bg-gradient-to-br from-amber-50/80 via-white to-amber-50/40 rounded-2xl p-4 sm:p-5 border-2 border-amber-300/80 shadow-xs space-y-4 text-left">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-xs shrink-0">
-                      <Copy className="w-5 h-5" />
+              {/* Dedicated Extra Copies Section in Step 2: Copia Extra de la Carpeta */}
+              <div className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/50 rounded-2xl p-4 sm:p-5 border-2 border-amber-300 shadow-xs text-left">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-start sm:items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-xs shrink-0 mt-0.5 sm:mt-0">
+                      <FolderCheck className="w-6 h-6" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                        <span>¿Querés encargar fotos o copias impresas adicionales?</span>
-                        <span className="text-[10px] font-extrabold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full uppercase">
-                          Para abuelos / familiares
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="text-sm font-bold text-slate-900 font-['Outfit']">
+                          ¿Deseás encargar una copia extra de la carpeta?
+                        </h4>
+                        <span className="text-[10px] font-extrabold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          Para abuelos o familiares
                         </span>
-                      </h4>
-                      <p className="text-xs text-slate-600 mt-0.5">
-                        El sistema genera automáticamente archivos duplicados rotulados para el laboratorio químico (evitando cualquier omisión al armar el sobre).
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+                        Al elegir una copia de la carpeta, recibirás una <strong>carpeta conmemorativa adicional completa</strong> con las mismas fotografías seleccionadas impresas en laboratorio químico (foto grupal 20x30 y fotos individuales 15x21).
                       </p>
+                      <span className="text-xs font-bold text-amber-900 inline-block mt-1">
+                        +$15.000 ARS por cada carpeta adicional
+                      </span>
                     </div>
                   </div>
 
-                  {totalCopiasExtrasCantidad > 0 && (
-                    <div className="px-3.5 py-1.5 rounded-xl bg-slate-900 text-amber-300 text-xs font-bold flex items-center gap-2 shrink-0 self-start sm:self-auto shadow-xs">
-                      <span>Total copias extras:</span>
-                      <span className="text-white font-black">+{totalCopiasExtrasCantidad} (+$${precioCopiasExtras.toLocaleString('es-AR')})</span>
+                  {/* Single Clean Selector */}
+                  <div className="flex items-center gap-3 shrink-0 self-start md:self-center pt-2 md:pt-0 border-t md:border-t-0 border-amber-200/80 w-full md:w-auto justify-between md:justify-end">
+                    <span className="text-xs font-bold text-slate-700 md:hidden">Carpetas extras:</span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        id="btn-menos-carpeta-extra"
+                        onClick={() => setExtraCarpetas((prev) => Math.max(0, prev - 1))}
+                        disabled={extraCarpetas === 0}
+                        className="w-9 h-9 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
+                        title="Restar carpeta extra"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <div className="min-w-10 text-center">
+                        <span className="font-mono font-extrabold text-base text-slate-900 block">
+                          {extraCarpetas}
+                        </span>
+                        <span className="text-[9px] text-slate-500 uppercase font-bold block -mt-0.5">
+                          {extraCarpetas === 1 ? 'carpeta' : 'carpetas'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        id="btn-mas-carpeta-extra"
+                        onClick={() => setExtraCarpetas((prev) => prev + 1)}
+                        className="w-9 h-9 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
+                        title="Agregar carpeta extra"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
                     </div>
-                  )}
+
+                    {extraCarpetas === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setExtraCarpetas(1)}
+                        className="hidden sm:inline-flex px-3 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold border border-amber-300 transition-colors cursor-pointer"
+                      >
+                        + Sumar 1 Carpeta
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-                  {/* Selector 1: Retrato Individual */}
-                  <div className="p-3 rounded-xl bg-white border border-slate-200 hover:border-amber-400 transition-colors shadow-2xs flex flex-col justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 block truncate">Retrato Individual (15x21)</span>
-                      <span className="text-[11px] text-amber-800 font-bold block mt-0.5">+$3.800 c/u</span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">Papel satinado de laboratorio</span>
+                {extraCarpetas > 0 && (
+                  <div className="mt-3 pt-3 border-t border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 text-amber-950 font-semibold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>
+                        Recibirás <strong>{extraCarpetas + 1} carpetas completas</strong> en total (1 del pack principal + {extraCarpetas} para abuelos/familiares).
+                      </span>
                     </div>
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
-                      <span className="text-xs font-bold text-slate-600">Copias:</span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaIndividual((prev) => Math.max(0, prev - 1))}
-                          disabled={extraCopiaIndividual === 0}
-                          className="w-7 h-7 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-6 text-center font-mono font-bold text-xs text-slate-900">
-                          {extraCopiaIndividual}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaIndividual((prev) => prev + 1)}
-                          className="w-7 h-7 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-2xs"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
+                    <span className="font-extrabold text-amber-900 bg-white px-2.5 py-1 rounded-lg border border-amber-300">
+                      Subtotal carpetas extras: +${(extraCarpetas * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}
+                    </span>
                   </div>
-
-                  {/* Selector 2: Foto Grupal 20x30 */}
-                  <div className="p-3 rounded-xl bg-white border border-slate-200 hover:border-amber-400 transition-colors shadow-2xs flex flex-col justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 block truncate">Foto Grupal (20x30)</span>
-                      <span className="text-[11px] text-amber-800 font-bold block mt-0.5">+$4.900 c/u</span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">Ampliación gran formato</span>
-                    </div>
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
-                      <span className="text-xs font-bold text-slate-600">Copias:</span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaGrupal((prev) => Math.max(0, prev - 1))}
-                          disabled={extraCopiaGrupal === 0}
-                          className="w-7 h-7 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-6 text-center font-mono font-bold text-xs text-slate-900">
-                          {extraCopiaGrupal}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaGrupal((prev) => prev + 1)}
-                          className="w-7 h-7 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-2xs"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Selector 3: Con Docente 15x21 */}
-                  <div className="p-3 rounded-xl bg-white border border-slate-200 hover:border-amber-400 transition-colors shadow-2xs flex flex-col justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 block truncate">Con la Seño (15x21)</span>
-                      <span className="text-[11px] text-amber-800 font-bold block mt-0.5">+$3.800 c/u</span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">Foto con el/la docente</span>
-                    </div>
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
-                      <span className="text-xs font-bold text-slate-600">Copias:</span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaDocente((prev) => Math.max(0, prev - 1))}
-                          disabled={extraCopiaDocente === 0}
-                          className="w-7 h-7 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-6 text-center font-mono font-bold text-xs text-slate-900">
-                          {extraCopiaDocente}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaDocente((prev) => prev + 1)}
-                          className="w-7 h-7 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-2xs"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Selector 4: Otras Fotos 15x21 */}
-                  <div className="p-3 rounded-xl bg-white border border-slate-200 hover:border-amber-400 transition-colors shadow-2xs flex flex-col justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-900 block truncate">Otras Fotos (15x21)</span>
-                      <span className="text-[11px] text-amber-800 font-bold block mt-0.5">+$3.800 c/u</span>
-                      <span className="text-[10px] text-slate-500 block mt-0.5">Actividades y momentos</span>
-                    </div>
-                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-100">
-                      <span className="text-xs font-bold text-slate-600">Copias:</span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaOtras((prev) => Math.max(0, prev - 1))}
-                          disabled={extraCopiaOtras === 0}
-                          className="w-7 h-7 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                        >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-6 text-center font-mono font-bold text-xs text-slate-900">
-                          {extraCopiaOtras}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaOtras((prev) => prev + 1)}
-                          className="w-7 h-7 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-2xs"
-                        >
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Bottom Next Step Bar */}
@@ -1496,9 +1341,9 @@ export default function PortalFamiliasModal({
                 <div className="text-xs text-slate-600 text-left">
                   <span className="font-bold text-slate-900">Fotos del pack: </span>
                   Individual, Grupal y Con la Seño.
-                  {totalCopiasExtrasCantidad > 0 && (
+                  {extraCarpetas > 0 && (
                     <span className="ml-1.5 text-amber-800 font-bold">
-                      (+ {totalCopiasExtrasCantidad} copias extras añadidas)
+                      (+ {extraCarpetas} carpeta{extraCarpetas > 1 ? 's' : ''} extra{extraCarpetas > 1 ? 's' : ''} para abuelos)
                     </span>
                   )}
                 </div>
@@ -1610,330 +1455,101 @@ export default function PortalFamiliasModal({
                 })}
               </div>
 
-              {/* Copias Extras Impresas (Para Abuelos / Familiares) */}
-              <div className="bg-gradient-to-br from-amber-50/70 via-white to-amber-50/40 rounded-2xl p-5 border-2 border-amber-300/80 text-left space-y-4 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200/70">
+              {/* Copia Extra de Carpeta Escolar Completa (Para Abuelos / Familiares) */}
+              <div className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/50 rounded-2xl p-5 border-2 border-amber-300 text-left space-y-4 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200/80">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-xs shrink-0">
-                      <Copy className="w-5 h-5 text-slate-950" />
+                      <FolderCheck className="w-5 h-5 text-slate-950" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-slate-900 font-['Outfit']">
-                          ¿Querés solicitar copias extras de tus fotos impresas?
+                          ¿Deseás encargar una copia extra de la carpeta escolar?
                         </h4>
-                        <span className="text-[10px] font-bold bg-amber-200/70 text-amber-950 px-2 py-0.5 rounded-full">
-                          Abuelos & Familia
+                        <span className="text-[10px] font-extrabold bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          Para abuelos o familiares
                         </span>
                       </div>
                       <p className="text-xs text-slate-600 mt-0.5">
-                        El sistema generará <strong>automáticamente el archivo duplicado necesario para el laboratorio fotográfico</strong> (con código de backprint), garantizando que salgan impresas y ensobradas sin errores ni omisiones.
+                        Al elegir una copia de la carpeta, el sistema generará automáticamente el juego completo duplicado de fotos (individual 15x21, grupal 20x30 y con la seño 15x21) y una carpeta adicional armada para entrega a familiares.
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-[11px] font-bold text-amber-900 shrink-0 self-start sm:self-auto shadow-2xs">
                     <Printer className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Revelado Minilab Químico</span>
+                    <span>Revelado Químico Minilab</span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Copia Extra 15x21 Retrato */}
-                  <div
-                    className={`p-4 rounded-xl border transition-all ${
-                      extraCopiaIndividual > 0
-                        ? 'bg-white border-amber-500 shadow-md ring-1 ring-amber-400'
-                        : 'bg-white/80 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-900">
-                            Copia Extra Retrato Individual (15x21 cm)
-                          </span>
-                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
-                            Papel Satinado 260g
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          Fotografía individual suelta de tu hijo/a. Ideal para regalar a los abuelos (+ $3.800 c/u).
-                        </p>
-                      </div>
+                <div className="p-4 rounded-xl bg-white border border-amber-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-slate-900">
+                        Carpeta Escolar Extra Completa
+                      </span>
+                      <span className="text-[10px] font-extrabold bg-amber-100 text-amber-900 px-2 py-0.5 rounded border border-amber-300">
+                        +$15.000 ARS c/u
+                      </span>
                     </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                      <div>
-                        <span className="text-xs font-extrabold text-slate-900">
-                          {extraCopiaIndividual === 0
-                            ? '$3.800 ARS c/u'
-                            : `${extraCopiaIndividual} copia(s): +$${(
-                                extraCopiaIndividual * PRECIO_COPIA_EXTRA_15x21
-                              ).toLocaleString('es-AR')}`}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          id="btn-menos-copia-individual"
-                          onClick={() => setExtraCopiaIndividual(Math.max(0, extraCopiaIndividual - 1))}
-                          disabled={extraCopiaIndividual === 0}
-                          className="w-8 h-8 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                          title="Restar una copia extra"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="w-7 text-center font-mono font-bold text-sm text-slate-900">
-                          {extraCopiaIndividual}
-                        </span>
-                        <button
-                          type="button"
-                          id="btn-mas-copia-individual"
-                          onClick={() => setExtraCopiaIndividual(extraCopiaIndividual + 1)}
-                          className="w-8 h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
-                          title="Agregar una copia extra individual"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {extraCopiaIndividual > 0 && (
-                      <div className="mt-2.5 p-2 rounded-lg bg-amber-100/60 border border-amber-200 text-[10px] text-amber-950 flex items-start gap-1.5 font-mono">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Archivo duplicado en cola:</strong> Se generará{' '}
-                          <span className="font-bold underline text-amber-900">
-                            {codigoAcceso.trim() || '3ATT'}_{nombreAlumno.replace(/\s+/g, '_').toUpperCase() || 'ALUMNO'}_COPIA2.jpg
-                          </span>{' '}
-                          en la carpeta 15x21 para impresión directa del minilab.
-                        </span>
-                      </div>
-                    )}
+                    <p className="text-xs text-slate-600 mt-1 max-w-xl">
+                      Incluye la carpeta conmemorativa física más todas las copias de laboratorio de las fotos que seleccionaste (individual 15x21 + grupal 20x30 + con la seño 15x21).
+                    </p>
                   </div>
 
-                  {/* Copia Extra 20x30 Foto Grupal */}
-                  <div
-                    className={`p-4 rounded-xl border transition-all ${
-                      extraCopiaGrupal > 0
-                        ? 'bg-white border-amber-500 shadow-md ring-1 ring-amber-400'
-                        : 'bg-white/80 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-900">
-                            Copia Extra Foto Grupal (20x30 cm)
-                          </span>
-                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
-                            Gran Formato
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          Ampliación de recuerdo de todo el grupo/curso completo (+ $4.900 c/u).
-                        </p>
+                  <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        id="btn-menos-carpeta-extra-step3"
+                        onClick={() => setExtraCarpetas((prev) => Math.max(0, prev - 1))}
+                        disabled={extraCarpetas === 0}
+                        className="w-9 h-9 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
+                        title="Restar carpeta extra"
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <div className="min-w-10 text-center">
+                        <span className="font-mono font-extrabold text-base text-slate-900 block">
+                          {extraCarpetas}
+                        </span>
+                        <span className="text-[9px] text-slate-500 uppercase font-bold block -mt-0.5">
+                          {extraCarpetas === 1 ? 'carpeta' : 'carpetas'}
+                        </span>
                       </div>
+                      <button
+                        type="button"
+                        id="btn-mas-carpeta-extra-step3"
+                        onClick={() => setExtraCarpetas((prev) => prev + 1)}
+                        className="w-9 h-9 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
+                        title="Agregar carpeta extra"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
                     </div>
 
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                      <div>
-                        <span className="text-xs font-extrabold text-slate-900">
-                          {extraCopiaGrupal === 0
-                            ? '$4.900 ARS c/u'
-                            : `${extraCopiaGrupal} copia(s): +$${(
-                                extraCopiaGrupal * PRECIO_COPIA_EXTRA_20x30
-                              ).toLocaleString('es-AR')}`}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          id="btn-menos-copia-grupal"
-                          onClick={() => setExtraCopiaGrupal(Math.max(0, extraCopiaGrupal - 1))}
-                          disabled={extraCopiaGrupal === 0}
-                          className="w-8 h-8 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                          title="Restar una copia extra grupal"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="w-7 text-center font-mono font-bold text-sm text-slate-900">
-                          {extraCopiaGrupal}
-                        </span>
-                        <button
-                          type="button"
-                          id="btn-mas-copia-grupal"
-                          onClick={() => setExtraCopiaGrupal(extraCopiaGrupal + 1)}
-                          className="w-8 h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
-                          title="Agregar una copia extra grupal"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {extraCopiaGrupal > 0 && (
-                      <div className="mt-2.5 p-2 rounded-lg bg-amber-100/60 border border-amber-200 text-[10px] text-amber-950 flex items-start gap-1.5 font-mono">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Archivo duplicado en cola:</strong> Se generará{' '}
-                          <span className="font-bold underline text-amber-900">
-                            {codigoAcceso.trim() || '3ATT'}_{nombreAlumno.replace(/\s+/g, '_').toUpperCase() || 'ALUMNO'}_COPIA2.jpg
-                          </span>{' '}
-                          en la carpeta 20x30 para impresión directa del minilab.
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Copia Extra 15x21 Con Docente */}
-                  <div
-                    className={`p-4 rounded-xl border transition-all ${
-                      extraCopiaDocente > 0
-                        ? 'bg-white border-amber-500 shadow-md ring-1 ring-amber-400'
-                        : 'bg-white/80 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-900">
-                            Copia Extra Con la Seño / Docente (15x21 cm)
-                          </span>
-                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
-                            Recuerdo Escolar
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          Copia en papel satinado de la toma con el/la docente (+ $3.800 c/u).
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                      <div>
-                        <span className="text-xs font-extrabold text-slate-900">
-                          {extraCopiaDocente === 0
-                            ? '$3.800 ARS c/u'
-                            : `${extraCopiaDocente} copia(s): +$${(
-                                extraCopiaDocente * PRECIO_COPIA_EXTRA_15x21
-                              ).toLocaleString('es-AR')}`}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaDocente(Math.max(0, extraCopiaDocente - 1))}
-                          disabled={extraCopiaDocente === 0}
-                          className="w-8 h-8 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                          title="Restar una copia extra con la seño"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="w-7 text-center font-mono font-bold text-sm text-slate-900">
-                          {extraCopiaDocente}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaDocente(extraCopiaDocente + 1)}
-                          className="w-8 h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
-                          title="Agregar una copia extra con la seño"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {extraCopiaDocente > 0 && (
-                      <div className="mt-2.5 p-2 rounded-lg bg-amber-100/60 border border-amber-200 text-[10px] text-amber-950 flex items-start gap-1.5 font-mono">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Archivo duplicado en cola:</strong> Se generará{' '}
-                          <span className="font-bold underline text-amber-900">
-                            {codigoAcceso.trim() || '3ATT'}_{nombreAlumno.replace(/\s+/g, '_').toUpperCase() || 'ALUMNO'}_DOCENTE_COPIA2.jpg
-                          </span>{' '}
-                          en la carpeta 15x21.
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Copia Extra 15x21 Otras Fotos */}
-                  <div
-                    className={`p-4 rounded-xl border transition-all ${
-                      extraCopiaOtras > 0
-                        ? 'bg-white border-amber-500 shadow-md ring-1 ring-amber-400'
-                        : 'bg-white/80 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-900">
-                            Copia Extra Otras Fotos / Actividades (15x21 cm)
-                          </span>
-                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
-                            Foto Suelta
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          Toma de actividades escolares y momentos especiales (+ $3.800 c/u).
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                      <div>
-                        <span className="text-xs font-extrabold text-slate-900">
-                          {extraCopiaOtras === 0
-                            ? '$3.800 ARS c/u'
-                            : `${extraCopiaOtras} copia(s): +$${(
-                                extraCopiaOtras * PRECIO_COPIA_EXTRA_15x21
-                              ).toLocaleString('es-AR')}`}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaOtras(Math.max(0, extraCopiaOtras - 1))}
-                          disabled={extraCopiaOtras === 0}
-                          className="w-8 h-8 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer"
-                          title="Restar una copia extra de otras fotos"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="w-7 text-center font-mono font-bold text-sm text-slate-900">
-                          {extraCopiaOtras}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setExtraCopiaOtras(extraCopiaOtras + 1)}
-                          className="w-8 h-8 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
-                          title="Agregar una copia extra de otras fotos"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {extraCopiaOtras > 0 && (
-                      <div className="mt-2.5 p-2 rounded-lg bg-amber-100/60 border border-amber-200 text-[10px] text-amber-950 flex items-start gap-1.5 font-mono">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Archivo duplicado en cola:</strong> Se generará{' '}
-                          <span className="font-bold underline text-amber-900">
-                            {codigoAcceso.trim() || '3ATT'}_{nombreAlumno.replace(/\s+/g, '_').toUpperCase() || 'ALUMNO'}_OTRAS_COPIA2.jpg
-                          </span>{' '}
-                          en la carpeta 15x21.
-                        </span>
-                      </div>
+                    {extraCarpetas === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setExtraCarpetas(1)}
+                        className="hidden md:inline-flex px-3 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-bold border border-amber-300 transition-colors cursor-pointer"
+                      >
+                        + Sumar 1 Carpeta
+                      </button>
                     )}
                   </div>
                 </div>
+
+                {extraCarpetas > 0 && (
+                  <div className="p-3 rounded-xl bg-amber-100/70 border border-amber-200 text-xs text-amber-950 flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span>
+                        <strong>Carpetas a confeccionar:</strong> 1 Carpeta del pack principal + {extraCarpetas} carpeta{extraCarpetas > 1 ? 's' : ''} extra{extraCarpetas > 1 ? 's' : ''} = <strong>{extraCarpetas + 1} carpetas completas</strong> en total (+${(extraCarpetas * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}).
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Optional Add-ons */}
@@ -2216,28 +1832,10 @@ export default function PortalFamiliasModal({
                           <span>$2.200</span>
                         </div>
                       )}
-                      {extraCopiaIndividual > 0 && (
+                      {extraCarpetas > 0 && (
                         <div className="flex justify-between text-amber-300 font-semibold">
-                          <span>Copia extra Retrato 15x21 (x{extraCopiaIndividual})</span>
-                          <span>+${(extraCopiaIndividual * PRECIO_COPIA_EXTRA_15x21).toLocaleString('es-AR')}</span>
-                        </div>
-                      )}
-                      {extraCopiaGrupal > 0 && (
-                        <div className="flex justify-between text-amber-300 font-semibold">
-                          <span>Copia extra Grupal 20x30 (x{extraCopiaGrupal})</span>
-                          <span>+${(extraCopiaGrupal * PRECIO_COPIA_EXTRA_20x30).toLocaleString('es-AR')}</span>
-                        </div>
-                      )}
-                      {extraCopiaDocente > 0 && (
-                        <div className="flex justify-between text-amber-300 font-semibold">
-                          <span>Copia extra Con la Seño 15x21 (x{extraCopiaDocente})</span>
-                          <span>+${(extraCopiaDocente * PRECIO_COPIA_EXTRA_15x21).toLocaleString('es-AR')}</span>
-                        </div>
-                      )}
-                      {extraCopiaOtras > 0 && (
-                        <div className="flex justify-between text-amber-300 font-semibold">
-                          <span>Copia extra Otras Fotos 15x21 (x{extraCopiaOtras})</span>
-                          <span>+${(extraCopiaOtras * PRECIO_COPIA_EXTRA_15x21).toLocaleString('es-AR')}</span>
+                          <span>Carpeta Escolar Extra Completa (x{extraCarpetas})</span>
+                          <span>+${(extraCarpetas * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}</span>
                         </div>
                       )}
                       <div className="flex justify-between text-emerald-400 font-medium">
@@ -2246,7 +1844,7 @@ export default function PortalFamiliasModal({
                       </div>
                     </div>
 
-                    {totalCopiasExtrasCantidad > 0 && (
+                    {extraCarpetas > 0 && (
                       <div className="p-2.5 rounded-lg bg-amber-400/15 border border-amber-400/30 text-[11px] text-amber-200 flex items-start gap-2">
                         <Printer className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                         <div>
@@ -2254,7 +1852,7 @@ export default function PortalFamiliasModal({
                             Duplicado automático para laboratorio:
                           </p>
                           <p className="text-[10px] text-amber-200/90 mt-0.5">
-                            Se programarán {totalCopiasExtrasCantidad} archivo(s) duplicado(s) rotulado(s) para que el minilab imprima ambos ejemplares sin riesgo de olvido.
+                            Se programará 1 juego duplicado completo (individual, grupal y seño) para confeccionar {extraCarpetas} carpeta{extraCarpetas > 1 ? 's' : ''} extra{extraCarpetas > 1 ? 's' : ''} para familiares.
                           </p>
                         </div>
                       </div>
@@ -2354,27 +1952,22 @@ export default function PortalFamiliasModal({
                 </div>
 
                 {/* Extra Copies Confirmation Card if requested */}
-                {pedidoGenerado &&
-                  ((pedidoGenerado.copiasExtras?.individual15x21 || 0) > 0 ||
-                    (pedidoGenerado.copiasExtras?.grupal20x30 || 0) > 0 ||
-                    (pedidoGenerado.copiasExtras?.docente15x21 || 0) > 0 ||
-                    (pedidoGenerado.copiasExtras?.otras15x21 || 0) > 0) && (
-                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 flex items-start gap-3">
-                      <Copy className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-                      <div className="text-xs">
-                        <p className="font-bold text-amber-950 flex items-center gap-1.5">
-                          <span>¡Copia(s) extra generada(s) con éxito para el laboratorio!</span>
-                          <span className="text-[10px] bg-amber-200 text-amber-900 font-extrabold px-1.5 py-0.5 rounded">
-                            Sin Omisiones
-                          </span>
-                        </p>
-                        <p className="text-amber-800 mt-0.5">
-                          El sistema creó automáticamente los archivos duplicados rotulados para el lote del minilab. El
-                          técnico revelará e incluirá ambos juegos dentro del sobre de tu hijo/a.
-                        </p>
-                      </div>
+                {pedidoGenerado && (pedidoGenerado.copiasExtras?.carpetasExtras || 0) > 0 && (
+                  <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 flex items-start gap-3">
+                    <FolderCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <p className="font-bold text-amber-950 flex items-center gap-1.5">
+                        <span>¡{pedidoGenerado.copiasExtras?.carpetasExtras} carpeta(s) extra(s) generada(s) para el laboratorio!</span>
+                        <span className="text-[10px] bg-amber-200 text-amber-900 font-extrabold px-1.5 py-0.5 rounded">
+                          Juego Completo
+                        </span>
+                      </p>
+                      <p className="text-amber-800 mt-0.5">
+                        El sistema generó automáticamente el juego completo duplicado de fotos rotulado para el minilab y la carpeta conmemorativa adicional armada para familiares.
+                      </p>
                     </div>
-                  )}
+                  </div>
+                )}
 
                 {/* Photo Lab File Renaming & Student Folder Information */}
                 {pedidoGenerado && (
