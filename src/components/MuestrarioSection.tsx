@@ -21,7 +21,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
       titulo: 'Retratos profesionales con iluminación de estudio',
       descripcion:
         'Trabajamos con flashes profesionales de estudio para garantizar una iluminación perfecta, nítida y constante que nunca falla. Realizamos varias tomas para capturar la sonrisa auténtica de cada alumno y que la familia elija su foto favorita.',
-      imagen: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1200&q=85',
+      imagen: '/egresadita_escolar.jpg',
       specs: [
         'Iluminación profesional con flashes de estudio: nitidez y colorimetría impecables',
         'Múltiples tomas para elegir en la galería online',
@@ -115,6 +115,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
               <img
                 src={current.imagen}
                 alt={current.titulo}
+                referrerPolicy="no-referrer"
                 className="w-full h-full object-cover object-center group-hover:scale-102 transition-transform duration-500"
               />
               <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-xs text-white text-[11px] font-semibold px-3 py-1 rounded-full shadow-xs">
