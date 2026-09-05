@@ -280,6 +280,7 @@ export function guardarFamiliaActiva(familia: InscripcionFamilia | null): void {
     } else {
       localStorage.removeItem(STORAGE_KEY_ACTIVO);
     }
+    window.dispatchEvent(new CustomEvent('infocus_inscripciones_updated', { detail: familia }));
   } catch (err) {
     console.error('Error al guardar familia activa:', err);
   }

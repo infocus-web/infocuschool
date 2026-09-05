@@ -39,7 +39,7 @@ import {
 import { COLEGIOS_EJEMPLO, FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
-import { obtenerFamiliaActiva, InscripcionFamilia } from '../services/inscripcionesService';
+import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
 import WatermarkOverlay from './WatermarkOverlay';
 import { Colegio, KitProducto, Foto } from '../types';
 
@@ -869,7 +869,7 @@ export default function PortalFamiliasModal({
                       <span>Datos del alumno/a en {selectedColegio.nombre}:</span>
                     </h4>
                     {familiaActiva ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                           Inscripto: {familiaActiva.padreNombre} (Tutor)
@@ -883,6 +883,22 @@ export default function PortalFamiliasModal({
                             Cambiar datos
                           </button>
                         )}
+                        <span className="text-slate-300">|</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            cerrarSesionFamilia();
+                            setFamiliaActiva(null);
+                            setTutorNombre('');
+                            setTutorWhatsapp('');
+                            setTutorEmail('');
+                            setNombreAlumno('');
+                          }}
+                          className="text-[11px] text-rose-600 hover:text-rose-800 underline font-semibold cursor-pointer"
+                          title="Cerrar sesión de esta familia"
+                        >
+                          Cerrar sesión
+                        </button>
                       </div>
                     ) : onOpenInscripcion ? (
                       <button

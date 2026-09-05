@@ -1,7 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { Search, ShieldCheck, CheckCircle, ArrowRight, Sparkles, School, UserPlus, CheckCircle2, User } from 'lucide-react';
+import { Search, ShieldCheck, CheckCircle, ArrowRight, Sparkles, School, UserPlus, CheckCircle2, User, LogOut } from 'lucide-react';
 import { COLEGIOS_EJEMPLO, KITS_DISPONIBLES } from '../data/colegiosData';
-import { obtenerFamiliaActiva, InscripcionFamilia } from '../services/inscripcionesService';
+import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
 
 interface HeroProps {
   onOpenFamilias: (colegioId?: string, codigo?: string) => void;
@@ -14,7 +14,19 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
 
   useEffect(() => {
     setFamiliaActiva(obtenerFamiliaActiva());
+    const handleSync = () => {
+      setFamiliaActiva(obtenerFamiliaActiva());
+    };
+    window.addEventListener('infocus_inscripciones_updated', handleSync);
+    return () => {
+      window.removeEventListener('infocus_inscripciones_updated', handleSync);
+    };
   }, []);
+
+  const handleCerrarSesion = () => {
+    cerrarSesionFamilia();
+    setFamiliaActiva(null);
+  };
 
   const filteredColegios = COLEGIOS_EJEMPLO.filter(
     (c) =>
@@ -81,7 +93,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       Alumno/a: <strong className="text-slate-900">{familiaActiva.alumnoNombre} {familiaActiva.alumnoApellido}</strong> · {familiaActiva.grado} {familiaActiva.division} ({familiaActiva.turno})
                     </p>
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                  <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
                     <button
                       id="btn-ver-fotos-alumno-activo"
                       onClick={() => onOpenFamilias(familiaActiva.colegioId)}
@@ -92,12 +104,24 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     </button>
                     {onOpenInscripcion && (
                       <button
+                        id="btn-cambiar-familia-activa"
                         onClick={onOpenInscripcion}
-                        className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl border border-slate-200 transition-colors"
+                        className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl border border-slate-200 transition-colors cursor-pointer"
+                        title="Cambiar datos de alumno o seleccionar otro"
                       >
                         Cambiar
                       </button>
                     )}
+                    <button
+                      id="btn-cerrar-sesion-familia"
+                      type="button"
+                      onClick={handleCerrarSesion}
+                      className="px-3 py-2 bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-700 font-semibold text-xs rounded-xl border border-slate-200 hover:border-rose-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title="Cerrar sesión en este dispositivo"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Cerrar sesión</span>
+                    </button>
                   </div>
                 </div>
               </div>

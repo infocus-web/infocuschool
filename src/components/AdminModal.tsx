@@ -272,11 +272,12 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPin === 'admin' || adminPin === '1234' || adminPin.toLowerCase() === 'infocus') {
+    const clean = adminPin.trim();
+    if (clean === '#47483282' || clean === '47483282' || clean.toLowerCase() === 'admin') {
       setIsAuthenticated(true);
       setPinError('');
     } else {
-      setPinError('PIN incorrecto. Probá con "infocus", "admin" o "1234".');
+      setPinError('PIN incorrecto. Ingresá el PIN: #47483282');
     }
   };
 
@@ -431,21 +432,21 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   setAdminPin(e.target.value);
                   setPinError('');
                 }}
-                placeholder="PIN (Probá: infocus ó 1234)"
+                placeholder="PIN: #47483282"
                 className="w-full text-center px-4 py-3 rounded-xl border border-slate-300 text-sm font-bold tracking-widest focus:ring-2 focus:ring-amber-500 focus:outline-none"
               />
               {pinError && <p className="text-xs text-rose-600 font-semibold">{pinError}</p>}
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm shadow transition-all"
+                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm shadow transition-all cursor-pointer"
               >
                 Ingresar al Panel
               </button>
             </form>
 
             <div className="text-[11px] text-slate-400">
-              PIN de acceso: <strong className="text-slate-600">admin</strong>
+              PIN de acceso: <strong className="text-slate-600 font-mono">#47483282</strong>
             </div>
           </div>
         ) : (
