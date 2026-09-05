@@ -181,13 +181,13 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
       grado: rndSala.grado,
       division: rndSala.div,
       colegioId: 'col-divino-pastor',
-      colegioNombre: 'Instituto Divino Pastor'
+      colegioNombre: 'Instituto Superior Buenos Aires'
     });
 
     setInscripciones(obtenerInscripciones());
     setToastNotificacion({
       titulo: 'Inscripción de prueba creada',
-      mensaje: `Se registró a ${nueva.alumnoNombre} ${nueva.alumnoApellido}. Aparece como "Pendiente" lista para que pruebes el check de aceptación.`,
+      mensaje: `Se registró a ${nueva.alumnoNombre} ${nueva.alumnoApellido}. Aparece como "Pendiente" lista para aprobar y enviar código.`,
       tipo: 'info'
     });
     setTimeout(() => setToastNotificacion(null), 5000);

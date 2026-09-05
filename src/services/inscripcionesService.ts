@@ -36,10 +36,10 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
     grado: 'Sala 5 años',
     division: 'Celeste',
     colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Divino Pastor',
+    colegioNombre: 'Instituto Superior Buenos Aires',
     fechaInscripcion: '05/03/2026 09:15',
     estado: 'pendiente',
-    codigoAsignado: 'PASTOR-S5B'
+    codigoAsignado: 'ISBA-S5B'
   },
   {
     id: 'INS-2026-002',
@@ -52,10 +52,10 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
     grado: 'Sala 4 años',
     division: 'Verde',
     colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Divino Pastor',
+    colegioNombre: 'Instituto Superior Buenos Aires',
     fechaInscripcion: '04/03/2026 14:30',
     estado: 'aceptado',
-    codigoAsignado: 'PASTOR-S4A',
+    codigoAsignado: 'ISBA-S4A',
     fechaAprobacion: '04/03/2026 15:10',
     notificacionWhatsAppEnviada: true,
     notificacionEmailEnviada: true
@@ -71,10 +71,10 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [
     grado: 'Sala 3 años',
     division: 'Roja',
     colegioId: 'col-divino-pastor',
-    colegioNombre: 'Instituto Divino Pastor',
+    colegioNombre: 'Instituto Superior Buenos Aires',
     fechaInscripcion: '05/03/2026 08:45',
     estado: 'pendiente',
-    codigoAsignado: 'PASTOR-S3TM'
+    codigoAsignado: 'ISBA-S3TM'
   }
 ];
 

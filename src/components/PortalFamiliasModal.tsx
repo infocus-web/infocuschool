@@ -37,9 +37,11 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { COLEGIOS_EJEMPLO, FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
+import { useColegiosLista } from '../services/colegiosService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
 import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
+import { obtenerFotosParaGaleria } from '../services/fotosSubidasService';
 import WatermarkOverlay from './WatermarkOverlay';
 import { Colegio, KitProducto, Foto } from '../types';
 
@@ -76,6 +78,7 @@ export default function PortalFamiliasModal({
 
   // Step 1: School & Student Selection
   const [searchColegio, setSearchColegio] = useState('');
+  const { colegios } = useColegiosLista();
   const [selectedColegio, setSelectedColegio] = useState<Colegio | null>(null);
   const [grado, setGrado] = useState('');
   const [division, setDivision] = useState('');
@@ -94,6 +97,32 @@ export default function PortalFamiliasModal({
   const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('foto-grup-1');
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('foto-doc-1');
   const [modalFotoPreview, setModalFotoPreview] = useState<Foto | null>(null);
+
+  // Dynamic photos for this course (real photos uploaded to Supabase or fallback samples)
+  const cursoActivoCodigo = useMemo(() => {
+    return (codigoAcceso.trim() || seccionDetectada?.nemotecnico || '').toUpperCase();
+  }, [codigoAcceso, seccionDetectada]);
+
+  const fotosDisponibles = useMemo(() => {
+    return obtenerFotosParaGaleria(cursoActivoCodigo);
+  }, [cursoActivoCodigo]);
+
+  // Sincronizar selección predeterminada cuando las fotos cargan
+  useEffect(() => {
+    const inds = fotosDisponibles.filter((f) => f.categoria === 'individual');
+    const grups = fotosDisponibles.filter((f) => f.categoria === 'grupal');
+    const docs = fotosDisponibles.filter((f) => f.categoria === 'docente');
+
+    if (inds.length > 0 && !inds.some((f) => f.id === fotoSeleccionadaIndividual)) {
+      setFotoSeleccionadaIndividual(inds[0].id);
+    }
+    if (grups.length > 0 && !grups.some((f) => f.id === fotoSeleccionadaGrupal)) {
+      setFotoSeleccionadaGrupal(grups[0].id);
+    }
+    if (docs.length > 0 && !docs.some((f) => f.id === fotoSeleccionadaDocente)) {
+      setFotoSeleccionadaDocente(docs[0].id);
+    }
+  }, [fotosDisponibles]);
 
   // Step 3: Kit & Extras
   const [selectedKit, setSelectedKit] = useState<KitProducto>(
@@ -128,21 +157,21 @@ export default function PortalFamiliasModal({
         if (fam.grado) setGrado(fam.grado);
         if (fam.division) setDivision(fam.division);
         if (fam.colegioId) {
-          const col = COLEGIOS_EJEMPLO.find((c) => c.id === fam.colegioId);
+          const col = colegios.find((c) => c.id === fam.colegioId);
           if (col) setSelectedColegio(col);
         }
       }
     }
-  }, [isOpen]);
+  }, [isOpen, colegios]);
 
   useEffect(() => {
     if (preselectedColegioId) {
-      const col = COLEGIOS_EJEMPLO.find((c) => c.id === preselectedColegioId);
+      const col = colegios.find((c) => c.id === preselectedColegioId);
       if (col) setSelectedColegio(col);
-    } else if (!selectedColegio && COLEGIOS_EJEMPLO.length > 0) {
-      setSelectedColegio(COLEGIOS_EJEMPLO[0]);
+    } else if (!selectedColegio && colegios.length > 0) {
+      setSelectedColegio(colegios[0]);
     }
-  }, [preselectedColegioId]);
+  }, [preselectedColegioId, colegios]);
 
   useEffect(() => {
     if (selectedColegio) {
@@ -177,7 +206,7 @@ export default function PortalFamiliasModal({
     // 1. Search for course section by nemotecnico or PIN
     const match = buscarSeccionPorCodigo(clean);
     if (match) {
-      const colInicial = COLEGIOS_EJEMPLO.find((c) => c.id === 'col-inicial-2026') || COLEGIOS_EJEMPLO[0];
+      const colInicial = colegios.find((c) => c.id === 'col-isba-2026') || colegios[0];
       setSelectedColegio(colInicial);
       setGrado(match.seccion.sala);
       setTurno(match.seccion.turno);
@@ -188,8 +217,8 @@ export default function PortalFamiliasModal({
       return true;
     }
 
-    // 2. Search for general school access code (e.g. TOURS26)
-    const colFound = COLEGIOS_EJEMPLO.find(
+    // 2. Search for general school access code (e.g. ISBA2026)
+    const colFound = colegios.find(
       (c) => c.codigoAcceso.toUpperCase() === clean
     );
     if (colFound) {
@@ -215,7 +244,7 @@ export default function PortalFamiliasModal({
   if (!isOpen) return null;
 
   // Filtered schools
-  const colegiosFiltrados = COLEGIOS_EJEMPLO.filter(
+  const colegiosFiltrados = colegios.filter(
     (c) =>
       c.nombre.toLowerCase().includes(searchColegio.toLowerCase()) ||
       c.localidad.toLowerCase().includes(searchColegio.toLowerCase()) ||
@@ -249,7 +278,7 @@ export default function PortalFamiliasModal({
 
       const nuevoPedido = registrarPedidoDesdePortal({
         colegioId: selectedColegio?.id || 'col-divino-pastor',
-        colegioNombre: selectedColegio?.nombre || 'Instituto Divino Pastor',
+        colegioNombre: selectedColegio?.nombre || 'Instituto Superior Buenos Aires',
         cursoCodigo: codCurso,
         grado: grado || 'Sala 3',
         division: division || 'Única',
@@ -332,7 +361,7 @@ export default function PortalFamiliasModal({
     const mockOrders = [
       {
         id: 'IFS-2026-8812',
-        colegio: 'Instituto Divino Pastor',
+        colegio: 'Instituto Superior Buenos Aires',
         alumno: 'Valentina Rossi (3° A)',
         tutor: 'Mariana Gómez',
         telefono: '1154893210',
@@ -348,7 +377,7 @@ export default function PortalFamiliasModal({
       },
       {
         id: 'IFS-2026-8809',
-        colegio: 'Instituto Divino Pastor',
+        colegio: 'Instituto Superior Buenos Aires',
         alumno: 'Mateo Benítez (1° B)',
         tutor: 'Diego Benítez',
         telefono: '1144559988',
@@ -364,7 +393,7 @@ export default function PortalFamiliasModal({
       },
       {
         id: 'IFS-2026-8795',
-        colegio: 'Instituto Divino Pastor',
+        colegio: 'Instituto Superior Buenos Aires',
         alumno: 'Sofía Álvarez (5° Verde)',
         tutor: 'Luciana Álvarez',
         telefono: '1167221100',
@@ -390,7 +419,7 @@ export default function PortalFamiliasModal({
       // Create dynamically matching order for user's query if it resembles a code
       setSearchedOrder({
         id: query.startsWith('IFS-') ? query : `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-        colegio: selectedColegio ? selectedColegio.nombre : 'Instituto Divino Pastor',
+        colegio: selectedColegio ? selectedColegio.nombre : 'Instituto Superior Buenos Aires',
         alumno: nombreAlumno || 'Alumno Escolar',
         tutor: tutorNombre || 'Tutor Familiar',
         telefono: tutorWhatsapp || '11 5489-3210',
@@ -690,7 +719,7 @@ export default function PortalFamiliasModal({
                       Ingresá el código de tu curso o institución
                     </h4>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      Ingresá el código provisto por la escuela o fotógrafo para cargar automáticamente el curso, turno y división.
+                      Ingresá el código provisto por la institución o tu docente para cargar automáticamente el curso, turno y división.
                     </p>
                   </div>
 
@@ -731,7 +760,8 @@ export default function PortalFamiliasModal({
                     { code: 'SALA3TT', desc: 'Sala 3 TT' },
                     { code: 'SALA4A', desc: 'Sala 4 A (TT)' },
                     { code: 'SALA5BTT', desc: 'Sala 5 B (TT)' },
-                    { code: 'PASTOR26', desc: 'Instituto Divino Pastor' },
+                    { code: 'ISBA2026', desc: 'Instituto Superior Buenos Aires' },
+                    { code: 'PASTOR26', desc: 'Acceso Histórico' },
                   ].map((item) => (
                     <button
                       key={item.code}
@@ -844,11 +874,6 @@ export default function PortalFamiliasModal({
                           <div>
                             <p className="text-xs font-bold text-slate-900">{col.nombre}</p>
                             <p className="text-[11px] text-slate-500">{col.localidad} · {col.zona}</p>
-                            {col.website && (
-                              <p className="text-[10px] text-amber-700 font-semibold mt-0.5">
-                                {col.website.replace('https://', '').replace('http://', '').replace(/\/$/, '')}
-                              </p>
-                            )}
                           </div>
                           {isSelected && (
                             <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1061,7 +1086,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={FOTOS_MUESTRA.find((f) => f.id === fotoSeleccionadaGrupal)?.thumbnail || FOTOS_MUESTRA[3].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'grupal')?.thumbnail || FOTOS_MUESTRA[3].thumbnail}
                         alt="Foto grupal"
                         className="w-full h-full object-cover"
                       />
@@ -1074,7 +1099,7 @@ export default function PortalFamiliasModal({
                         Foto 1 de 3 (Grupal 20x30)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {FOTOS_MUESTRA.find((f) => f.id === fotoSeleccionadaGrupal)?.titulo.split(' - ')[0] || 'Foto Grupal'}
+                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal)?.titulo?.split(' - ')[0] || 'Foto Grupal'}
                       </p>
                       <span className="text-[10px] text-slate-400">Clic para cambiar</span>
                     </div>
@@ -1089,7 +1114,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={FOTOS_MUESTRA.find((f) => f.id === fotoSeleccionadaIndividual)?.thumbnail || FOTOS_MUESTRA[0].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'individual')?.thumbnail || FOTOS_MUESTRA[0].thumbnail}
                         alt="Retrato individual"
                         className="w-full h-full object-cover"
                       />
@@ -1102,7 +1127,7 @@ export default function PortalFamiliasModal({
                         Foto 2 de 3 (Retrato 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {FOTOS_MUESTRA.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo.split(' - ')[1] || 'Retrato Individual'}
+                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo?.split(' - ')[1] || fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo || 'Retrato Individual'}
                       </p>
                       <span className="text-[10px] text-slate-400">Clic para cambiar toma</span>
                     </div>
@@ -1117,7 +1142,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={FOTOS_MUESTRA.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || FOTOS_MUESTRA[5].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'docente')?.thumbnail || FOTOS_MUESTRA[5].thumbnail}
                         alt="Con docente"
                         className="w-full h-full object-cover"
                       />
@@ -1130,7 +1155,7 @@ export default function PortalFamiliasModal({
                         Foto 3 de 3 (Con Seño 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {FOTOS_MUESTRA.find((f) => f.id === fotoSeleccionadaDocente)?.titulo || 'Con la Seño'}
+                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.titulo || 'Con la Seño'}
                       </p>
                       <span className="text-[10px] text-slate-400">Clic para cambiar</span>
                     </div>
@@ -1171,7 +1196,7 @@ export default function PortalFamiliasModal({
 
               {/* Photo Cards Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {FOTOS_MUESTRA.filter((f) => f.categoria === categoriaActiva).map((foto) => {
+                {fotosDisponibles.filter((f) => f.categoria === categoriaActiva).map((foto) => {
                   const isSelected =
                     foto.id === fotoSeleccionadaIndividual ||
                     foto.id === fotoSeleccionadaGrupal ||

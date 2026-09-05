@@ -4,9 +4,10 @@ import {
   X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package, 
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
-  FileSpreadsheet, Scissors, FileText, UserCheck
+  FileSpreadsheet, Scissors, FileText, UserCheck, Trash2
 } from 'lucide-react';
 import { COLEGIOS_EJEMPLO, FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
+import { useColegiosLista } from '../services/colegiosService';
 import { ALUMNOS_NOMINA_2026, SECCIONES_INICIAL_2026 } from '../data/alumnosData';
 import { 
   getCodigosCursos, guardarCodigoCurso, regenerarTodosLosCodigos, getMensajeWhatsAppParaCurso 
@@ -55,8 +56,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     return obtenerInscripciones().filter((i) => i.estado === 'pendiente').length;
   });
 
-  // Schools list state
-  const [colegiosList, setColegiosList] = useState<Colegio[]>(COLEGIOS_EJEMPLO);
+  // Schools list state from dynamic persistent service
+  const { colegios: colegiosList, agregarColegio, borrarColegio } = useColegiosLista();
 
   useEffect(() => {
     if (isOpen) {
@@ -106,7 +107,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [mostrarCircularModal, setMostrarCircularModal] = useState(false);
   const [seccionParaCircular, setSeccionParaCircular] = useState<string | undefined>(undefined);
 
-  const colegioActualNombre = colegiosList[0]?.nombre || 'Instituto Divino Pastor';
+  const colegioActualNombre = colegiosList[0]?.nombre || 'Instituto Superior Buenos Aires';
 
   const handleDescargarExcelLegible = () => {
     try {
@@ -252,7 +253,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   ]);
 
   // Upload photo state
-  const [targetColegioId, setTargetColegioId] = useState(COLEGIOS_EJEMPLO[0].id);
+  const [targetColegioId, setTargetColegioId] = useState(() => colegiosList[0]?.id || 'col-isba-2026');
   const [targetCategoria, setTargetCategoria] = useState<'individual' | 'grupal' | 'docente'>('individual');
   const [targetGrado, setTargetGrado] = useState('3° grado');
   const [targetDivision, setTargetDivision] = useState('A');
@@ -356,26 +357,18 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   const handleCrearColegio = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nuevoNombre || !nuevoCodigo) return;
+    if (!nuevoNombre.trim() || !nuevoCodigo.trim()) return;
 
-    const nuevo: Colegio = {
-      id: `col-${Date.now()}`,
-      slug: nuevoNombre.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-      nombre: nuevoNombre,
-      localidad: nuevaLocalidad || 'Buenos Aires',
+    agregarColegio({
+      nombre: nuevoNombre.trim(),
+      localidad: nuevaLocalidad.trim() || 'Buenos Aires',
       zona: nuevaZona,
-      eventoActual: 'Jornada Fotográfica Anual 2026',
       codigoAcceso: nuevoCodigo.toUpperCase().trim(),
-      grados: ['1° grado', '2° grado', '3° grado', '4° grado', '5° grado', '6° grado', '7° grado'],
-      divisiones: ['A', 'B'],
-      turnos: ['Mañana', 'Tarde']
-    };
+    });
 
-    setColegiosList([nuevo, ...colegiosList]);
     setNuevoNombre('');
     setNuevaLocalidad('');
     setNuevoCodigo('');
-    alert('Colegio agregado con éxito.');
   };
 
   const totalRecaudado = pedidos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
@@ -1135,26 +1128,32 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   </h3>
                   <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto bg-white rounded-2xl border border-slate-200">
                     {colegiosList.map(c => (
-                      <div key={c.id} className="p-3.5 flex items-center justify-between">
+                      <div key={c.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors">
                         <div>
                           <h4 className="text-xs font-bold text-slate-900">{c.nombre}</h4>
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] text-slate-500">{c.localidad} ({c.zona})</span>
-                            {c.website && (
-                              <a
-                                href={c.website}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[11px] text-amber-700 hover:text-amber-900 font-semibold underline"
-                              >
-                                {c.website.replace('https://', '').replace('http://', '').replace(/\/$/, '')}
-                              </a>
-                            )}
                           </div>
                         </div>
-                        <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-800">
-                          {c.codigoAcceso}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-800">
+                            {c.codigoAcceso}
+                          </span>
+                          {colegiosList.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`¿Deseás eliminar "${c.nombre}"?`)) {
+                                  borrarColegio(c.id);
+                                }
+                              }}
+                              className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                              title="Eliminar colegio"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

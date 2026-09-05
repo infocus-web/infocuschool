@@ -17,7 +17,7 @@ export function CircularImprimibleModal({
   onClose,
   secciones,
   codigosMap,
-  colegioNombre = 'Instituto Divino Pastor',
+  colegioNombre = 'Instituto Superior Buenos Aires',
   seccionSeleccionadaInicial,
 }: CircularImprimibleModalProps) {
   const [seccionFiltro, setSeccionFiltro] = useState<string>(seccionSeleccionadaInicial || 'todas');

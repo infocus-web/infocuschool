@@ -68,14 +68,13 @@ export const KITS_DISPONIBLES: KitProducto[] = [
 
 export const COLEGIOS_EJEMPLO: Colegio[] = [
   {
-    id: 'col-divino-pastor',
-    slug: 'instituto-divino-pastor',
-    nombre: 'Instituto Divino Pastor',
-    localidad: 'Pilar',
-    zona: 'Zona Norte',
+    id: 'col-isba-2026',
+    slug: 'instituto-superior-buenos-aires',
+    nombre: 'Instituto Superior Buenos Aires',
+    localidad: 'Buenos Aires',
+    zona: 'CABA',
     eventoActual: 'Temporada Oficial Retratos y Fotos Escolares 2026',
-    codigoAcceso: 'PASTOR26',
-    website: 'https://www.divinopastor.com.ar/',
+    codigoAcceso: 'ISBA2026',
     grados: [
       'Sala 3 años',
       'Sala 4 años',
@@ -101,8 +100,8 @@ export const COLEGIOS_EJEMPLO: Colegio[] = [
 export const FOTOS_MUESTRA: Foto[] = [
   {
     id: 'foto-ind-1',
-    url: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=400&q=80',
+    url: '/alumna_instituto.jpg',
+    thumbnail: '/alumna_instituto.jpg',
     categoria: 'individual',
     titulo: 'Individual - Toma 1',
     descripcion: '',

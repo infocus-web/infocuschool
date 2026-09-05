@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { Search, ShieldCheck, CheckCircle, ArrowRight, Sparkles, School, UserPlus, CheckCircle2, User, LogOut } from 'lucide-react';
-import { COLEGIOS_EJEMPLO, KITS_DISPONIBLES } from '../data/colegiosData';
+import { KITS_DISPONIBLES } from '../data/colegiosData';
+import { useColegiosLista } from '../services/colegiosService';
 import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
 
 interface HeroProps {
@@ -11,6 +12,7 @@ interface HeroProps {
 export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [familiaActiva, setFamiliaActiva] = useState<InscripcionFamilia | null>(null);
+  const { colegios } = useColegiosLista();
 
   useEffect(() => {
     setFamiliaActiva(obtenerFamiliaActiva());
@@ -28,7 +30,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
     setFamiliaActiva(null);
   };
 
-  const filteredColegios = COLEGIOS_EJEMPLO.filter(
+  const filteredColegios = colegios.filter(
     (c) =>
       c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
       c.localidad.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -226,8 +228,9 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 }}
               >
                 <img
-                  src="https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=1000&q=85"
-                  alt="Muestra de fotografía escolar oficial"
+                  src="/alumna_instituto.jpg"
+                  alt="Muestra de fotografía escolar oficial - Instituto Superior Buenos Aires"
+                  referrerPolicy="no-referrer"
                   draggable={false}
                   className="w-full h-full object-cover object-center transform group-hover:scale-102 transition-transform duration-500 pointer-events-none select-none"
                 />
@@ -236,7 +239,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                   <span className="px-3 py-1.5 rounded-full bg-slate-900/85 backdrop-blur-md text-white text-xs font-semibold flex items-center gap-1.5 shadow-md">
                     <School className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Instituto Divino Pastor</span>
+                    <span>Instituto Superior Buenos Aires</span>
                   </span>
                   <span className="px-2.5 py-1 rounded-md bg-amber-400 text-slate-950 text-[10px] font-bold tracking-wider uppercase shadow-xs">
                     Ciclo 2026

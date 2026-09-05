@@ -33,6 +33,7 @@ import {
   generarMensajeWhatsAppAprobacion
 } from '../services/inscripcionesService';
 import { COLEGIOS_EJEMPLO } from '../data/colegiosData';
+import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 
 interface ModalInscripcionFamiliaProps {
@@ -59,7 +60,8 @@ export default function ModalInscripcionFamilia({
   const [turno, setTurno] = useState('Tarde');
   const [grado, setGrado] = useState('Sala 5 años');
   const [division, setDivision] = useState('Celeste');
-  const [colegioId, setColegioId] = useState('col-divino-pastor');
+  const { colegios } = useColegiosLista();
+  const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-isba-2026');
 
   // Code verification states in Step "solicitar_codigo"
   const [codigoIngresado, setCodigoIngresado] = useState('');
@@ -97,7 +99,7 @@ export default function ModalInscripcionFamilia({
 
   if (!isOpen) return null;
 
-  const colegioSeleccionado = COLEGIOS_EJEMPLO.find((c) => c.id === colegioId) || COLEGIOS_EJEMPLO[0];
+  const colegioSeleccionado = colegios.find((c) => c.id === colegioId) || colegios[0] || COLEGIO_POR_DEFECTO;
 
   const handleRegistroSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,8 +164,8 @@ export default function ModalInscripcionFamilia({
       return;
     }
 
-    // 2. Search general school code (e.g. TOURS26, BDS2026, JARDIN26)
-    const colFound = COLEGIOS_EJEMPLO.find((c) => c.codigoAcceso.toUpperCase() === clean);
+    // 2. Search general school code (e.g. ISBA2026, etc.)
+    const colFound = colegios.find((c) => c.codigoAcceso.toUpperCase() === clean);
     if (colFound) {
       setCodigoValidado({
         seccionNombre: `${colFound.nombre} (${grado} "${division}")`,
@@ -245,8 +247,8 @@ export default function ModalInscripcionFamilia({
                 <h2 className="text-xl font-extrabold font-['Outfit'] tracking-tight">
                   {paso === 'solicitar_codigo'
                     ? familiaCreada?.estado === 'aceptado'
-                      ? 'Código de Acceso Aprobado'
-                      : 'Ficha de Verificación del Fotógrafo'
+                      ? 'Código de Acceso Disponible'
+                      : 'Solicitud Registrada'
                     : 'Inscripción de Familias'}
                 </h2>
                 <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30">
@@ -256,8 +258,8 @@ export default function ModalInscripcionFamilia({
               <p className="text-xs text-slate-300 mt-0.5">
                 {paso === 'solicitar_codigo'
                   ? familiaCreada?.estado === 'aceptado'
-                    ? 'Tu solicitud fue aprobada. Código despachado por WhatsApp y Email.'
-                    : 'Tu solicitud ya está en la ficha del fotógrafo para su aprobación con check'
+                    ? 'Tu inscripción fue confirmada. Código despachado por WhatsApp y Email.'
+                    : 'Recibirás tu código de acceso a la brevedad por WhatsApp y correo electrónico.'
                   : 'Paso inicial para acceder a las fotos del curso de tu hijo/a'}
               </p>
             </div>
@@ -288,8 +290,8 @@ export default function ModalInscripcionFamilia({
               </span>
               <span className="font-extrabold text-amber-950">
                 {familiaCreada?.estado === 'aceptado'
-                  ? 'Código Aprobado y Despachado'
-                  : 'Aceptación en Ficha del Fotógrafo'}
+                  ? 'Código Confirmado'
+                  : 'Validación y Envío de Código'}
               </span>
             </div>
             <button
@@ -371,15 +373,15 @@ export default function ModalInscripcionFamilia({
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                          Aprobado por el Fotógrafo
+                          Inscripción Confirmada
                         </span>
                         <span className="text-xs text-emerald-800 font-semibold">Código Despachado</span>
                       </div>
                       <h4 className="text-lg font-black text-slate-900 font-['Outfit']">
-                        ¡Tu inscripción fue aceptada con éxito!
+                        ¡Tu inscripción fue confirmada con éxito!
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        El fotógrafo verificó la ficha y despachó tu <strong>Código de Curso</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
+                        Tu solicitud fue verificada y despachamos tu <strong>Código de Curso</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
                       </p>
                     </div>
                   </div>
@@ -431,18 +433,18 @@ export default function ModalInscripcionFamilia({
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-amber-500 text-slate-950">
-                          Ficha Web del Fotógrafo
+                          Inscripción Recibida
                         </span>
                         <span className="text-xs text-amber-900 font-semibold flex items-center gap-1">
                           <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                          Pendiente de aceptación
+                          Pendiente de entrega de código
                         </span>
                       </div>
                       <h4 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit']">
-                        Tu solicitud ingresó a la Ficha de Inscriptos del Fotógrafo
+                        ¡Recibimos tus datos correctamente!
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Para evitar que los mensajes se pierdan en el chat de WhatsApp, las inscripciones se gestionan desde la ficha web del panel fotógrafo. En cuanto el fotógrafo marque el <strong>check de aceptación</strong>, el sistema te enviará automáticamente tu <strong>Código de Curso</strong> por WhatsApp y por Email.
+                        Tu registro quedó completado. A la brevedad te enviaremos tu <strong>Código de Curso</strong> por WhatsApp y por Email para que puedas acceder de inmediato a la galería y pedidos de tu curso.
                       </p>
                     </div>
                   </div>
@@ -691,25 +693,12 @@ export default function ModalInscripcionFamilia({
                       onChange={(e) => setColegioId(e.target.value)}
                       className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
                     >
-                      {COLEGIOS_EJEMPLO.map((col) => (
+                      {colegios.map((col) => (
                         <option key={col.id} value={col.id}>
                           {col.nombre} ({col.localidad})
                         </option>
                       ))}
                     </select>
-                    {colegioSeleccionado.website && (
-                      <p className="mt-1 text-[11px] text-slate-500 flex items-center gap-1.5">
-                        <span>Sitio oficial de la institución:</span>
-                        <a
-                          href={colegioSeleccionado.website}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-amber-700 hover:text-amber-900 font-semibold underline"
-                        >
-                          {colegioSeleccionado.website.replace('https://', '').replace('http://', '').replace(/\/$/, '')}
-                        </a>
-                      </p>
-                    )}
                   </div>
 
                   {/* Turno, Grado, División */}
@@ -769,22 +758,6 @@ export default function ModalInscripcionFamilia({
                 </div>
               </div>
 
-              {/* Information Notice: Photographer Web Sheet & Automated WhatsApp / Email dispatch */}
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-300 text-amber-950 text-xs flex items-start gap-3">
-                <UserCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <span>Ficha de inscriptos en panel del fotógrafo:</span>
-                    <span className="text-[10px] bg-amber-200 text-amber-900 font-extrabold px-1.5 py-0.5 rounded">
-                      Control por Check
-                    </span>
-                  </p>
-                  <p className="text-slate-700 mt-0.5 leading-relaxed">
-                    Al completar esta inscripción, tus datos ingresan directamente a la <strong>ficha web de inscriptos</strong> del fotógrafo. Al revisarla y marcar el check de aceptación, el sistema te enviará automáticamente tu <strong>Código de Curso por WhatsApp y por Email</strong>, garantizando que nunca se pierda un mensaje.
-                  </p>
-                </div>
-              </div>
-
               {/* Security Privacy Notice */}
               <div className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-[11px] leading-relaxed">
                 <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
@@ -799,7 +772,7 @@ export default function ModalInscripcionFamilia({
                 id="btn-confirmar-inscripcion"
                 className="w-full py-3.5 px-6 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 hover:from-amber-300 hover:to-amber-200 text-slate-950 font-extrabold text-sm rounded-2xl shadow-lg shadow-amber-400/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
               >
-                <span>Inscribirme y Registrar en Ficha del Fotógrafo</span>
+                <span>Completar Inscripción</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
