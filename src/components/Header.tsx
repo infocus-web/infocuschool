@@ -17,7 +17,7 @@ export default function Header({
 }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
+  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
 
   const handleNavClick = (id: string) => {
     onScrollTo(id);

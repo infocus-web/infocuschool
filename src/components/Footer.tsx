@@ -9,7 +9,7 @@ interface FooterProps {
 
 export default function Footer({ onOpenFamilias, onScrollTo, onOpenAdmin }: FooterProps) {
   const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
+  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
   const displayNum = formatearNumeroVisual(whatsappNum);
 
   return (

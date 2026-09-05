@@ -32,20 +32,23 @@ const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [];
 export function determinarCodigoParaInscripcion(datos: { grado: string; turno: string; division: string }): string {
   const g = datos.grado.toLowerCase();
   const t = datos.turno.toLowerCase();
+  const d = (datos.division || '').toLowerCase();
 
   if (g.includes('3')) {
-    if (t.includes('tarde')) return 'SALA3TT';
-    if (t.includes('jornada') || t.includes('extendida')) return 'SALA3JE';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA3JE';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA3TT';
     return 'SALA3TM';
   }
   if (g.includes('4')) {
-    if (t.includes('tarde')) return 'SALA4TT';
-    if (t.includes('jornada') || t.includes('extendida')) return 'SALA4JE';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA4JE';
+    if (d.includes('c')) return 'SALA4C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA4TT';
     return 'SALA4A';
   }
   if (g.includes('5')) {
-    if (t.includes('tarde')) return 'SALA5B';
-    if (t.includes('jornada') || t.includes('extendida')) return 'SALA5JE';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA5JE';
+    if (d.includes('c')) return 'SALA5C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA5B';
     return 'SALA5A';
   }
 

@@ -5,7 +5,7 @@ import { useWhatsAppConfig, formatearNumeroVisual } from '../services/configurac
 export default function WhatsAppFloating() {
   const [isOpen, setIsOpen] = useState(false);
   const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
+  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
   const displayNum = formatearNumeroVisual(whatsappNum);
 
   const predefined = [

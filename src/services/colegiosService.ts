@@ -4,13 +4,13 @@ import { Colegio } from '../types';
 const STORAGE_KEY = 'colegios_escolares_v2';
 
 export const COLEGIO_POR_DEFECTO: Colegio = {
-  id: 'col-modelo-2026',
-  slug: 'colegio-modelo',
-  nombre: 'Colegio Modelo',
+  id: 'col-divino-pastor-2026',
+  slug: 'instituto-madre-del-divino-pastor',
+  nombre: 'Instituto Madre del Divino Pastor',
   localidad: 'Buenos Aires',
-  zona: 'CABA',
+  zona: 'Zona Norte',
   eventoActual: 'Temporada Oficial Retratos y Fotos Escolares 2026',
-  codigoAcceso: 'MODELO26',
+  codigoAcceso: 'IMDP2026',
   grados: [
     'Sala 3 años',
     'Sala 4 años',
@@ -29,8 +29,8 @@ export const COLEGIO_POR_DEFECTO: Colegio = {
     '5° año',
     '6° año',
   ],
-  divisiones: ['A', 'B', 'Celeste', 'Blanca', 'Verde', 'Azul', 'Única'],
-  turnos: ['Mañana', 'Tarde', 'Jornada Completa'],
+  divisiones: ['A', 'B', 'C', 'Jornada Extendida'],
+  turnos: ['Mañana', 'Tarde', 'Jornada Extendida / Completa'],
 };
 
 export function obtenerColegios(): Colegio[] {
@@ -53,23 +53,33 @@ export function obtenerColegios(): Colegio[] {
       return [COLEGIO_POR_DEFECTO];
     }
 
-    // Filtrar / sanitizar: nunca incluir website y actualizar nombres viejos o de ejemplo
+    // Filtrar / sanitizar: nunca incluir website y actualizar nombres anteriores a Instituto Madre del Divino Pastor
+    let huboCambios = false;
     const sanitizados = parsed.map((col) => {
       const limpio = { ...col };
       delete limpio.website;
       if (
-        limpio.nombre.includes('Divino Pastor') ||
-        limpio.nombre.includes('Instituto Superior Buenos Aires')
+        limpio.nombre.includes('Colegio Modelo') ||
+        limpio.nombre.includes('Instituto Superior Buenos Aires') ||
+        limpio.id === 'col-modelo-2026' ||
+        limpio.id === 'col-isba-2026' ||
+        limpio.nombre.includes('Divino Pastor')
       ) {
-        limpio.id = 'col-modelo-2026';
-        limpio.nombre = 'Colegio Modelo';
-        limpio.slug = 'colegio-modelo';
-        limpio.codigoAcceso = 'MODELO26';
+        limpio.id = 'col-divino-pastor-2026';
+        limpio.nombre = 'Instituto Madre del Divino Pastor';
+        limpio.slug = 'instituto-madre-del-divino-pastor';
+        limpio.codigoAcceso = 'IMDP2026';
         limpio.localidad = 'Buenos Aires';
-        limpio.zona = 'CABA';
+        limpio.zona = 'Zona Norte';
+        limpio.divisiones = ['A', 'B', 'C', 'Jornada Extendida'];
+        huboCambios = true;
       }
       return limpio;
     });
+
+    if (huboCambios) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizados));
+    }
 
     return sanitizados;
   } catch (error) {
@@ -120,8 +130,8 @@ export function guardarNuevoColegio(datos: {
       '5° año',
       '6° año',
     ],
-    divisiones: ['A', 'B', 'Celeste', 'Blanca', 'Verde', 'Azul', 'Única'],
-    turnos: ['Mañana', 'Tarde', 'Jornada Completa'],
+    divisiones: ['A', 'B', 'C', 'Jornada Extendida'],
+    turnos: ['Mañana', 'Tarde', 'Jornada Extendida / Completa'],
   };
 
   const actualizada = [nuevoColegio, ...listaActual.filter((c) => c.id !== nuevoColegio.id)];

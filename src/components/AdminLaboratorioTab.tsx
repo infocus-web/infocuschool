@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   Printer, Download, Mail, CheckCircle2, FolderDown, FileCode, 
-  Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, FileSpreadsheet
+  Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, FileSpreadsheet,
+  Globe, ShieldCheck, Send, ExternalLink
 } from 'lucide-react';
 import { 
   PedidoEscolarCompleto, 
@@ -10,6 +11,12 @@ import {
   guardarPedidosEnStorage,
   formatearCodigoCliente
 } from '../services/pedidosLabService';
+import { 
+  enviarFotosPorEmail, 
+  consultarEstadoResend, 
+  enviarEmailPruebaResend, 
+  EstadoResend 
+} from '../services/emailService';
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
 import { SECCIONES_INICIAL_2026 } from '../data/alumnosData';
 import { CODIGOS_CURSOS_INICIALES } from '../data/codigosCursos';
@@ -24,7 +31,7 @@ interface AdminLaboratorioTabProps {
 export default function AdminLaboratorioTab({
   pedidos,
   onActualizarPedidos,
-  colegioNombre = 'Colegio Modelo'
+  colegioNombre = 'Instituto Madre del Divino Pastor'
 }: AdminLaboratorioTabProps) {
   const [cursoFiltro, setCursoFiltro] = useState<string>('todos');
   const [modoEstructuraCarpetas, setModoEstructuraCarpetas] = useState<'solo_2_carpetas_tamano' | 'por_alumno'>('solo_2_carpetas_tamano');
@@ -33,6 +40,41 @@ export default function AdminLaboratorioTab({
   const [zipFeedbackMsg, setZipFeedbackMsg] = useState<string | null>(null);
   const [emailFeedbackMsg, setEmailFeedbackMsg] = useState<string | null>(null);
   const [modalExcelAbierto, setModalExcelAbierto] = useState<boolean>(false);
+  const [resendEstado, setResendEstado] = useState<EstadoResend | null>(null);
+  const [testEmailInput, setTestEmailInput] = useState<string>('alderpol@gmail.com');
+  const [isEnviandoPrueba, setIsEnviandoPrueba] = useState<boolean>(false);
+  const [feedbackPrueba, setFeedbackPrueba] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
+
+  useEffect(() => {
+    consultarEstadoResend().then(setResendEstado).catch(() => {});
+  }, []);
+
+  const handleEnviarPruebaEmail = async () => {
+    if (!testEmailInput || !testEmailInput.includes('@')) {
+      setFeedbackPrueba({ tipo: 'error', texto: 'Por favor ingresá un correo electrónico válido' });
+      return;
+    }
+    setIsEnviandoPrueba(true);
+    setFeedbackPrueba(null);
+    try {
+      const res = await enviarEmailPruebaResend(testEmailInput.trim());
+      if (res.success) {
+        setFeedbackPrueba({
+          tipo: 'ok',
+          texto: `¡Correo de prueba enviado con éxito a ${testEmailInput} desde fotos@retratoescolar.com.ar! (ID: ${res.messageId || 'OK'})`
+        });
+      } else {
+        setFeedbackPrueba({
+          tipo: 'error',
+          texto: res.error || res.warning || 'No se pudo enviar. Asegúrate de tener RESEND_API_KEY configurada en tus variables de entorno.'
+        });
+      }
+    } catch (e: any) {
+      setFeedbackPrueba({ tipo: 'error', texto: e?.message || 'Error de red al intentar enviar.' });
+    } finally {
+      setIsEnviandoPrueba(false);
+    }
+  };
 
   // Selected photo to preview backprint (defaults to the user's exact example)
   const [fotoPreviewDorso, setFotoPreviewDorso] = useState<{
@@ -219,26 +261,57 @@ export default function AdminLaboratorioTab({
     }
   };
 
-  const handleReenviarEmailHD = (pedido: PedidoEscolarCompleto) => {
+  const handleReenviarEmailHD = async (pedido: PedidoEscolarCompleto) => {
+    if (!pedido.tutorEmail || !pedido.tutorEmail.includes('@')) {
+      setEmailFeedbackMsg(`⚠️ El alumno ${pedido.alumnoNombre} no cuenta con un email de tutor registrado.`);
+      setTimeout(() => setEmailFeedbackMsg(null), 5000);
+      return;
+    }
+
     const ahora = new Date();
     const fechaHora = `${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
     
-    const pedidosActualizados = pedidos.map(p => {
-      if (p.id === pedido.id) {
-        return {
-          ...p,
-          emailEnviado: true,
-          fechaEnvioEmail: fechaHora
-        };
+    setEmailFeedbackMsg(`Enviando fotos HD a ${pedido.tutorEmail} desde fotos@retratoescolar.com.ar...`);
+
+    try {
+      const res = await enviarFotosPorEmail({
+        to: pedido.tutorEmail,
+        tutorNombre: pedido.tutorNombre,
+        alumnoNombre: pedido.alumnoNombre,
+        colegioNombre: pedido.colegioNombre,
+        cursoCodigo: pedido.cursoCodigo,
+        pedidoId: pedido.id,
+        kitNombre: pedido.kitNombre,
+        total: pedido.total,
+        linkDescargaHD: pedido.linkDescargaHD,
+        esImpreso: pedido.kitId === 'kit-clasico',
+      });
+
+      const pedidosActualizados = pedidos.map(p => {
+        if (p.id === pedido.id) {
+          return {
+            ...p,
+            emailEnviado: true,
+            fechaEnvioEmail: fechaHora
+          };
+        }
+        return p;
+      });
+
+      onActualizarPedidos(pedidosActualizados);
+      guardarPedidosEnStorage(pedidosActualizados);
+
+      if (res.success) {
+        setEmailFeedbackMsg(`✅ Correo con enlaces HD enviado con éxito a ${pedido.tutorEmail} desde fotos@retratoescolar.com.ar (ID: ${res.messageId || 'OK'})`);
+      } else if (res.warning) {
+        setEmailFeedbackMsg(`ℹ️ ${res.warning} (Entrega registrada para ${pedido.tutorEmail})`);
+      } else {
+        setEmailFeedbackMsg(`⚠️ ${res.error || 'Aviso durante el envío'}`);
       }
-      return p;
-    });
-
-    onActualizarPedidos(pedidosActualizados);
-    guardarPedidosEnStorage(pedidosActualizados);
-
-    setEmailFeedbackMsg(`Enlace de descarga en Ultra HD reenviado con éxito a ${pedido.tutorEmail} (${pedido.alumnoNombre})`);
-    setTimeout(() => setEmailFeedbackMsg(null), 5000);
+    } catch (err: any) {
+      setEmailFeedbackMsg(`Error de conexión al enviar correo: ${err?.message || err}`);
+    }
+    setTimeout(() => setEmailFeedbackMsg(null), 7000);
   };
 
   return (
@@ -273,6 +346,94 @@ export default function AdminLaboratorioTab({
           </button>
         </div>
       )}
+
+      {/* TARJETA DE DOMINIO VERIFICADO (retratoescolar.com.ar) */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-emerald-950/90 via-slate-900 to-slate-900 border border-emerald-500/30 text-white shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-wider font-bold text-slate-400">Dominio de Correo Transaccional</span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  <Check className="w-3 h-3 text-emerald-400" />
+                  Verificado en Resend
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-300 bg-slate-800 border border-slate-700">
+                  <Globe className="w-3 h-3 text-sky-400" />
+                  Vercel · sa-east-1
+                </span>
+              </div>
+              <h4 className="text-base sm:text-lg font-black text-white font-['Outfit'] mt-0.5">
+                retratoescolar.com.ar
+              </h4>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Los enlaces de fotos Ultra HD y los comprobantes se envían a los padres desde <code className="text-emerald-300 font-bold bg-slate-950/60 px-1.5 py-0.5 rounded">fotos@retratoescolar.com.ar</code> con firmas SPF, DKIM y DMARC autorizadas.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center">
+            <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1.5 bg-emerald-950/60 px-3 py-1.5 rounded-xl border border-emerald-800/60">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              Listo para enviar emails
+            </span>
+          </div>
+        </div>
+
+        {/* Mini formulario de prueba de envío */}
+        <div className="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="text-xs text-slate-400 flex items-center gap-2">
+            <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>Probar entrega en bandeja de entrada:</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1 max-w-md">
+            <input
+              type="email"
+              value={testEmailInput}
+              onChange={(e) => setTestEmailInput(e.target.value)}
+              placeholder="tu-email@gmail.com"
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+            />
+            <button
+              type="button"
+              onClick={handleEnviarPruebaEmail}
+              disabled={isEnviandoPrueba}
+              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm shrink-0 cursor-pointer active:scale-95"
+            >
+              {isEnviandoPrueba ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Enviando...</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Enviar Prueba</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {feedbackPrueba && (
+          <div className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in ${
+            feedbackPrueba.tipo === 'ok' 
+              ? 'bg-emerald-900/40 border border-emerald-600/50 text-emerald-200' 
+              : 'bg-rose-950/40 border border-rose-700/50 text-rose-200'
+          }`}>
+            {feedbackPrueba.tipo === 'ok' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>{feedbackPrueba.texto}</span>
+          </div>
+        )}
+      </div>
 
       {/* Top Explanation Banner */}
       <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 to-slate-800 text-white shadow-md space-y-3">

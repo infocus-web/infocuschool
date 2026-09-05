@@ -60,13 +60,42 @@ export default function ModalInscripcionFamilia({
   const [alumnoApellido, setAlumnoApellido] = useState('');
   const [turno, setTurno] = useState('Tarde');
   const [grado, setGrado] = useState('Sala 5 años');
-  const [division, setDivision] = useState('Celeste');
+  const [division, setDivision] = useState('A');
   const { colegios } = useColegiosLista();
   const { config: configWhatsApp } = useWhatsAppConfig();
-  const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-isba-2026');
+  const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-divino-pastor-2026');
 
-  const selectedColegio = colegios.find((c) => c.id === colegioId);
+  const selectedColegio = colegios.find((c) => c.id === colegioId) || colegios[0];
   const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
+
+  const divisionesDisponibles = selectedColegio?.divisiones && selectedColegio.divisiones.length > 0
+    ? selectedColegio.divisiones
+    : ['A', 'B', 'C', 'Jornada Extendida'];
+
+  React.useEffect(() => {
+    if (colegios.length > 0 && (!colegioId || !colegios.some((c) => c.id === colegioId))) {
+      setColegioId(colegios[0].id);
+    }
+  }, [colegios, colegioId]);
+
+  React.useEffect(() => {
+    if (!division || !divisionesDisponibles.includes(division)) {
+      setDivision(divisionesDisponibles[0] || 'A');
+    }
+  }, [divisionesDisponibles, division]);
+
+  const handleCambioTurno = (nuevoTurno: string) => {
+    setTurno(nuevoTurno);
+    if (nuevoTurno === 'Mañana') {
+      setDivision('A');
+    } else if (nuevoTurno === 'Tarde') {
+      if (division !== 'B' && division !== 'C') {
+        setDivision('B');
+      }
+    } else if (nuevoTurno.toLowerCase().includes('jornada') || nuevoTurno.toLowerCase().includes('extendida')) {
+      setDivision('Jornada Extendida');
+    }
+  };
 
   // Code verification states in Step "solicitar_codigo"
   const [codigoIngresado, setCodigoIngresado] = useState('');
@@ -704,14 +733,19 @@ export default function ModalInscripcionFamilia({
 
                   {/* Colegio */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
-                      <School className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Colegio o Institución</span>
+                    <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <School className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Colegio o Institución</span>
+                      </span>
+                      <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                        Colegio asignado
+                      </span>
                     </label>
                     <select
                       value={colegioId}
                       onChange={(e) => setColegioId(e.target.value)}
-                      className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
+                      className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold text-slate-800"
                     >
                       {colegios.map((col) => (
                         <option key={col.id} value={col.id}>
@@ -730,12 +764,12 @@ export default function ModalInscripcionFamilia({
                       </label>
                       <select
                         value={turno}
-                        onChange={(e) => setTurno(e.target.value)}
+                        onChange={(e) => handleCambioTurno(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
                       >
-                        <option value="Tarde">Tarde</option>
                         <option value="Mañana">Mañana</option>
-                        <option value="Jornada Completa">Jornada Completa</option>
+                        <option value="Tarde">Tarde</option>
+                        <option value="Jornada Extendida">Jornada Extendida</option>
                       </select>
                     </div>
 
@@ -763,16 +797,21 @@ export default function ModalInscripcionFamilia({
 
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1">
-                        División / Color <span className="text-red-500">*</span>
+                        División asignada <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="text"
-                        required
+                      <select
                         value={division}
                         onChange={(e) => setDivision(e.target.value)}
-                        placeholder="Ej: Celeste, A, B..."
-                        className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
-                      />
+                        className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold text-slate-800"
+                      >
+                        {divisionesDisponibles.map((div) => (
+                          <option key={div} value={div}>
+                            {div.toLowerCase().includes('extendida') || div.toLowerCase().includes('jornada')
+                              ? div
+                              : `División ${div}`}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>

@@ -10,7 +10,7 @@ export default function ContactoSection() {
   const [mensaje, setMensaje] = useState('');
   const [enviado, setEnviado] = useState(false);
   const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappSolicitudCodigo || '5491128625916';
+  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
   const displayNum = formatearNumeroVisual(whatsappNum);
 
   const handleSubmit = (e: FormEvent) => {

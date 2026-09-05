@@ -3,6 +3,7 @@ import { getSupabase } from './supabaseClient';
 
 export interface ConfiguracionWhatsApp {
   whatsappSolicitudCodigo: string;
+  whatsappFlotante?: string; // Número de WhatsApp de contacto que se muestra en el widget flotante
   nombreContacto: string;
   mensajePredeterminado: string;
   ultimaActualizacion?: string;
@@ -53,6 +54,7 @@ export function obtenerConfiguracionWhatsApp(): ConfiguracionWhatsApp {
   if (typeof window === 'undefined') {
     return {
       whatsappSolicitudCodigo: WHATSAPP_DEFECTO,
+      whatsappFlotante: WHATSAPP_DEFECTO,
       nombreContacto: NOMBRE_CONTACTO_DEFECTO,
       mensajePredeterminado: 'Hola, quisiera solicitar el código de curso para ver las fotos.',
       guardadoEnSupabase: false,
@@ -65,6 +67,7 @@ export function obtenerConfiguracionWhatsApp(): ConfiguracionWhatsApp {
       const parsed = JSON.parse(guardado);
       return {
         whatsappSolicitudCodigo: sanitizarNumeroWhatsApp(parsed.whatsappSolicitudCodigo) || WHATSAPP_DEFECTO,
+        whatsappFlotante: parsed.whatsappFlotante ? sanitizarNumeroWhatsApp(parsed.whatsappFlotante) : (sanitizarNumeroWhatsApp(parsed.whatsappSolicitudCodigo) || WHATSAPP_DEFECTO),
         nombreContacto: parsed.nombreContacto || NOMBRE_CONTACTO_DEFECTO,
         mensajePredeterminado: parsed.mensajePredeterminado || 'Hola, quisiera solicitar el código de curso para ver las fotos.',
         ultimaActualizacion: parsed.ultimaActualizacion,
@@ -77,10 +80,19 @@ export function obtenerConfiguracionWhatsApp(): ConfiguracionWhatsApp {
 
   return {
     whatsappSolicitudCodigo: WHATSAPP_DEFECTO,
+    whatsappFlotante: WHATSAPP_DEFECTO,
     nombreContacto: NOMBRE_CONTACTO_DEFECTO,
     mensajePredeterminado: 'Hola, quisiera solicitar el código de curso para ver las fotos.',
     guardadoEnSupabase: false,
   };
+}
+
+/**
+ * Devuelve el número efectivo para el widget flotante
+ */
+export function obtenerNumeroWhatsAppFlotante(config?: ConfiguracionWhatsApp): string {
+  const c = config || obtenerConfiguracionWhatsApp();
+  return c.whatsappFlotante || c.whatsappSolicitudCodigo || WHATSAPP_DEFECTO;
 }
 
 /**
@@ -96,11 +108,15 @@ export async function guardarConfiguracionWhatsApp(
 }> {
   const actual = obtenerConfiguracionWhatsApp();
   const numeroSanitizado = sanitizarNumeroWhatsApp(nuevaConfig.whatsappSolicitudCodigo ?? actual.whatsappSolicitudCodigo);
+  const numeroFlotanteSanitizado = nuevaConfig.whatsappFlotante !== undefined
+    ? (sanitizarNumeroWhatsApp(nuevaConfig.whatsappFlotante) || numeroSanitizado)
+    : (actual.whatsappFlotante ? sanitizarNumeroWhatsApp(actual.whatsappFlotante) : numeroSanitizado);
 
   const actualizada: ConfiguracionWhatsApp = {
     ...actual,
     ...nuevaConfig,
     whatsappSolicitudCodigo: numeroSanitizado,
+    whatsappFlotante: numeroFlotanteSanitizado,
     ultimaActualizacion: new Date().toISOString(),
   };
 
@@ -117,31 +133,64 @@ export async function guardarConfiguracionWhatsApp(
   try {
     const supabase = getSupabase();
     if (supabase) {
-      const { error } = await supabase
+      // 1. Guardar en tabla 'configuraciones' (solicitada explícitamente)
+      const payloadFlotante = {
+        clave: 'whatsapp_flotante',
+        valor: actualizada.whatsappFlotante || numeroSanitizado,
+        telefono: actualizada.whatsappFlotante || numeroSanitizado,
+        datos_extra: {
+          nombreContacto: actualizada.nombreContacto,
+          mensajePredeterminado: actualizada.mensajePredeterminado,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      const payloadSolicitud = {
+        clave: 'whatsapp_solicitud_codigo',
+        valor: numeroSanitizado,
+        telefono: numeroSanitizado,
+        datos_extra: {
+          nombreContacto: actualizada.nombreContacto,
+          mensajePredeterminado: actualizada.mensajePredeterminado,
+          whatsappFlotante: actualizada.whatsappFlotante,
+        },
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: errConfiguraciones } = await supabase
+        .from('configuraciones')
+        .upsert([payloadFlotante, payloadSolicitud], { onConflict: 'clave' });
+
+      // 2. Guardar también en tabla 'configuracion' (singular) por compatibilidad
+      const { error: errConfiguracion } = await supabase
         .from('configuracion')
         .upsert(
-          {
-            clave: 'whatsapp_solicitud_codigo',
-            valor: numeroSanitizado,
-            datos_extra: {
-              nombreContacto: actualizada.nombreContacto,
-              mensajePredeterminado: actualizada.mensajePredeterminado,
+          [
+            {
+              clave: 'whatsapp_flotante',
+              valor: actualizada.whatsappFlotante || numeroSanitizado,
+              datos_extra: payloadFlotante.datos_extra,
+              updated_at: new Date().toISOString(),
             },
-            updated_at: new Date().toISOString(),
-          },
+            {
+              clave: 'whatsapp_solicitud_codigo',
+              valor: numeroSanitizado,
+              datos_extra: payloadSolicitud.datos_extra,
+              updated_at: new Date().toISOString(),
+            },
+          ],
           { onConflict: 'clave' }
         );
 
-      if (error) {
-        // Puede ocurrir si la tabla "configuracion" aún no fue creada en la base de datos
-        errorSupabase = error.message;
-        actualizada.guardadoEnSupabase = false;
-      } else {
+      if (!errConfiguraciones || !errConfiguracion) {
         supabaseOk = true;
         actualizada.guardadoEnSupabase = true;
         if (typeof window !== 'undefined') {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(actualizada));
         }
+      } else {
+        errorSupabase = errConfiguraciones?.message || errConfiguracion?.message;
+        actualizada.guardadoEnSupabase = false;
       }
     } else {
       errorSupabase = 'Supabase no inicializado o sin credenciales anon_key.';
@@ -153,9 +202,25 @@ export async function guardarConfiguracionWhatsApp(
   return {
     localOk: true,
     supabaseOk,
-    numeroSanitizado,
+    numeroSanitizado: actualizada.whatsappFlotante || numeroSanitizado,
     errorSupabase,
   };
+}
+
+/**
+ * Guarda específicamente el número del widget flotante de WhatsApp y lo persiste en Supabase.
+ */
+export async function guardarNumeroWhatsAppFlotante(
+  numeroConCodigoPais: string
+): Promise<{
+  localOk: boolean;
+  supabaseOk: boolean;
+  numeroSanitizado: string;
+  errorSupabase?: string;
+}> {
+  return guardarConfiguracionWhatsApp({
+    whatsappFlotante: numeroConCodigoPais,
+  });
 }
 
 /**
@@ -166,19 +231,51 @@ export async function sincronizarDesdeSupabase(): Promise<ConfiguracionWhatsApp 
     const supabase = getSupabase();
     if (!supabase) return null;
 
-    const { data, error } = await supabase
-      .from('configuracion')
-      .select('clave, valor, datos_extra, updated_at')
-      .eq('clave', 'whatsapp_solicitud_codigo')
-      .maybeSingle();
+    // Intentar leer de 'configuraciones' primero
+    let data: any[] | null = null;
+    let error: any = null;
 
-    if (error || !data) return null;
+    const resConfiguraciones = await supabase
+      .from('configuraciones')
+      .select('clave, valor, telefono, datos_extra, updated_at')
+      .in('clave', ['whatsapp_flotante', 'whatsapp_solicitud_codigo', 'whatsapp']);
+
+    data = resConfiguraciones.data;
+    error = resConfiguraciones.error;
+
+    // Si la tabla 'configuraciones' no existe o está vacía, probar con 'configuracion'
+    if (error || !data || data.length === 0) {
+      const resConfiguracion = await supabase
+        .from('configuracion')
+        .select('clave, valor, datos_extra, updated_at')
+        .in('clave', ['whatsapp_flotante', 'whatsapp_solicitud_codigo']);
+      if (resConfiguracion.data && resConfiguracion.data.length > 0) {
+        data = resConfiguracion.data;
+        error = null;
+      }
+    }
+
+    if (error || !data || data.length === 0) return null;
+
+    const rowFlotante = data.find((d: any) => d.clave === 'whatsapp_flotante' || d.clave === 'whatsapp');
+    const rowSolicitud = data.find((d: any) => d.clave === 'whatsapp_solicitud_codigo');
+
+    const numFlotante = (rowFlotante?.valor || (rowFlotante as any)?.telefono)
+      ? sanitizarNumeroWhatsApp(rowFlotante.valor || (rowFlotante as any)?.telefono)
+      : (rowSolicitud?.datos_extra?.whatsappFlotante
+          ? sanitizarNumeroWhatsApp(rowSolicitud.datos_extra.whatsappFlotante)
+          : undefined);
+
+    const numSolicitud = rowSolicitud?.valor
+      ? sanitizarNumeroWhatsApp(rowSolicitud.valor)
+      : (numFlotante || WHATSAPP_DEFECTO);
 
     const config: ConfiguracionWhatsApp = {
-      whatsappSolicitudCodigo: sanitizarNumeroWhatsApp(data.valor) || WHATSAPP_DEFECTO,
-      nombreContacto: data.datos_extra?.nombreContacto || NOMBRE_CONTACTO_DEFECTO,
-      mensajePredeterminado: data.datos_extra?.mensajePredeterminado || 'Hola, quisiera solicitar el código de curso para ver las fotos.',
-      ultimaActualizacion: data.updated_at,
+      whatsappSolicitudCodigo: numSolicitud || WHATSAPP_DEFECTO,
+      whatsappFlotante: numFlotante || numSolicitud || WHATSAPP_DEFECTO,
+      nombreContacto: rowFlotante?.datos_extra?.nombreContacto || rowSolicitud?.datos_extra?.nombreContacto || NOMBRE_CONTACTO_DEFECTO,
+      mensajePredeterminado: rowFlotante?.datos_extra?.mensajePredeterminado || rowSolicitud?.datos_extra?.mensajePredeterminado || 'Hola, quisiera solicitar el código de curso para ver las fotos.',
+      ultimaActualizacion: rowFlotante?.updated_at || rowSolicitud?.updated_at,
       guardadoEnSupabase: true,
     };
 

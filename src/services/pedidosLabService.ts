@@ -1,5 +1,7 @@
 import JSZip from 'jszip';
 import { FOTOS_MUESTRA } from '../data/colegiosData';
+import { getSupabase } from './supabaseClient';
+import { enviarFotosPorEmail } from './emailService';
 
 export interface ArchivoFotoLab {
   id: string;
@@ -443,6 +445,61 @@ export function registrarPedidoDesdePortal(params: {
 
   const listaActualizada = [nuevoPedido, ...currentPedidos];
   guardarPedidosEnStorage(listaActualizada);
+
+  // Sincronización asincrónica con Supabase en segundo plano
+  setTimeout(async () => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return;
+
+      let familiaId: string | null = null;
+      if (nuevoPedido.tutorNombre || nuevoPedido.tutorTelefono) {
+        const { data: famData } = await supabase
+          .from('familias')
+          .insert({
+            nombre: nuevoPedido.tutorNombre || `Familia de ${nuevoPedido.alumnoNombre}`,
+            whatsapp: nuevoPedido.tutorTelefono || '',
+          })
+          .select('id')
+          .single();
+        if (famData) {
+          familiaId = famData.id;
+        }
+      }
+
+      const tipoKit = nuevoPedido.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
+      const carpetas = (nuevoPedido.copiasExtras?.carpetasExtras || 0) + 1;
+
+      await supabase.from('pedidos').insert({
+        familia_id: familiaId,
+        tipo_kit: tipoKit,
+        estado: nuevoPedido.estadoPago === 'aprobado' ? 'pagado' : 'pendiente_pago',
+        total: nuevoPedido.total,
+        carpetas_impresas: carpetas,
+      });
+
+      // Envío automático del correo con las fotos en Alta Resolución y comprobante
+      if (nuevoPedido.tutorEmail && nuevoPedido.tutorEmail.includes('@')) {
+        enviarFotosPorEmail({
+          to: nuevoPedido.tutorEmail,
+          tutorNombre: nuevoPedido.tutorNombre,
+          alumnoNombre: nuevoPedido.alumnoNombre,
+          colegioNombre: nuevoPedido.colegioNombre,
+          cursoCodigo: nuevoPedido.cursoCodigo,
+          pedidoId: nuevoPedido.id,
+          kitNombre: nuevoPedido.kitNombre,
+          total: nuevoPedido.total,
+          linkDescargaHD: nuevoPedido.linkDescargaHD,
+          esImpreso: nuevoPedido.kitId === 'kit-clasico',
+        }).catch(errEmail => {
+          console.warn('Aviso: envío automático de correo mediante Resend:', errEmail);
+        });
+      }
+    } catch (e) {
+      console.warn('Sincronización en segundo plano con Supabase no completada:', e);
+    }
+  }, 100);
+
   return nuevoPedido;
 }
 

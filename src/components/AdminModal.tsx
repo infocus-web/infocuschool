@@ -4,8 +4,16 @@ import {
   X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package, 
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
-  FileSpreadsheet, Scissors, FileText, UserCheck, Trash2
+  FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe
 } from 'lucide-react';
+import { getSupabase } from '../services/supabaseClient';
+import {
+  obtenerConfiguracionWhatsApp,
+  guardarNumeroWhatsAppFlotante,
+  sanitizarNumeroWhatsApp,
+  formatearNumeroVisual,
+  ConfiguracionWhatsApp
+} from '../services/configuracionService';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { ALUMNOS_NOMINA_2026, SECCIONES_INICIAL_2026 } from '../data/alumnosData';
@@ -32,6 +40,7 @@ import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
+import AdminResumenKitsSection from './AdminResumenKitsSection';
 import { CircularImprimibleModal } from './CircularImprimibleModal';
 import { Colegio, Foto } from '../types';
 
@@ -79,6 +88,94 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     };
   }, []);
 
+  // WhatsApp configuration state (persistent in Supabase 'configuraciones' & localStorage)
+  const [whatsappNumero, setWhatsappNumero] = useState<string>(() => {
+    const cfg = obtenerConfiguracionWhatsApp();
+    return cfg.whatsappFlotante || cfg.whatsappSolicitudCodigo || '5491128625916';
+  });
+  const [whatsappGuardando, setWhatsappGuardando] = useState(false);
+  const [whatsappFeedback, setWhatsappFeedback] = useState<string | null>(null);
+  const [whatsappError, setWhatsappError] = useState<string | null>(null);
+
+  // Synchronize on mount and listen to global updates
+  useEffect(() => {
+    const handleConfigActualizada = (e: any) => {
+      const cfg = e.detail as ConfiguracionWhatsApp;
+      if (cfg?.whatsappFlotante) {
+        setWhatsappNumero(cfg.whatsappFlotante);
+      }
+    };
+    window.addEventListener('whatsapp_config_actualizada', handleConfigActualizada);
+    return () => {
+      window.removeEventListener('whatsapp_config_actualizada', handleConfigActualizada);
+    };
+  }, []);
+
+  const handleGuardarWhatsApp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setWhatsappGuardando(true);
+    setWhatsappFeedback(null);
+    setWhatsappError(null);
+
+    const limpio = sanitizarNumeroWhatsApp(whatsappNumero);
+    if (!limpio) {
+      setWhatsappError('Por favor, ingresá un número de WhatsApp válido con código de país.');
+      setWhatsappGuardando(false);
+      return;
+    }
+
+    try {
+      // 1. Guardar de forma persistente en Supabase en la tabla 'configuraciones'
+      const supabase = getSupabase();
+      let persistidoEnSupabase = false;
+
+      if (supabase) {
+        const payload = {
+          clave: 'whatsapp_flotante',
+          valor: limpio,
+          telefono: limpio,
+          datos_extra: {
+            actualizado_desde: 'AdminModal',
+            tipo: 'widget_flotante',
+          },
+          updated_at: new Date().toISOString(),
+        };
+
+        // Guardar explícitamente en la tabla 'configuraciones' de Supabase
+        const { error: errConfiguraciones } = await supabase
+          .from('configuraciones')
+          .upsert(payload, { onConflict: 'clave' });
+
+        // Guardar también en tabla 'configuracion' por compatibilidad
+        const { error: errConfiguracion } = await supabase
+          .from('configuracion')
+          .upsert(payload, { onConflict: 'clave' });
+
+        if (!errConfiguraciones || !errConfiguracion) {
+          persistidoEnSupabase = true;
+        }
+      }
+
+      // 2. Persistir localmente en Storage y emitir evento reactivo para WhatsAppFloating
+      await guardarNumeroWhatsAppFlotante(limpio);
+      setWhatsappNumero(limpio);
+
+      setWhatsappFeedback(
+        persistidoEnSupabase
+          ? `¡Número ${formatearNumeroVisual(limpio)} guardado y persistido con éxito en la tabla 'configuraciones' de Supabase!`
+          : `¡Número ${formatearNumeroVisual(limpio)} guardado con éxito! El widget flotante ya lo está consumiendo dinámicamente.`
+      );
+
+      setTimeout(() => {
+        setWhatsappFeedback(null);
+      }, 5000);
+    } catch (err: any) {
+      setWhatsappError(`Error al guardar en Supabase: ${err?.message || 'Error inesperado'}`);
+    } finally {
+      setWhatsappGuardando(false);
+    }
+  };
+
   // Course codes state
   const [codigosMap, setCodigosMap] = useState<Record<string, string>>(() => getCodigosCursos());
   const [copiadoFeedback, setCopiadoFeedback] = useState<string | null>(null);
@@ -108,7 +205,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [mostrarCircularModal, setMostrarCircularModal] = useState(false);
   const [seccionParaCircular, setSeccionParaCircular] = useState<string | undefined>(undefined);
 
-  const colegioActualNombre = colegiosList[0]?.nombre || 'Colegio Modelo';
+  const colegioActualNombre = colegiosList[0]?.nombre || 'Instituto Madre del Divino Pastor';
 
   const handleDescargarExcelLegible = () => {
     try {
@@ -434,6 +531,82 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
               </div>
             </div>
 
+            {/* SECCIÓN WHATSAPP: CAMPO DE ENTRADA Y BOTÓN GUARDAR EN TABLA 'configuraciones' DE SUPABASE */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 border-2 border-emerald-500/40 shadow-xs space-y-3.5 relative overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                    <Phone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-black text-slate-900 font-['Outfit']">
+                        Número de WhatsApp (Widget Flotante & Atención)
+                      </h4>
+                      <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
+                        <Database className="w-2.5 h-2.5" />
+                        <span>Supabase: configuraciones</span>
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      Ingresá el número de teléfono con código de país para guardarlo de manera persistente en Supabase y sincronizarlo al instante con el widget flotante.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 shrink-0">
+                  <span>Actual:</span>
+                  <strong className="font-mono text-emerald-700 font-bold">
+                    {formatearNumeroVisual(whatsappNumero)}
+                  </strong>
+                </div>
+              </div>
+
+              <form onSubmit={handleGuardarWhatsApp} className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+                <div className="relative flex-1">
+                  <div className="absolute left-3.5 top-3 flex items-center pointer-events-none text-slate-400">
+                    <Globe className="w-4 h-4 text-emerald-600" />
+                  </div>
+                  <input
+                    id="admin-modal-input-whatsapp"
+                    type="text"
+                    required
+                    value={whatsappNumero}
+                    onChange={(e) => setWhatsappNumero(e.target.value)}
+                    placeholder="Ej: +54 9 11 2862-5916 o 5491128625916"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border-2 border-emerald-500/40 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 bg-emerald-50/20 transition-all"
+                  />
+                </div>
+
+                <button
+                  id="admin-modal-btn-guardar-whatsapp"
+                  type="submit"
+                  disabled={whatsappGuardando || !whatsappNumero.trim()}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 disabled:opacity-50 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{whatsappGuardando ? 'Guardando...' : 'Guardar en Supabase'}</span>
+                </button>
+              </form>
+
+              {whatsappFeedback && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{whatsappFeedback}</span>
+                </div>
+              )}
+
+              {whatsappError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{whatsappError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* SECCIÓN RESUMEN DE KITS SELECCIONADOS POR FAMILIAS (SUPABASE DB) */}
+            <AdminResumenKitsSection />
+
             {/* Navigation tabs */}
             <div className="flex border-b border-slate-200 gap-3 overflow-x-auto pb-0.5">
               {[
@@ -452,7 +625,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
                 { id: 'alumnos', label: `Nómina 2026 (${ALUMNOS_NOMINA_2026.length})`, icon: Users },
                 { id: 'colegios', label: 'Colegios y Códigos', icon: School },
-                { id: 'whatsapp', label: 'WhatsApp Solicitud Códigos', icon: MessageSquare },
+                { id: 'whatsapp', label: 'WhatsApp & Widget Flotante', icon: MessageSquare },
               ].map(t => {
                 const Icon = t.icon;
                 const active = activeTab === t.id;
