@@ -111,15 +111,37 @@ export default function AdminLoteFotosTab() {
     }
   };
 
-  // Watermarking generator function
+  // Convierte el dataURL del canvas (siempre JPEG) en un Blob real para subirlo a Supabase Storage
+  const dataUrlABlob = (dataUrl: string): Blob => {
+    const [header, base64] = dataUrl.split(',');
+    const mimeMatch = header.match(/data:(.*?);base64/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const binario = atob(base64);
+    const bytes = new Uint8Array(binario.length);
+    for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  };
+
+  // Watermarking generator function — además reduce el tamaño para que la copia pública
+  // (fotos-web) sea liviana: la marca de agua queda quemada en los píxeles, no es un
+  // simple overlay, así que esta es la única versión que se sube al bucket público.
   const applyWatermarkToCanvas = (img: HTMLImageElement): string => {
+    const MAX_DIMENSION = 1600;
+    let anchoDestino = img.width;
+    let altoDestino = img.height;
+    if (anchoDestino > MAX_DIMENSION || altoDestino > MAX_DIMENSION) {
+      const escala = MAX_DIMENSION / Math.max(anchoDestino, altoDestino);
+      anchoDestino = Math.round(anchoDestino * escala);
+      altoDestino = Math.round(altoDestino * escala);
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
+    canvas.width = anchoDestino;
+    canvas.height = altoDestino;
     const ctx = canvas.getContext('2d');
     if (!ctx) return img.src;
 
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0, anchoDestino, altoDestino);
 
     ctx.save();
     const text = 'MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR';
@@ -215,12 +237,16 @@ export default function AdminLoteFotosTab() {
         setFotosLote([...colaActualizada]);
 
         const pathHD = `2026/${cursoSeleccionado}/originales/${item.nombreOriginal}`;
-        const pathWeb = `2026/${cursoSeleccionado}/muestras/${item.nombreOriginal}`;
+        const nombreBaseWeb = item.nombreOriginal.replace(/\.[^./]+$/, '');
+        const pathWeb = `2026/${cursoSeleccionado}/muestras/${nombreBaseWeb}.jpg`;
 
-        // 1. Upload HD to private bucket
+        // 1. Upload HD (el archivo original, sin tocar) al bucket privado
         const resHD = await uploadFotoHD(item.file, pathHD);
-        // 2. Upload web preview with watermark
-        const resWeb = await uploadFotoWeb(item.file, pathWeb);
+        // 2. Upload al bucket público de la copia YA reducida y con la marca de agua quemada
+        //    en los píxeles (item.watermarkedUrl), no el archivo original — así lo que queda
+        //    en la dirección pública nunca es la foto limpia.
+        const blobWeb = dataUrlABlob(item.watermarkedUrl);
+        const resWeb = await uploadFotoWeb(blobWeb, pathWeb);
 
         if (resHD.error || resWeb.error) {
           item.estado = 'error';
