@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { 
-  X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package, 
+  X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package,
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
-  FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe
+  FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe,
+  Pencil, Loader2
 } from 'lucide-react';
 import { getSupabase } from '../services/supabaseClient';
 import {
@@ -84,8 +85,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   // Pending inscriptions count
   const [pendientesInscripcionCount, setPendientesInscripcionCount] = useState<number>(0);
 
-  // Schools list state from dynamic persistent service
-  const { colegios: colegiosList, agregarColegio, borrarColegio } = useColegiosLista();
+  // Schools list state from dynamic persistent service (Supabase, compartido para todo el sitio)
+  const { colegios: colegiosList, agregarColegio, editarColegio, borrarColegio } = useColegiosLista();
 
   useEffect(() => {
     if (isOpen && isAuthenticated) {
@@ -329,12 +330,19 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [isProcessingWatermark, setIsProcessingWatermark] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
 
-  // New school state
+  // New / editing school state (el mismo formulario sirve para alta y edición)
+  const [colegioEditandoId, setColegioEditandoId] = useState<string | null>(null);
   const [nuevoNombre, setNuevoNombre] = useState('');
   const [nuevaLocalidad, setNuevaLocalidad] = useState('');
   const [nuevaZona, setNuevaZona] = useState<'CABA' | 'Zona Norte' | 'Zona Sur' | 'Zona Oeste'>('CABA');
   const [nuevoCodigo, setNuevoCodigo] = useState('');
   const [nuevoWhatsapp, setNuevoWhatsapp] = useState('');
+  const [nuevosGrados, setNuevosGrados] = useState('');
+  const [nuevasDivisiones, setNuevasDivisiones] = useState('');
+  const [nuevosTurnos, setNuevosTurnos] = useState('');
+  const [guardandoColegio, setGuardandoColegio] = useState(false);
+  const [errorColegio, setErrorColegio] = useState<string | null>(null);
+  const [borrandoColegioId, setBorrandoColegioId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -444,22 +452,82 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     }, 3000);
   };
 
-  const handleCrearColegio = (e: React.FormEvent) => {
+  const parseListaColegio = (texto: string): string[] =>
+    texto.split(',').map((v) => v.trim()).filter(Boolean);
+
+  const limpiarFormularioColegio = () => {
+    setColegioEditandoId(null);
+    setNuevoNombre('');
+    setNuevaLocalidad('');
+    setNuevaZona('CABA');
+    setNuevoCodigo('');
+    setNuevoWhatsapp('');
+    setNuevosGrados('');
+    setNuevasDivisiones('');
+    setNuevosTurnos('');
+    setErrorColegio(null);
+  };
+
+  const handleEditarColegioClick = (c: Colegio) => {
+    setColegioEditandoId(c.id);
+    setNuevoNombre(c.nombre);
+    setNuevaLocalidad(c.localidad);
+    setNuevaZona(c.zona);
+    setNuevoCodigo(c.codigoAcceso);
+    setNuevoWhatsapp(c.whatsappContacto || '');
+    setNuevosGrados((c.grados || []).join(', '));
+    setNuevasDivisiones((c.divisiones || []).join(', '));
+    setNuevosTurnos((c.turnos || []).join(', '));
+    setErrorColegio(null);
+  };
+
+  const handleCrearColegio = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuevoNombre.trim() || !nuevoCodigo.trim()) return;
 
-    agregarColegio({
+    setGuardandoColegio(true);
+    setErrorColegio(null);
+
+    const datos = {
       nombre: nuevoNombre.trim(),
       localidad: nuevaLocalidad.trim() || 'Buenos Aires',
       zona: nuevaZona,
       codigoAcceso: nuevoCodigo.toUpperCase().trim(),
       whatsappContacto: nuevoWhatsapp.trim() || undefined,
-    });
+      grados: parseListaColegio(nuevosGrados),
+      divisiones: parseListaColegio(nuevasDivisiones),
+      turnos: parseListaColegio(nuevosTurnos),
+    };
 
-    setNuevoNombre('');
-    setNuevaLocalidad('');
-    setNuevoCodigo('');
-    setNuevoWhatsapp('');
+    const resultado = colegioEditandoId
+      ? await editarColegio(colegioEditandoId, datos)
+      : await agregarColegio(datos);
+
+    setGuardandoColegio(false);
+
+    if (!resultado.success) {
+      setErrorColegio(resultado.error || 'No se pudo guardar el colegio.');
+      return;
+    }
+
+    limpiarFormularioColegio();
+  };
+
+  const handleBorrarColegioClick = async (c: Colegio) => {
+    if (!window.confirm(`¿Deseás eliminar "${c.nombre}"?`)) return;
+
+    setBorrandoColegioId(c.id);
+    const resultado = await borrarColegio(c.id);
+    setBorrandoColegioId(null);
+
+    if (!resultado.success) {
+      setErrorColegio(resultado.error || 'No se pudo eliminar el colegio.');
+      return;
+    }
+
+    if (colegioEditandoId === c.id) {
+      limpiarFormularioColegio();
+    }
   };
 
   const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
@@ -1308,9 +1376,31 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {activeTab === 'colegios' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <form onSubmit={handleCrearColegio} className="space-y-4 bg-slate-50 p-6 rounded-2xl border border-slate-200">
-                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-                    Dar de Alta Nuevo Colegio
-                  </h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                      {colegioEditandoId ? 'Editar Colegio' : 'Dar de Alta Nuevo Colegio'}
+                    </h3>
+                    {colegioEditandoId && (
+                      <button
+                        type="button"
+                        onClick={limpiarFormularioColegio}
+                        className="text-[11px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
+                      >
+                        Cancelar edición
+                      </button>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 -mt-2">
+                    Se guarda en Supabase: queda visible al instante para todas las familias que entren al sitio.
+                  </p>
+
+                  {errorColegio && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{errorColegio}</span>
+                    </div>
+                  )}
 
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-700">Nombre de la Institución *</label>
@@ -1361,11 +1451,63 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     </p>
                   </div>
 
+                  <div className="pt-2 border-t border-slate-200 space-y-3">
+                    <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                      Grados, Divisiones y Turnos de este Colegio
+                    </p>
+                    <p className="text-[10px] text-slate-500 -mt-2">
+                      Separá cada valor con una coma. Si dejás alguno vacío, se usa una lista genérica por defecto.
+                    </p>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-700">Grados / Salas</label>
+                      <textarea
+                        value={nuevosGrados}
+                        onChange={e => setNuevosGrados(e.target.value)}
+                        placeholder="Ej: Sala 3 años, Sala 4 años, Sala 5 años, 1° grado, 2° grado..."
+                        rows={2}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white resize-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-700">Divisiones</label>
+                      <input
+                        type="text"
+                        value={nuevasDivisiones}
+                        onChange={e => setNuevasDivisiones(e.target.value)}
+                        placeholder="Ej: A, B, C, Jornada Extendida"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-700">Turnos</label>
+                      <input
+                        type="text"
+                        value={nuevosTurnos}
+                        onChange={e => setNuevosTurnos(e.target.value)}
+                        placeholder="Ej: Mañana, Tarde, Jornada Extendida / Completa"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
                   <button
                     type="submit"
-                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs shadow"
+                    disabled={guardandoColegio}
+                    className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-slate-950 font-bold text-xs shadow flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    Guardar Colegio
+                    {guardandoColegio ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : null}
+                    <span>
+                      {guardandoColegio
+                        ? 'Guardando...'
+                        : colegioEditandoId
+                        ? 'Guardar Cambios'
+                        : 'Guardar Colegio'}
+                    </span>
                   </button>
                 </form>
 
@@ -1373,38 +1515,60 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
                     Colegios Activos ({colegiosList.length})
                   </h3>
-                  <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto bg-white rounded-2xl border border-slate-200">
+                  <div className="divide-y divide-slate-100 max-h-[28rem] overflow-y-auto bg-white rounded-2xl border border-slate-200">
                     {colegiosList.map(c => (
-                      <div key={c.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors">
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-900">{c.nombre}</h4>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[11px] text-slate-500">{c.localidad} ({c.zona})</span>
-                            {c.whatsappContacto && (
-                              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-mono font-bold px-1.5 py-0.5 rounded">
-                                WA: {c.whatsappContacto}
-                              </span>
+                      <div key={c.id} className="p-3.5 hover:bg-slate-50 transition-colors space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-xs font-bold text-slate-900">{c.nombre}</h4>
+                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                              <span className="text-[11px] text-slate-500">{c.localidad} ({c.zona})</span>
+                              {c.whatsappContacto && (
+                                <span className="text-[10px] bg-emerald-100 text-emerald-800 font-mono font-bold px-1.5 py-0.5 rounded">
+                                  WA: {c.whatsappContacto}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-800">
+                              {c.codigoAcceso}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleEditarColegioClick(c)}
+                              className="p-1 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer"
+                              title="Editar colegio"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            {colegiosList.length > 1 && (
+                              <button
+                                type="button"
+                                disabled={borrandoColegioId === c.id}
+                                onClick={() => handleBorrarColegioClick(c)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors cursor-pointer"
+                                title="Eliminar colegio"
+                              >
+                                {borrandoColegioId === c.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
+                              </button>
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 font-mono text-xs font-bold text-slate-800">
-                            {c.codigoAcceso}
+                        <div className="flex flex-wrap gap-1 text-[10px] text-slate-500">
+                          <span className="px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded">
+                            {(c.grados || []).length} grados
                           </span>
-                          {colegiosList.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (window.confirm(`¿Deseás eliminar "${c.nombre}"?`)) {
-                                  borrarColegio(c.id);
-                                }
-                              }}
-                              className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                              title="Eliminar colegio"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <span className="px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded">
+                            {(c.divisiones || []).length} divisiones
+                          </span>
+                          <span className="px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded">
+                            {(c.turnos || []).length} turnos
+                          </span>
                         </div>
                       </div>
                     ))}

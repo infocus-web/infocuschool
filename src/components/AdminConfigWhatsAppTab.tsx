@@ -42,6 +42,7 @@ export default function AdminConfigWhatsAppTab() {
   // Per-school WhatsApp state
   const [colegioSeleccionadoId, setColegioSeleccionadoId] = useState<string>('');
   const [colegioWhatsappInput, setColegioWhatsappInput] = useState<string>('');
+  const [guardandoColegioWhatsapp, setGuardandoColegioWhatsapp] = useState(false);
 
   useEffect(() => {
     setNumeroInput(config.whatsappSolicitudCodigo);
@@ -64,11 +65,20 @@ export default function AdminConfigWhatsAppTab() {
     setColegioWhatsappInput(col?.whatsappContacto || '');
   };
 
-  const handleGuardarColegioWhatsapp = (e: React.FormEvent) => {
+  const handleGuardarColegioWhatsapp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!colegioSeleccionadoId) return;
 
-    actualizarWhatsappColegio(colegioSeleccionadoId, colegioWhatsappInput);
+    setGuardandoColegioWhatsapp(true);
+    const resultado = await actualizarWhatsappColegio(colegioSeleccionadoId, colegioWhatsappInput);
+    setGuardandoColegioWhatsapp(false);
+
+    if (!resultado.success) {
+      setAlertaExito(null);
+      window.alert(resultado.error || 'No se pudo actualizar el WhatsApp de ese colegio.');
+      return;
+    }
+
     recargarColegios();
     const col = colegios.find(c => c.id === colegioSeleccionadoId);
     setAlertaExito(`WhatsApp específico actualizado para "${col?.nombre || 'Colegio'}".`);

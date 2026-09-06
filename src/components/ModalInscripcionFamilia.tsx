@@ -84,9 +84,9 @@ export default function ModalInscripcionFamilia({
         id: `hermano-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         alumnoNombre: '',
         alumnoApellido: alumnoApellido.trim() || '',
-        turno: turno || 'Mañana',
-        grado: 'Sala 4 años',
-        division: 'A'
+        turno: turno || turnosDisponibles[0] || 'Mañana',
+        grado: gradosDisponibles[0] || 'Sala 4 años',
+        division: divisionesDisponibles[0] || 'A'
       }
     ]);
   };
@@ -112,6 +112,17 @@ export default function ModalInscripcionFamilia({
     ? selectedColegio.divisiones
     : ['A', 'B', 'C', 'Jornada Extendida'];
 
+  const turnosDisponibles = selectedColegio?.turnos && selectedColegio.turnos.length > 0
+    ? selectedColegio.turnos
+    : ['Mañana', 'Tarde', 'Jornada Extendida'];
+
+  const gradosDisponibles = selectedColegio?.grados && selectedColegio.grados.length > 0
+    ? selectedColegio.grados
+    : [
+        'Sala 3 años', 'Sala 4 años', 'Sala 5 años',
+        '1° Grado', '2° Grado', '3° Grado', '4° Grado', '5° Grado', '6° Grado', '7° Grado',
+      ];
+
   React.useEffect(() => {
     if (colegios.length > 0 && (!colegioId || !colegios.some((c) => c.id === colegioId))) {
       setColegioId(colegios[0].id);
@@ -123,6 +134,18 @@ export default function ModalInscripcionFamilia({
       setDivision(divisionesDisponibles[0] || 'A');
     }
   }, [divisionesDisponibles, division]);
+
+  React.useEffect(() => {
+    if (!turno || !turnosDisponibles.includes(turno)) {
+      setTurno(turnosDisponibles[0] || 'Mañana');
+    }
+  }, [turnosDisponibles, turno]);
+
+  React.useEffect(() => {
+    if (!grado || !gradosDisponibles.includes(grado)) {
+      setGrado(gradosDisponibles[0] || 'Sala 3 años');
+    }
+  }, [gradosDisponibles, grado]);
 
   const handleCambioTurno = (nuevoTurno: string) => {
     setTurno(nuevoTurno);
@@ -731,9 +754,9 @@ export default function ModalInscripcionFamilia({
                         onChange={(e) => handleCambioTurno(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
                       >
-                        <option value="Mañana">Mañana</option>
-                        <option value="Tarde">Tarde</option>
-                        <option value="Jornada Extendida">Jornada Extendida</option>
+                        {turnosDisponibles.map((t) => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
                       </select>
                     </div>
 
@@ -746,16 +769,9 @@ export default function ModalInscripcionFamilia({
                         onChange={(e) => setGrado(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
                       >
-                        <option value="Sala 3 años">Sala 3 años</option>
-                        <option value="Sala 4 años">Sala 4 años</option>
-                        <option value="Sala 5 años">Sala 5 años</option>
-                        <option value="1° Grado">1° Grado</option>
-                        <option value="2° Grado">2° Grado</option>
-                        <option value="3° Grado">3° Grado</option>
-                        <option value="4° Grado">4° Grado</option>
-                        <option value="5° Grado">5° Grado</option>
-                        <option value="6° Grado">6° Grado</option>
-                        <option value="7° Grado">7° Grado</option>
+                        {gradosDisponibles.map((g) => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
                       </select>
                     </div>
 
@@ -886,9 +902,9 @@ export default function ModalInscripcionFamilia({
                               }
                               className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                             >
-                              <option value="Mañana">Mañana</option>
-                              <option value="Tarde">Tarde</option>
-                              <option value="Jornada Extendida">Jornada Extendida</option>
+                              {turnosDisponibles.map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
                             </select>
                           </div>
                           <div>
@@ -902,16 +918,9 @@ export default function ModalInscripcionFamilia({
                               }
                               className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                             >
-                              <option value="Sala 3 años">Sala 3 años</option>
-                              <option value="Sala 4 años">Sala 4 años</option>
-                              <option value="Sala 5 años">Sala 5 años</option>
-                              <option value="1° Grado">1° Grado</option>
-                              <option value="2° Grado">2° Grado</option>
-                              <option value="3° Grado">3° Grado</option>
-                              <option value="4° Grado">4° Grado</option>
-                              <option value="5° Grado">5° Grado</option>
-                              <option value="6° Grado">6° Grado</option>
-                              <option value="7° Grado">7° Grado</option>
+                              {gradosDisponibles.map((g) => (
+                                <option key={g} value={g}>{g}</option>
+                              ))}
                             </select>
                           </div>
                           <div>
