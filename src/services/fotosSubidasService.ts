@@ -48,6 +48,8 @@ export interface DatosFotoParaRegistrar {
   division: string;
   storagePathHD: string;
   storagePathWeb: string;
+  /** Miniatura chica y sin marca de agua, usada en la grilla de la galería */
+  storagePathThumb?: string;
   alumnoNombre?: string;
 }
 
@@ -170,11 +172,16 @@ export async function obtenerGaleriaPublica(params: {
 
     return data.fotos.map((row: any): Foto => {
       const categoria = row.categoria as CategoriaFoto;
+      // La vista ampliada usa la copia con la marca de agua quemada en los píxeles
+      // (preview_path). La miniatura de la grilla usa la copia chica y limpia (thumb_path)
+      // cuando existe; si la foto se subió antes de tener miniatura propia, cae de nuevo
+      // en la versión con marca de agua como respaldo.
       const url = row.preview_path || row.thumb_path || row.storage_path || '';
+      const thumbnail = row.thumb_path || row.preview_path || row.storage_path || '';
       return {
         id: row.id,
         url,
-        thumbnail: url,
+        thumbnail,
         categoria,
         titulo: row.alumno_nombre
           ? `${row.alumno_nombre} (${categoria})`
