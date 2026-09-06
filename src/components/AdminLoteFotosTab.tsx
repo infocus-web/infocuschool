@@ -25,6 +25,7 @@ import {
   eliminarFotoActivaAdmin,
   limpiarTodasLasFotosAdmin,
   regenerarMiniaturasAdmin,
+  regenerarMarcaAguaAdmin,
   FotoRegistrada
 } from '../services/fotosSubidasService';
 
@@ -68,6 +69,10 @@ export default function AdminLoteFotosTab() {
   // Migración de miniaturas limpias para fotos subidas antes de este cambio
   const [regenerandoMiniaturas, setRegenerandoMiniaturas] = useState(false);
   const [progresoMiniaturas, setProgresoMiniaturas] = useState<{ procesadas: number; fallidas: number; restantes: number } | null>(null);
+
+  // Migración de la marca de agua más liviana para fotos ya subidas (vista ampliada)
+  const [regenerandoMarcaAgua, setRegenerandoMarcaAgua] = useState(false);
+  const [progresoMarcaAgua, setProgresoMarcaAgua] = useState<{ procesadas: number; fallidas: number; restantes: number } | null>(null);
 
   // Supabase Diagnostics & Settings
   const [diagnostico, setDiagnostico] = useState<SupabaseDiagnosticResult | null>(null);
@@ -158,20 +163,22 @@ export default function AdminLoteFotosTab() {
     ctx.drawImage(img, 0, 0, anchoDestino, altoDestino);
 
     ctx.save();
+    // Marca de agua real, quemada en los píxeles (no se puede desactivar ni quitar) pero
+    // más espaciada y liviana que antes, para que no tape tanto la foto.
     const text = 'MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR';
-    const fontSize = Math.max(16, Math.round(canvas.width * 0.04));
+    const fontSize = Math.max(14, Math.round(canvas.width * 0.032));
     ctx.font = `bold ${fontSize}px sans-serif`;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-    ctx.shadowBlur = 6;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 3;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((-25 * Math.PI) / 180);
 
-    const stepX = canvas.width * 0.45;
-    const stepY = canvas.height * 0.22;
+    const stepX = canvas.width * 0.75;
+    const stepY = canvas.height * 0.38;
     for (let y = -canvas.height; y < canvas.height; y += stepY) {
       for (let x = -canvas.width; x < canvas.width; x += stepX) {
         ctx.fillText(text, x, y);
@@ -425,6 +432,47 @@ export default function AdminLoteFotosTab() {
     }
   };
 
+  // Migración: re-genera la vista ampliada (con marca de agua quemada) de TODAS las fotos
+  // ya subidas, usando la nueva versión más liviana y espaciada — a partir del original
+  // guardado, sin volver a subir nada. Avanza con "offset" en lugar de filtrar, porque acá
+  // se quiere reprocesar cada foto una sola vez, ya tenga o no la marca vieja.
+  const handleRegenerarMarcaAgua = async () => {
+    const confirmar = window.confirm(
+      'Esto va a re-generar la vista ampliada de TODAS las fotos ya subidas con la nueva marca de agua, más liviana y espaciada. Puede tardar varios minutos. ¿Continuar?'
+    );
+    if (!confirmar) return;
+
+    setRegenerandoMarcaAgua(true);
+    setErrorMessage(null);
+    let totalProcesadas = 0;
+    let totalFallidas = 0;
+    let restantes = 1;
+    let offset = 0;
+
+    try {
+      while (restantes > 0) {
+        const resultado = await regenerarMarcaAguaAdmin(8, offset);
+        if (!resultado.success) {
+          setErrorMessage(resultado.error || 'No se pudo regenerar la marca de agua.');
+          break;
+        }
+        totalProcesadas += resultado.procesadas || 0;
+        totalFallidas += resultado.fallidas || 0;
+        restantes = resultado.restantes || 0;
+        offset = resultado.siguienteOffset || offset;
+        setProgresoMarcaAgua({ procesadas: totalProcesadas, fallidas: totalFallidas, restantes });
+      }
+      setStatusMessage(
+        `¡Listo! Se actualizó la marca de agua de ${totalProcesadas} foto(s)${totalFallidas > 0 ? `, ${totalFallidas} fallaron` : ''}.`
+      );
+      setTimeout(() => setStatusMessage(null), 8000);
+      await recargarFotosActivas();
+    } finally {
+      setRegenerandoMarcaAgua(false);
+      setProgresoMarcaAgua(null);
+    }
+  };
+
   const handleEliminarFotoActiva = async (foto: FotoRegistrada) => {
     const confirmar = window.confirm('¿Deseás eliminar esta foto de Supabase y del catálogo del curso?');
     if (!confirmar) return;
@@ -645,6 +693,19 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                 {regenerandoMiniaturas
                   ? `Regenerando miniaturas... (${progresoMiniaturas?.procesadas || 0} listas, ${progresoMiniaturas?.restantes ?? '…'} restantes)`
                   : 'Regenerar Miniaturas'}
+              </span>
+            </button>
+            <button
+              onClick={handleRegenerarMarcaAgua}
+              disabled={regenerandoMarcaAgua}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              title="Re-generar la vista ampliada con la marca de agua nueva, más liviana, para fotos subidas antes de este cambio"
+            >
+              <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${regenerandoMarcaAgua ? 'animate-pulse' : ''}`} />
+              <span>
+                {regenerandoMarcaAgua
+                  ? `Actualizando marca de agua... (${progresoMarcaAgua?.procesadas || 0} listas, ${progresoMarcaAgua?.restantes ?? '…'} restantes)`
+                  : 'Aliviar Marca de Agua'}
               </span>
             </button>
             <button
