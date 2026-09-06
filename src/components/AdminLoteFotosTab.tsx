@@ -163,22 +163,22 @@ export default function AdminLoteFotosTab() {
     ctx.drawImage(img, 0, 0, anchoDestino, altoDestino);
 
     ctx.save();
-    // Marca de agua real, quemada en los píxeles (no se puede desactivar ni quitar) pero
-    // más espaciada y liviana que antes, para que no tape tanto la foto.
+    // Marca de agua real, quemada en los píxeles (no se puede desactivar ni quitar):
+    // visible y legible, pero sin la densidad exagerada de la versión original.
     const text = 'MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR';
-    const fontSize = Math.max(14, Math.round(canvas.width * 0.032));
+    const fontSize = Math.max(14, Math.round(canvas.width * 0.036));
     ctx.font = `bold ${fontSize}px sans-serif`;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 3;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+    ctx.shadowBlur = 4;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((-25 * Math.PI) / 180);
 
-    const stepX = canvas.width * 0.75;
-    const stepY = canvas.height * 0.38;
+    const stepX = canvas.width * 0.58;
+    const stepY = canvas.height * 0.28;
     for (let y = -canvas.height; y < canvas.height; y += stepY) {
       for (let x = -canvas.width; x < canvas.width; x += stepX) {
         ctx.fillText(text, x, y);
