@@ -16,7 +16,7 @@ import {
   ConfiguracionWhatsApp
 } from '../services/configuracionService';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
-import { useColegiosLista } from '../services/colegiosService';
+import { useColegiosLista, obtenerTokensPadronAdmin, regenerarTokenPadronAdmin } from '../services/colegiosService';
 import { ALUMNOS_NOMINA_2026, SECCIONES_INICIAL_2026 } from '../data/alumnosData';
 import { 
   getCodigosCursos, guardarCodigoCurso, regenerarTodosLosCodigos, getMensajeWhatsAppParaCurso 
@@ -94,6 +94,17 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
       obtenerInscripcionesAdmin().then((inscriptos) => {
         setPendientesInscripcionCount(inscriptos.filter((i) => i.estado === 'pendiente').length);
       });
+    }
+  }, [isOpen, isAuthenticated, activeTab]);
+
+  // Links secretos de carga de padrón por colegio (solo se piden cuando hacen falta)
+  const [padronTokens, setPadronTokens] = useState<Record<string, string>>({});
+  const [copiadoPadronId, setCopiadoPadronId] = useState<string | null>(null);
+  const [regenerandoPadronId, setRegenerandoPadronId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && isAuthenticated && activeTab === 'colegios') {
+      obtenerTokensPadronAdmin().then(setPadronTokens);
     }
   }, [isOpen, isAuthenticated, activeTab]);
 
@@ -528,6 +539,39 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     if (colegioEditandoId === c.id) {
       limpiarFormularioColegio();
     }
+  };
+
+  const construirLinkPadron = (colegioId: string): string => {
+    const token = padronTokens[colegioId];
+    if (!token) return '';
+    return `${window.location.origin}/padron.html?colegio=${encodeURIComponent(colegioId)}&codigo=${encodeURIComponent(token)}`;
+  };
+
+  const handleCopiarLinkPadron = async (colegioId: string) => {
+    const link = construirLinkPadron(colegioId);
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiadoPadronId(colegioId);
+      setTimeout(() => setCopiadoPadronId((actual) => (actual === colegioId ? null : actual)), 2000);
+    } catch {
+      window.prompt('Copiá el link manualmente:', link);
+    }
+  };
+
+  const handleRegenerarPadron = async (c: Colegio) => {
+    if (!window.confirm(`¿Regenerar el link de carga de padrón de "${c.nombre}"? El link anterior dejará de funcionar.`)) return;
+
+    setRegenerandoPadronId(c.id);
+    const resultado = await regenerarTokenPadronAdmin(c.id);
+    setRegenerandoPadronId(null);
+
+    if (!resultado.success || !resultado.codigoPadron) {
+      setErrorColegio(resultado.error || 'No se pudo regenerar el link de padrón.');
+      return;
+    }
+
+    setPadronTokens((actual) => ({ ...actual, [c.id]: resultado.codigoPadron! }));
   };
 
   const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
@@ -1569,6 +1613,53 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           <span className="px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded">
                             {(c.turnos || []).length} turnos
                           </span>
+                        </div>
+
+                        <div className="pt-1.5 mt-1.5 border-t border-slate-100 space-y-1">
+                          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                            Link de carga de padrón (para la institución)
+                          </p>
+                          {padronTokens[c.id] ? (
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                readOnly
+                                value={construirLinkPadron(c.id)}
+                                onFocus={(e) => e.target.select()}
+                                className="flex-1 min-w-0 px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-mono text-slate-600"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleCopiarLinkPadron(c.id)}
+                                title="Copiar link"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors cursor-pointer shrink-0"
+                              >
+                                {copiadoPadronId === c.id ? (
+                                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={regenerandoPadronId === c.id}
+                                onClick={() => handleRegenerarPadron(c)}
+                                title="Regenerar link (invalida el anterior)"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors cursor-pointer shrink-0"
+                              >
+                                {regenerandoPadronId === c.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-slate-400">Cargando link...</p>
+                          )}
+                          <p className="text-[9px] text-slate-400">
+                            Compartilo solo con la institución — ellos cargan ahí los datos de contacto de las familias.
+                          </p>
                         </div>
                       </div>
                     ))}
