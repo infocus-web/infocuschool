@@ -573,6 +573,49 @@ app.delete('/api/admin/colegios/:id', requireAdminAuth, async (req: Request, res
   }
 });
 
+// Panel admin: devuelve el token secreto de carga de padrón de cada colegio (nunca se expone en /api/colegios,
+// que es público). Se usa para armar el link que el fotógrafo comparte con la secretaría del colegio.
+app.get('/api/admin/colegios/padron-links', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase.from('colegios').select('id, codigo_padron');
+    if (error) throw error;
+
+    const tokens: Record<string, string> = {};
+    for (const row of data || []) {
+      if (row.codigo_padron) tokens[row.id] = row.codigo_padron;
+    }
+    return res.json({ success: true, tokens });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener los links de padrón' });
+  }
+});
+
+// Panel admin: regenera el token secreto de un colegio (por si el link se filtró o hay que invalidarlo)
+app.post('/api/admin/colegios/:id/regenerar-padron', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const nuevoToken = crypto.randomBytes(5).toString('hex').toUpperCase();
+    const { data, error } = await supabase
+      .from('colegios')
+      .update({ codigo_padron: nuevoToken, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, codigo_padron')
+      .single();
+    if (error) throw error;
+    return res.json({ success: true, codigoPadron: data.codigo_padron });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al regenerar el token' });
+  }
+});
+
 // ==============================================================================
 // 4B. INSCRIPCIONES: VALIDACIÓN AUTOMÁTICA CONTRA PADRÓN Y GESTIÓN ADMIN
 // ==============================================================================
@@ -662,13 +705,42 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       console.warn('Advertencia al consultar padres_autorizados:', e);
     }
 
+    // Buscar si esta misma familia (mismo colegio + mismo WhatsApp o email) ya tiene una
+    // inscripción cargada, para actualizarla en vez de crear un duplicado (por ejemplo, cuando
+    // la familia usa "Modificar datos de inscripción" y vuelve a enviar el formulario).
+    let inscripcionExistente: any = null;
+    try {
+      const { data: existentes, error: errExistentes } = await supabase
+        .from('inscripciones')
+        .select('*')
+        .eq('colegio_id', colegioId)
+        .neq('estado', 'rechazado');
+
+      if (!errExistentes && Array.isArray(existentes)) {
+        inscripcionExistente = existentes.find((i: any) => {
+          if (cleanEmail && i.email && String(i.email).trim().toLowerCase() === cleanEmail) return true;
+          if (telDigits) {
+            const iTel = normalizarTelefonoServidor(i.telefono_whatsapp || '');
+            if (iTel && (iTel === telDigits || (telUltimos.length >= 8 && iTel.endsWith(telUltimos)))) return true;
+          }
+          return false;
+        }) || null;
+      }
+    } catch (e) {
+      console.warn('Advertencia al buscar inscripción existente:', e);
+    }
+
     const now = new Date();
     const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    let estado: 'aceptado' | 'pendiente' = 'pendiente';
-    let codigoAcceso: string | null = null;
+    // Si la familia ya estaba aceptada (con código asignado), mantenemos su estado y código:
+    // sólo actualizamos sus datos de contacto/curso, nunca le hacemos perder el acceso ya otorgado.
+    let estado: 'aceptado' | 'pendiente' = inscripcionExistente?.estado === 'aceptado' ? 'aceptado' : 'pendiente';
+    let codigoAcceso: string | null = inscripcionExistente?.estado === 'aceptado'
+      ? (inscripcionExistente.codigo_asignado || null)
+      : null;
 
-    if (matchPadre) {
+    if (estado !== 'aceptado' && matchPadre) {
       estado = 'aceptado';
       codigoAcceso = String(
         matchPadre.codigo_asignado || determinarCodigoCursoServidor(grado, turno, division)
@@ -691,19 +763,35 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       codigo_familiar: codigoAcceso,
       solicita_foto_hermanos: Boolean(solicitaFotoHermanos || (hermanos && hermanos.length > 0)),
       hermanos: hermanos || [],
-      fecha_inscripcion: fechaStr,
-      fecha_aprobacion: estado === 'aceptado' ? fechaStr : null,
-      notificacion_whatsapp_enviada: false,
-      notificacion_email_enviada: false,
+      fecha_inscripcion: inscripcionExistente?.fecha_inscripcion || fechaStr,
+      fecha_aprobacion: estado === 'aceptado' ? (inscripcionExistente?.fecha_aprobacion || fechaStr) : null,
+      notificacion_whatsapp_enviada: inscripcionExistente ? Boolean(inscripcionExistente.notificacion_whatsapp_enviada) : false,
+      notificacion_email_enviada: inscripcionExistente ? Boolean(inscripcionExistente.notificacion_email_enviada) : false,
     };
 
-    const { data: inserted, error: errInsert } = await supabase
-      .from('inscripciones')
-      .insert(inscripcionRow)
-      .select()
-      .single();
+    let resultadoFila: any = null;
+    let errGuardar: any = null;
 
-    if (errInsert) throw errInsert;
+    if (inscripcionExistente?.id) {
+      const { data: actualizada, error } = await supabase
+        .from('inscripciones')
+        .update(inscripcionRow)
+        .eq('id', inscripcionExistente.id)
+        .select()
+        .single();
+      resultadoFila = actualizada;
+      errGuardar = error;
+    } else {
+      const { data: creada, error } = await supabase
+        .from('inscripciones')
+        .insert(inscripcionRow)
+        .select()
+        .single();
+      resultadoFila = creada;
+      errGuardar = error;
+    }
+
+    if (errGuardar) throw errGuardar;
 
     if (matchPadre && matchPadre.id) {
       await supabase
@@ -716,7 +804,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       success: true,
       estado,
       codigoAcceso,
-      inscripcion: inserted,
+      inscripcion: resultadoFila,
     });
   } catch (err: any) {
     console.error('Error al validar inscripción:', err);
@@ -830,6 +918,59 @@ app.post('/api/admin/inscripciones/:id/aprobar', requireAdminAuth, async (req: R
   }
 });
 
+// Envía por email (de verdad, vía Resend) el Código de Acceso a una familia ya aprobada.
+// Se llama justo después de aprobar, o para reintentar el envío si falló la primera vez.
+app.post('/api/admin/inscripciones/:id/enviar-email', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const { data: existente, error: errGet } = await supabase.from('inscripciones').select('*').eq('id', id).single();
+    if (errGet || !existente) {
+      return res.status(404).json({ success: false, error: 'Inscripción no encontrada' });
+    }
+    if (!existente.codigo_asignado) {
+      return res.status(400).json({ success: false, error: 'Esta inscripción todavía no tiene un código asignado. Aprobala primero.' });
+    }
+    if (!existente.email) {
+      return res.status(400).json({ success: false, error: 'Esta familia no cargó un email.' });
+    }
+
+    const alumnos = [
+      { nombre: existente.alumno_nombre, apellido: existente.alumno_apellido || '', grado: existente.grado, division: existente.division, turno: existente.turno },
+      ...(Array.isArray(existente.hermanos) ? existente.hermanos : []).map((h: any) => ({
+        nombre: h.alumnoNombre, apellido: h.alumnoApellido || '', grado: h.grado, division: h.division, turno: h.turno,
+      })),
+    ];
+
+    const resultado = await enviarCorreoCodigoAcceso({
+      to: existente.email,
+      padreNombre: existente.padre_nombre,
+      colegioNombre: existente.colegio_nombre,
+      codigo: existente.codigo_asignado,
+      alumnos,
+      solicitaFotoHermanos: Boolean(existente.solicita_foto_hermanos),
+    });
+
+    if (!resultado.success) {
+      return res.status(502).json({ success: false, error: resultado.error || 'No se pudo enviar el email' });
+    }
+
+    await supabase
+      .from('inscripciones')
+      .update({ notificacion_email_enviada: true, updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    return res.json({ success: true, messageId: resultado.messageId });
+  } catch (err: any) {
+    console.error('Error al enviar email de código de acceso:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al enviar el email' });
+  }
+});
+
 app.post('/api/admin/inscripciones/:id/rechazar', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -929,6 +1070,123 @@ app.delete('/api/admin/padron/:id', requireAdminAuth, async (req: Request, res: 
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar del padrón' });
+  }
+});
+
+// ==============================================================================
+// 4C. PADRÓN — AUTOCARGA POR LA INSTITUCIÓN (sin login, protegido por token secreto)
+// Usada por la página estática /padron.html: el colegio recibe un link con su propio
+// código secreto (generado en 4A) y pega ahí la lista de familias autorizadas, que se
+// guarda directo en `padres_autorizados`. Nunca se expone el token en /api/colegios.
+// ==============================================================================
+
+async function validarTokenPadronInstitucion(colegioId: string, codigo: string) {
+  const supabase = getServerSupabase();
+  if (!supabase) {
+    return { ok: false as const, status: 500, error: 'Supabase no configurado en el servidor' };
+  }
+  if (!colegioId || !codigo || !String(codigo).trim()) {
+    return { ok: false as const, status: 400, error: 'Falta el código de acceso al padrón' };
+  }
+  const { data: colegio, error } = await supabase
+    .from('colegios')
+    .select('id, nombre, codigo_padron')
+    .eq('id', colegioId)
+    .single();
+
+  if (error || !colegio || !colegio.codigo_padron) {
+    return { ok: false as const, status: 404, error: 'Link no válido' };
+  }
+  if (String(codigo).trim().toUpperCase() !== String(colegio.codigo_padron).trim().toUpperCase()) {
+    return { ok: false as const, status: 403, error: 'El código de este link no es correcto' };
+  }
+  return { ok: true as const, supabase, colegio };
+}
+
+// Valida el link (colegioId + código) y devuelve el nombre del colegio para mostrar en la página
+app.get('/api/padron/institucion/:colegioId', async (req: Request, res: Response) => {
+  const { colegioId } = req.params;
+  const codigo = String(req.query.codigo || '');
+  const resultado = await validarTokenPadronInstitucion(colegioId, codigo);
+  if (!resultado.ok) {
+    return res.status(resultado.status).json({ success: false, error: resultado.error });
+  }
+  return res.json({ success: true, colegioNombre: resultado.colegio.nombre });
+});
+
+// Recibe la lista pegada por la secretaría del colegio y la guarda en padres_autorizados,
+// evitando duplicados (por teléfono o email) contra lo ya cargado para ese colegio.
+app.post('/api/padron/institucion/:colegioId', async (req: Request, res: Response) => {
+  try {
+    const { colegioId } = req.params;
+    const { codigo, filas } = req.body || {};
+
+    const resultado = await validarTokenPadronInstitucion(colegioId, codigo);
+    if (!resultado.ok) {
+      return res.status(resultado.status).json({ success: false, error: resultado.error });
+    }
+    const { supabase } = resultado;
+
+    if (!Array.isArray(filas) || filas.length === 0) {
+      return res.status(400).json({ success: false, error: 'No se recibieron filas para cargar' });
+    }
+    if (filas.length > 2000) {
+      return res.status(400).json({ success: false, error: 'Demasiadas filas en un solo envío (máximo 2000)' });
+    }
+
+    const vistas = new Set<string>();
+    const filasNormalizadas = filas
+      .map((f: any) => {
+        const nombre = String(f.nombre || '').trim();
+        const email = f.email ? String(f.email).trim().toLowerCase() : '';
+        const telefono = f.telefono ? normalizarTelefonoServidor(String(f.telefono)) : '';
+        return { nombre, email: email || null, telefono: telefono || null };
+      })
+      .filter((f: any) => f.nombre && (f.telefono || f.email))
+      .filter((f: any) => {
+        // Descarta duplicados dentro del mismo envío
+        const clave = f.email || f.telefono;
+        if (vistas.has(clave)) return false;
+        vistas.add(clave);
+        return true;
+      });
+
+    const invalidas = filas.length - filasNormalizadas.length;
+
+    if (filasNormalizadas.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ninguna fila tiene los datos mínimos (nombre y al menos email o teléfono)' });
+    }
+
+    // Evitar duplicados contra lo que ya está cargado para este colegio
+    const { data: existentes } = await supabase
+      .from('padres_autorizados')
+      .select('email, telefono')
+      .eq('colegio_id', colegioId);
+
+    const emailsExistentes = new Set((existentes || []).map((r: any) => (r.email || '').toLowerCase()).filter(Boolean));
+    const telefonosExistentes = new Set((existentes || []).map((r: any) => normalizarTelefonoServidor(r.telefono || '')).filter(Boolean));
+
+    const filasNuevas = filasNormalizadas.filter((f: any) => {
+      if (f.email && emailsExistentes.has(f.email)) return false;
+      if (f.telefono && telefonosExistentes.has(f.telefono)) return false;
+      return true;
+    });
+    const duplicadas = filasNormalizadas.length - filasNuevas.length;
+
+    if (filasNuevas.length === 0) {
+      return res.json({ success: true, agregados: 0, duplicados: duplicadas, invalidas });
+    }
+
+    const { data, error } = await supabase
+      .from('padres_autorizados')
+      .insert(filasNuevas.map((f: any) => ({ colegio_id: colegioId, nombre: f.nombre, email: f.email, telefono: f.telefono })))
+      .select();
+    if (error) throw error;
+
+    return res.json({ success: true, agregados: data?.length || 0, duplicados: duplicadas, invalidas });
+  } catch (err: any) {
+    console.error('Error al cargar padrón desde la institución:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al guardar los datos' });
   }
 });
 
@@ -1098,6 +1356,103 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
     from: fromEmail,
     to,
   };
+}
+
+interface DatosCorreoCodigoAcceso {
+  to: string;
+  padreNombre: string;
+  colegioNombre: string;
+  codigo: string;
+  alumnos: { nombre: string; apellido: string; grado: string; division: string; turno: string }[];
+  solicitaFotoHermanos?: boolean;
+}
+
+/** Envía por email el Código de Acceso a una familia recién aprobada (panel admin -> Inscriptos -> Aceptar y Enviar) */
+async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
+  const { to, padreNombre, colegioNombre, codigo, alumnos, solicitaFotoHermanos } = datos;
+
+  if (!to || !to.includes('@')) {
+    return { success: false, error: 'Email de destino inválido' };
+  }
+
+  const resend = getResendClient();
+  if (!resend) {
+    return { success: false, error: 'RESEND_API_KEY no está configurada en el servidor.' };
+  }
+
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
+  const nombreDestinatario = padreNombre?.trim() || 'Familia';
+  const colegioStr = colegioNombre?.trim() || 'la institución';
+
+  const listaHijosHtml = alumnos
+    .map(
+      (a) =>
+        `<li style="margin-bottom:4px;">${a.nombre} ${a.apellido} — ${a.grado} "${a.division}", Turno ${a.turno}</li>`
+    )
+    .join('');
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tu Código de Acceso - Retrato Escolar</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b;">
+  <div style="max-width: 600px; margin: 24px auto; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+    <div style="background-color: #0f172a; padding: 32px 24px; text-align: center; border-bottom: 3px solid #f59e0b;">
+      <div style="font-size: 11px; font-weight: 800; letter-spacing: 2px; color: #f59e0b; text-transform: uppercase; margin-bottom: 6px;">
+        RETRATO ESCOLAR • EDICIÓN 2026
+      </div>
+      <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.5px;">
+        ¡Tu inscripción fue validada!
+      </h1>
+      <p style="color: #94a3b8; font-size: 13px; margin: 6px 0 0 0;">${colegioStr}</p>
+    </div>
+    <div style="padding: 28px 24px;">
+      <p style="font-size: 15px; line-height: 1.6; margin-top: 0;">Hola <strong>${nombreDestinatario}</strong>,</p>
+      <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+        Le confirmamos que su registro familiar para el ciclo escolar 2026 en <strong>${colegioStr}</strong> ha sido validado con éxito.
+      </p>
+      <p style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 6px;">Alumnos vinculados a su cuenta familiar:</p>
+      <ul style="font-size: 13px; color: #334155; padding-left: 20px; margin-top: 0;">${listaHijosHtml}</ul>
+      ${solicitaFotoHermanos ? '<p style="font-size:12px;color:#334155;">✓ Foto de hermanos juntos: Solicitada y programada</p>' : ''}
+      <div style="margin: 24px 0; text-align: center; background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 18px;">
+        <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #92400e; margin-bottom: 6px;">
+          Su Código de Acceso
+        </div>
+        <div style="font-size: 26px; font-weight: 800; color: #0f172a; font-family: monospace; letter-spacing: 2px;">
+          ${codigo}
+        </div>
+      </div>
+      <p style="font-size: 13px; line-height: 1.6; color: #334155;">Con este único código podrá:</p>
+      <ol style="font-size: 13px; color: #334155; padding-left: 20px;">
+        <li>Ingresar a retratoescolar.com.ar</li>
+        <li>Ver las galerías individuales y grupales de todos sus hijos sin usar códigos diferentes</li>
+        <li>Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago</li>
+      </ol>
+      <div style="font-size: 12px; color: #64748b; line-height: 1.6; border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
+        Para cualquier consulta, nuestro equipo fotográfico está a su entera disposición.
+      </div>
+    </div>
+    <div style="background-color: #f1f5f9; padding: 18px 24px; text-align: center; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0;">
+      © 2026 Retrato Escolar • Fotografía Escolar Profesional<br>
+      <a href="https://retratoescolar.com.ar" style="color: #d97706; text-decoration: none; font-weight: 600;">retratoescolar.com.ar</a>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  const data = await resend.emails.send({
+    from: fromEmail,
+    to: [to],
+    subject: `Retrato Escolar: Tu Código de Acceso (${codigo}) - ${colegioStr}`,
+    html: htmlContent,
+  });
+
+  return { success: true, messageId: data.data?.id, from: fromEmail, to };
 }
 
 // ==============================================================================
