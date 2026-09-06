@@ -177,6 +177,44 @@ export async function regenerarMiniaturasAdmin(limite = 12): Promise<ResultadoRe
   }
 }
 
+export interface ResultadoRegenerarMarcaAgua {
+  success: boolean;
+  procesadas?: number;
+  fallidas?: number;
+  restantes?: number;
+  siguienteOffset?: number;
+  error?: string;
+}
+
+/**
+ * Panel admin: re-genera la copia ampliada (con marca de agua quemada) de TODAS las fotos
+ * ya subidas, usando la nueva versión más liviana y espaciada de la marca de agua — a partir
+ * del original guardado, sin volver a subir nada. Se procesa de a un lote chico por llamada,
+ * avanzando con `offset` hasta que "restantes" llega a 0.
+ */
+export async function regenerarMarcaAguaAdmin(limite = 8, offset = 0): Promise<ResultadoRegenerarMarcaAgua> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/fotos/regenerar-marca-agua', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limite, offset }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo regenerar la marca de agua.' };
+    }
+    return {
+      success: true,
+      procesadas: data.procesadas || 0,
+      fallidas: data.fallidas || 0,
+      restantes: data.restantes || 0,
+      siguienteOffset: data.siguienteOffset || 0,
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al regenerar la marca de agua.' };
+  }
+}
+
 /**
  * Galería pública para el portal de familias: trae las fotos reales de un curso puntual
  * (grado + turno + división) desde Supabase. Si todavía no hay fotos reales cargadas para
