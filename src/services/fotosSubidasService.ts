@@ -145,6 +145,38 @@ export async function limpiarTodasLasFotosAdmin(): Promise<{ success: boolean; e
   }
 }
 
+export interface ResultadoRegenerarMiniaturas {
+  success: boolean;
+  procesadas?: number;
+  fallidas?: number;
+  restantes?: number;
+  error?: string;
+}
+
+/**
+ * Panel admin: migración de fotos ya subidas ANTES de tener miniatura propia — genera,
+ * a partir del original guardado en el bucket privado, una miniatura chica y sin marca de
+ * agua para cada una. Procesa de a un lote chico por llamada (el servidor la corta sola
+ * para no exceder el tiempo máximo de una función serverless), por eso se llama en un
+ * bucle hasta que "restantes" llega a 0.
+ */
+export async function regenerarMiniaturasAdmin(limite = 12): Promise<ResultadoRegenerarMiniaturas> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/fotos/regenerar-miniaturas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limite }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudieron regenerar las miniaturas.' };
+    }
+    return { success: true, procesadas: data.procesadas || 0, fallidas: data.fallidas || 0, restantes: data.restantes || 0 };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al regenerar las miniaturas.' };
+  }
+}
+
 /**
  * Galería pública para el portal de familias: trae las fotos reales de un curso puntual
  * (grado + turno + división) desde Supabase. Si todavía no hay fotos reales cargadas para
