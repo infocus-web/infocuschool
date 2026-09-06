@@ -348,7 +348,13 @@ app.get('/api/colegios', async (req: Request, res: Response) => {
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
-    const { data, error } = await supabase.from('colegios').select('*').order('nombre', { ascending: true });
+    // Solo colegios marcados como públicos: excluye el colegio interno "Colegio Demo — Infocus"
+    // que usa el módulo de eventos/kits y que no debe aparecer como opción para las familias.
+    const { data, error } = await supabase
+      .from('colegios')
+      .select('*')
+      .eq('activo_publico', true)
+      .order('nombre', { ascending: true });
     if (error) throw error;
     return res.json({ success: true, colegios: (data || []).map(mapearColegioSupabase) });
   } catch (err: any) {
