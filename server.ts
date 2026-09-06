@@ -313,7 +313,9 @@ app.post('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respons
           division: division || null,
           codigo_curso: grado && turno ? determinarCodigoCursoServidor(grado, turno, division) : null,
           storage_path: f.storagePathHD || '',
-          thumb_path: f.storagePathWeb || null,
+          // thumb_path: miniatura chica y sin marca de agua (grilla de la galería).
+          // preview_path: copia con la marca de agua quemada en los píxeles (vista ampliada).
+          thumb_path: f.storagePathThumb || f.storagePathWeb || null,
           preview_path: f.storagePathWeb || null,
           alumno_nombre: f.alumnoNombre || null,
         };
