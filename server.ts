@@ -303,6 +303,154 @@ app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
 });
 
 // ==============================================================================
+// 4A. COLEGIOS: PERFIL DE CADA COLEGIO (GRADOS, DIVISIONES, TURNOS, CÓDIGO DE ACCESO)
+// ==============================================================================
+
+const GRADOS_POR_DEFECTO_COLEGIO = [
+  'Sala 3 años', 'Sala 4 años', 'Sala 5 años',
+  '1° grado', '2° grado', '3° grado', '4° grado', '5° grado', '6° grado', '7° grado',
+  '1° año', '2° año', '3° año', '4° año', '5° año', '6° año',
+];
+const DIVISIONES_POR_DEFECTO_COLEGIO = ['A', 'B', 'C', 'Jornada Extendida'];
+const TURNOS_POR_DEFECTO_COLEGIO = ['Mañana', 'Tarde', 'Jornada Extendida / Completa'];
+
+function generarSlugColegio(nombre: string): string {
+  return String(nombre || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function mapearColegioSupabase(row: any) {
+  return {
+    id: row.id,
+    slug: row.slug,
+    nombre: row.nombre,
+    localidad: row.localidad || 'Buenos Aires',
+    zona: row.zona || 'CABA',
+    eventoActual: row.evento_actual || 'Temporada Oficial Retratos y Fotos Escolares 2026',
+    grados: Array.isArray(row.grados) && row.grados.length > 0 ? row.grados : GRADOS_POR_DEFECTO_COLEGIO,
+    divisiones: Array.isArray(row.divisiones) && row.divisiones.length > 0 ? row.divisiones : DIVISIONES_POR_DEFECTO_COLEGIO,
+    turnos: Array.isArray(row.turnos) && row.turnos.length > 0 ? row.turnos : TURNOS_POR_DEFECTO_COLEGIO,
+    codigoAcceso: row.codigo_acceso || '',
+    whatsappContacto: row.whatsapp_contacto || undefined,
+  };
+}
+
+// Lista pública de colegios: la usan el registro de familias, el portal y la búsqueda del sitio.
+// No requiere autenticación porque hace falta ANTES de que una familia se identifique.
+app.get('/api/colegios', async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase.from('colegios').select('*').order('nombre', { ascending: true });
+    if (error) throw error;
+    return res.json({ success: true, colegios: (data || []).map(mapearColegioSupabase) });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener los colegios' });
+  }
+});
+
+app.post('/api/admin/colegios', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { nombre, localidad, zona, codigoAcceso, whatsappContacto, grados, divisiones, turnos, eventoActual } = req.body || {};
+    if (!nombre || !String(nombre).trim()) {
+      return res.status(400).json({ success: false, error: 'Falta el nombre de la institución' });
+    }
+    if (!codigoAcceso || !String(codigoAcceso).trim()) {
+      return res.status(400).json({ success: false, error: 'Falta el código de acceso para las familias' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const row = {
+      slug: generarSlugColegio(nombre),
+      nombre: String(nombre).trim(),
+      localidad: (localidad || 'Buenos Aires').toString().trim(),
+      zona: zona || 'CABA',
+      evento_actual: (eventoActual || 'Temporada Oficial Retratos y Fotos Escolares 2026').toString().trim(),
+      codigo_acceso: String(codigoAcceso).trim().toUpperCase(),
+      whatsapp_contacto: whatsappContacto ? String(whatsappContacto).replace(/\D/g, '') : null,
+      grados: Array.isArray(grados) && grados.length > 0 ? grados : GRADOS_POR_DEFECTO_COLEGIO,
+      divisiones: Array.isArray(divisiones) && divisiones.length > 0 ? divisiones : DIVISIONES_POR_DEFECTO_COLEGIO,
+      turnos: Array.isArray(turnos) && turnos.length > 0 ? turnos : TURNOS_POR_DEFECTO_COLEGIO,
+    };
+
+    const { data, error } = await supabase.from('colegios').insert(row).select().single();
+    if (error) throw error;
+    return res.json({ success: true, colegio: mapearColegioSupabase(data) });
+  } catch (err: any) {
+    console.error('Error al crear colegio:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al crear el colegio' });
+  }
+});
+
+app.put('/api/admin/colegios/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { nombre, localidad, zona, codigoAcceso, whatsappContacto, grados, divisiones, turnos, eventoActual } = req.body || {};
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const cambios: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (nombre !== undefined) {
+      cambios.nombre = String(nombre).trim();
+      cambios.slug = generarSlugColegio(nombre);
+    }
+    if (localidad !== undefined) cambios.localidad = String(localidad).trim();
+    if (zona !== undefined) cambios.zona = zona;
+    if (codigoAcceso !== undefined) cambios.codigo_acceso = String(codigoAcceso).trim().toUpperCase();
+    if (whatsappContacto !== undefined) {
+      cambios.whatsapp_contacto = whatsappContacto ? String(whatsappContacto).replace(/\D/g, '') : null;
+    }
+    if (eventoActual !== undefined) cambios.evento_actual = String(eventoActual).trim();
+    if (Array.isArray(grados)) cambios.grados = grados;
+    if (Array.isArray(divisiones)) cambios.divisiones = divisiones;
+    if (Array.isArray(turnos)) cambios.turnos = turnos;
+
+    const { data, error } = await supabase.from('colegios').update(cambios).eq('id', id).select().single();
+    if (error) throw error;
+    return res.json({ success: true, colegio: mapearColegioSupabase(data) });
+  } catch (err: any) {
+    console.error('Error al actualizar colegio:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al actualizar el colegio' });
+  }
+});
+
+app.delete('/api/admin/colegios/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { error } = await supabase.from('colegios').delete().eq('id', id);
+    if (error) {
+      if (String((error as any).code) === '23503') {
+        return res.status(409).json({
+          success: false,
+          error: 'No se puede eliminar: este colegio ya tiene familias, eventos o pedidos asociados.',
+        });
+      }
+      throw error;
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('Error al eliminar colegio:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar el colegio' });
+  }
+});
+
+// ==============================================================================
 // 4B. INSCRIPCIONES: VALIDACIÓN AUTOMÁTICA CONTRA PADRÓN Y GESTIÓN ADMIN
 // ==============================================================================
 
