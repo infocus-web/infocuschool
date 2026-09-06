@@ -3,13 +3,44 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const DEFAULT_SUPABASE_URL = 'https://ntkqypxvrljuihbxdrtx.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_94eG1ynOFoTUTPfcKgBwlw_rfhcRNbT';
 
+// Helper to detect if a key is a Supabase Service Role Key
+export function isServiceRoleKey(key: string): boolean {
+  if (!key) return false;
+  const clean = key.trim();
+  if (clean.toLowerCase().includes('service_role')) return true;
+  if (clean.startsWith('sb_secret_') || clean.startsWith('secret_')) return true;
+  if (clean.startsWith('ey') && clean.includes('.')) {
+    try {
+      const parts = clean.split('.');
+      if (parts.length >= 2) {
+        const payload = JSON.parse(atob(parts[1]));
+        if (payload?.role === 'service_role') {
+          return true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
 // Get keys from environment or localStorage for easy configuration from Admin panel
 export function getSupabaseConfig() {
   const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env;
   const envUrl = metaEnv?.VITE_SUPABASE_URL;
   const envKey = metaEnv?.VITE_SUPABASE_ANON_KEY;
-  const storedKey = typeof window !== 'undefined' ? localStorage.getItem('infocus_supabase_anon_key') : null;
+  let storedKey = typeof window !== 'undefined' ? localStorage.getItem('infocus_supabase_anon_key') : null;
   const storedUrl = typeof window !== 'undefined' ? localStorage.getItem('infocus_supabase_url') : null;
+
+  // Sanitize: never allow a stored service_role key in client localStorage
+  if (storedKey && isServiceRoleKey(storedKey)) {
+    console.warn('[Seguridad] Se eliminó una Service Role Key detectada en el almacenamiento local del cliente.');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('infocus_supabase_anon_key');
+    }
+    storedKey = null;
+  }
 
   return {
     url: storedUrl || envUrl || DEFAULT_SUPABASE_URL,
@@ -17,12 +48,24 @@ export function getSupabaseConfig() {
   };
 }
 
-export function saveSupabaseConfig(url: string, anonKey: string) {
+export function saveSupabaseConfig(url: string, anonKey: string): { ok: boolean; error?: string } {
+  const cleanKey = anonKey ? anonKey.trim() : '';
+
+  // Reject Service Role Key
+  if (cleanKey && isServiceRoleKey(cleanKey)) {
+    console.error('[Seguridad] Intento bloqueado: la Service Role Key no debe guardarse en el navegador.');
+    return {
+      ok: false,
+      error: 'Por motivos de seguridad, la Service Role Key no puede utilizarse en el navegador. Utilizá exclusivamente la clave pública Anon / Publishable Key (sb_publishable_... o anon key).'
+    };
+  }
+
   if (typeof window !== 'undefined') {
     if (url) localStorage.setItem('infocus_supabase_url', url.trim());
-    if (anonKey) localStorage.setItem('infocus_supabase_anon_key', anonKey.trim());
+    if (cleanKey) localStorage.setItem('infocus_supabase_anon_key', cleanKey);
   }
   supabaseInstance = null;
+  return { ok: true };
 }
 
 let supabaseInstance: SupabaseClient | null = null;
@@ -49,7 +92,7 @@ export function resetSupabaseConfig() {
 export interface SupabaseDiagnosticResult {
   ok: boolean;
   url: string;
-  keyType: 'service_role' | 'publishable_anon' | 'custom' | 'none';
+  keyType: 'publishable_anon' | 'custom' | 'none';
   fotosWebStatus: 'ok' | 'rls_blocked' | 'not_found' | 'error';
   fotosHdStatus: 'ok' | 'rls_blocked' | 'not_found' | 'error';
   fotosWebError?: string;
@@ -76,14 +119,13 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
       fotosWebError: 'No hay clave configurada para Supabase.',
       fotosHdError: 'No hay clave configurada para Supabase.',
       databaseStatus: 'error',
-      detalles: 'Configure una clave anónima o service_role para conectar.'
+      detalles: 'Configure la clave anónima pública (Anon Key) para conectar.'
     };
   }
 
-  const isServiceRole = config.anonKey.startsWith('ey') && config.anonKey.includes('service_role');
-  const keyType: 'service_role' | 'publishable_anon' | 'custom' = isServiceRole 
-    ? 'service_role' 
-    : (config.anonKey.startsWith('sb_publishable') ? 'publishable_anon' : 'custom');
+  const keyType: 'publishable_anon' | 'custom' = config.anonKey.startsWith('sb_publishable')
+    ? 'publishable_anon'
+    : 'custom';
 
   let fotosWebStatus: 'ok' | 'rls_blocked' | 'not_found' | 'error' = 'ok';
   let fotosHdStatus: 'ok' | 'rls_blocked' | 'not_found' | 'error' = 'ok';
@@ -142,7 +184,7 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
   const ok = fotosWebStatus === 'ok' && fotosHdStatus === 'ok';
   let detalles = 'Conexión a Supabase Storage verificada.';
   if (fotosWebStatus === 'rls_blocked' || fotosHdStatus === 'rls_blocked') {
-    detalles = 'Se requiere aplicar la política RLS en el SQL Editor de Supabase o usar la Service Role Key para permitir subidas.';
+    detalles = 'Se requiere aplicar la política RLS en el SQL Editor de Supabase para permitir subidas con la Anon Key.';
   }
 
   return {

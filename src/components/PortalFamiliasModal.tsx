@@ -38,12 +38,14 @@ import {
   MessageCircle,
   ChevronDown,
   Users,
+  RefreshCw,
 } from 'lucide-react';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
+import { crearPreferenciaMercadoPago } from '../services/mercadoPagoService';
 import {
   obtenerFamiliaActiva,
   cerrarSesionFamilia,
@@ -156,6 +158,97 @@ export default function PortalFamiliasModal({
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [numeroPedido, setNumeroPedido] = useState('');
   const [pedidoGenerado, setPedidoGenerado] = useState<PedidoEscolarCompleto | null>(null);
+  const [mpRedirectUrl, setMpRedirectUrl] = useState<string | null>(null);
+  const [pagoError, setPagoError] = useState<string | null>(null);
+  const [verificandoPago, setVerificandoPago] = useState(false);
+  const [mensajeEstadoPago, setMensajeEstadoPago] = useState<string | null>(null);
+
+  // Consulta en tiempo real el estado del pedido en la base de datos (Supabase / Backend)
+  const verificarEstadoRealPedido = async (idParaConsultar?: string) => {
+    const id = idParaConsultar || pedidoGenerado?.supabaseId || pedidoGenerado?.id;
+    if (!id) return;
+    setVerificandoPago(true);
+    setMensajeEstadoPago(null);
+    try {
+      const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/status`);
+      const data = await res.json();
+      if (data.success) {
+        if (data.estadoPago === 'aprobado') {
+          setPedidoGenerado((prev) =>
+            prev ? { ...prev, estadoPago: 'aprobado', estadoEntrega: 'laboratorio_listo' } : null
+          );
+          setMensajeEstadoPago('¡Pago confirmado y acreditado con éxito!');
+        } else if (data.estadoPago === 'rechazado') {
+          setPedidoGenerado((prev) =>
+            prev ? { ...prev, estadoPago: 'rechazado' } : null
+          );
+          setMensajeEstadoPago('El pago fue rechazado o cancelado.');
+        } else {
+          setMensajeEstadoPago('El pago aún se encuentra en procesamiento.');
+        }
+      }
+    } catch (e) {
+      console.warn('Error al verificar estado de pago:', e);
+    } finally {
+      setVerificandoPago(false);
+    }
+  };
+
+  // Polling automático cuando la pantalla está en el paso 5 con pago pendiente
+  useEffect(() => {
+    if (step !== 5 || !pedidoGenerado || pedidoGenerado.estadoPago === 'aprobado') return;
+    const interval = setInterval(() => {
+      verificarEstadoRealPedido();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [step, pedidoGenerado?.estadoPago, pedidoGenerado?.id, pedidoGenerado?.supabaseId]);
+
+  // Detección automática al retornar de Mercado Pago (?mp_status=approved&pedido_id=...)
+  useEffect(() => {
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const mpStatus = searchParams.get('mp_status');
+      const pedidoId = searchParams.get('pedido_id');
+
+      if (mpStatus && pedidoId) {
+        const pedidosGuardados = obtenerPedidosGuardados();
+        const pEncontrado = pedidosGuardados.find(
+          (item) => item.supabaseId === pedidoId || item.id === pedidoId
+        );
+        if (pEncontrado) {
+          setPedidoGenerado(pEncontrado);
+          setNumeroPedido(pEncontrado.id);
+          setStep(5);
+        } else {
+          setNumeroPedido(pedidoId);
+          setPedidoGenerado({
+            id: pedidoId,
+            supabaseId: pedidoId,
+            fecha: new Date().toLocaleDateString(),
+            colegioId: '',
+            colegioNombre: 'Colegio',
+            cursoCodigo: '',
+            grado: '',
+            division: '',
+            alumnoNombre: 'Alumno',
+            tutorNombre: 'Familia',
+            kitId: 'kit-clasico',
+            kitNombre: 'Kit Retrato Escolar',
+            total: 0,
+            metodoPago: 'mercadopago',
+            estadoPago: mpStatus === 'approved' ? 'aprobado' : 'pendiente',
+            estadoEntrega: 'laboratorio_listo',
+            fotosSeleccionadas: {},
+            codigoSeguimiento: pedidoId,
+          });
+          setStep(5);
+        }
+        verificarEstadoRealPedido(pedidoId);
+      }
+    } catch (err) {
+      console.warn('Error leyendo query params de pago:', err);
+    }
+  }, []);
 
   // Sibling selector inside Family Portal (1 code for all children)
   const [hijoSeleccionadoId, setHijoSeleccionadoId] = useState<string>('principal');
@@ -339,47 +432,84 @@ export default function PortalFamiliasModal({
     }
   };
 
-  const handleCompletarPago = () => {
+  const handleCompletarPago = async () => {
     setIsProcessingPayment(true);
-    setTimeout(() => {
-      const numLista = Math.floor(1 + Math.random() * 25);
-      const codCurso = codigoAcceso.trim() || seccionDetectada?.nemotecnico || 'SALA3TM';
+    setPagoError(null);
+    setMpRedirectUrl(null);
 
-      const nuevoPedido = registrarPedidoDesdePortal({
-        colegioId: selectedColegio?.id || 'col-general',
-        colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
-        cursoCodigo: codCurso,
-        grado: grado || 'Sala 3',
-        division: division || 'Única',
-        turno: turno || 'Mañana',
-        alumnoNombre: nombreAlumno || 'Alumno Escolar',
-        alumnoNumeroLista: numLista,
-        tutorNombre: tutorNombre.trim(),
-        tutorTelefono: tutorWhatsapp.trim(),
-        tutorEmail: tutorEmail.trim(),
-        kitId: selectedKit.id,
-        kitNombre: selectedKit.nombre,
-        total: total,
-        metodoPago: metodoPago,
-        fotosSeleccionadas: {
-          individualId: fotoSeleccionadaIndividual,
-          grupalId: fotoSeleccionadaGrupal,
-          docenteId: fotoSeleccionadaDocente,
-        },
-        copiasExtras: {
-          carpetasExtras: extraCarpetas,
-          individual15x21: extraCarpetas,
-          grupal20x30: extraCarpetas,
-          docente15x21: extraCarpetas,
-          otras15x21: 0,
-        },
-      });
+    const numLista = Math.floor(1 + Math.random() * 25);
+    const codCurso = codigoAcceso.trim() || seccionDetectada?.nemotecnico || 'SALA3TM';
 
-      setNumeroPedido(nuevoPedido.id);
-      setPedidoGenerado(nuevoPedido);
+    const nuevoPedido = registrarPedidoDesdePortal({
+      colegioId: selectedColegio?.id || 'col-general',
+      colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
+      cursoCodigo: codCurso,
+      grado: grado || 'Sala 3',
+      division: division || 'Única',
+      turno: turno || 'Mañana',
+      alumnoNombre: nombreAlumno || 'Alumno Escolar',
+      alumnoNumeroLista: numLista,
+      tutorNombre: tutorNombre.trim(),
+      tutorTelefono: tutorWhatsapp.trim(),
+      tutorEmail: tutorEmail.trim(),
+      kitId: selectedKit.id,
+      kitNombre: selectedKit.nombre,
+      total: total,
+      metodoPago: metodoPago,
+      fotosSeleccionadas: {
+        individualId: fotoSeleccionadaIndividual,
+        grupalId: fotoSeleccionadaGrupal,
+        docenteId: fotoSeleccionadaDocente,
+      },
+      copiasExtras: {
+        carpetasExtras: extraCarpetas,
+        individual15x21: extraCarpetas,
+        grupal20x30: extraCarpetas,
+        docente15x21: extraCarpetas,
+        otras15x21: 0,
+      },
+    });
+
+    setNumeroPedido(nuevoPedido.id);
+    setPedidoGenerado(nuevoPedido);
+
+    if (metodoPago === 'mercadopago') {
+      try {
+        const res = await crearPreferenciaMercadoPago({
+          pedidoId: nuevoPedido.supabaseId || nuevoPedido.id,
+          kitId: selectedKit.id,
+          kitNombre: selectedKit.nombre,
+          alumnoNombre: nombreAlumno.trim() || 'Alumno',
+          colegioNombre: selectedColegio?.nombre || 'Colegio',
+          cursoCodigo: codCurso,
+          total: total,
+          tutorNombre: tutorNombre.trim() || 'Tutor',
+          tutorEmail: tutorEmail.trim(),
+          tutorTelefono: tutorWhatsapp.trim() || undefined,
+        });
+
+        if (res.initPoint) {
+          setMpRedirectUrl(res.initPoint);
+          setIsProcessingPayment(false);
+          setStep(5);
+          // Redirección directa al checkout oficial de Mercado Pago
+          window.location.href = res.initPoint;
+          return;
+        } else {
+          setPagoError(res.error || 'No se pudo generar la preferencia de Mercado Pago.');
+          setIsProcessingPayment(false);
+          setStep(5);
+        }
+      } catch (err: any) {
+        setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
+        setIsProcessingPayment(false);
+        setStep(5);
+      }
+    } else {
+      // Transferencia bancaria o efectivo: queda en estado 'pendiente' y pasa a la pantalla de confirmación
       setIsProcessingPayment(false);
       setStep(5);
-    }, 1200);
+    }
   };
 
   // Tracking query handler
@@ -1898,20 +2028,32 @@ export default function PortalFamiliasModal({
           {/* STEP 5: Success & Download */}
           {step === 5 && (
             <div className="max-w-xl mx-auto py-4 text-center space-y-6 animate-in zoom-in-95 duration-200">
-              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-md">
-                <CheckCircle2 className="w-9 h-9" />
-              </div>
+              {pedidoGenerado?.estadoPago === 'aprobado' ? (
+                <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-md">
+                  <CheckCircle2 className="w-9 h-9" />
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center mx-auto shadow-md">
+                  <Clock className="w-9 h-9" />
+                </div>
+              )}
 
               <div>
-                <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 uppercase tracking-wider">
-                  ¡Pago Aprobado con Éxito!
-                </span>
+                {pedidoGenerado?.estadoPago === 'aprobado' ? (
+                  <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 uppercase tracking-wider">
+                    ¡Pago Aprobado con Éxito!
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-amber-800 bg-amber-50 px-3 py-1 rounded-full border border-amber-200 uppercase tracking-wider">
+                    Pedido Registrado · Pendiente de Acreditación
+                  </span>
+                )}
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit'] mt-3">
-                  ¡Gracias por tu compra, {tutorNombre}!
+                  ¡Gracias por tu pedido, {tutorNombre}!
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-600 mt-2">
                   El pedido de <strong>{nombreAlumno}</strong> para{' '}
-                  <strong>{selectedColegio?.nombre}</strong> ya está registrado.
+                  <strong>{selectedColegio?.nombre}</strong> ya está registrado en el sistema.
                 </p>
               </div>
 
@@ -1924,24 +2066,129 @@ export default function PortalFamiliasModal({
                     </span>
                     <p className="text-base font-mono font-bold text-slate-900">{numeroPedido}</p>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
-                    Aprobado
-                  </span>
+                  {pedidoGenerado?.estadoPago === 'aprobado' ? (
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                      Aprobado
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-bold border border-amber-300">
+                      Pendiente de Pago
+                    </span>
+                  )}
                 </div>
 
-                {/* Email Delivery Confirmation Card */}
-                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-start gap-3">
-                  <Mail className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                  <div className="text-xs">
-                    <p className="font-bold text-emerald-950">
-                      ¡Fotos HD y comprobante enviados a tu correo!
+                {/* Mercado Pago Redirection / Link */}
+                {metodoPago === 'mercadopago' && mpRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-4 rounded-xl bg-sky-50 border border-sky-300 text-sky-950 space-y-2">
+                    <p className="font-bold text-xs flex items-center gap-1.5 text-sky-900">
+                      <CreditCard className="w-4 h-4 text-sky-600" />
+                      Checkout Pro de Mercado Pago
                     </p>
-                    <p className="text-emerald-700 mt-0.5">
-                      Enviamos el enlace privado de descarga en máxima resolución a{' '}
-                      <strong>{tutorEmail || pedidoGenerado?.tutorEmail || 'tu email registrado'}</strong>.
+                    <p className="text-xs text-sky-800">
+                      Si la ventana de pago no se abrió de forma automática, hacé clic en el botón para completar el pago de forma segura:
+                    </p>
+                    <a
+                      href={mpRedirectUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>Ir a Pagar ${total.toLocaleString('es-AR')} en Mercado Pago</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+
+                {/* Verification box & auto-polling status */}
+                {pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                    <div className="text-xs text-slate-600">
+                      <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Verificación automática de pago activa</span>
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        {mensajeEstadoPago || 'Sincronizando con Mercado Pago y la base de datos...'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => verificarEstadoRealPedido()}
+                      disabled={verificandoPago}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-xs rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer shrink-0 disabled:opacity-50"
+                    >
+                      {verificandoPago ? (
+                        <div className="w-3.5 h-3.5 border-2 border-slate-700 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                      )}
+                      <span>{verificandoPago ? 'Verificando...' : 'Re-verificar Estado'}</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Error notice if preference creation failed */}
+                {pagoError && (
+                  <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Aviso sobre Mercado Pago:</p>
+                      <p className="text-[11px] text-rose-700 mt-0.5">{pagoError}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bank Transfer Instructions if Transferencia */}
+                {metodoPago === 'transferencia' && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-1">
+                    <p className="font-bold text-amber-900 flex items-center gap-1.5">
+                      <Building2 className="w-4 h-4 text-amber-700" />
+                      Datos para completar la transferencia bancaria:
+                    </p>
+                    <p className="text-slate-700">
+                      <strong>Monto total:</strong> ${total.toLocaleString('es-AR')} ARS
+                    </p>
+                    <p className="text-slate-700">
+                      <strong>Alias Galicia:</strong> <span className="font-mono font-bold">RETRATO.ESCOLAR</span>
+                    </p>
+                    <p className="text-slate-700">
+                      <strong>CBU:</strong> <span className="font-mono">0070012345678901234567</span>
+                    </p>
+                    <p className="text-slate-500 text-[11px] mt-1">
+                      Una vez realizada, envianos el comprobante por WhatsApp con tu número de pedido ({numeroPedido}) para activar tu entrega y link de descarga HD.
                     </p>
                   </div>
-                </div>
+                )}
+
+                {/* Email Delivery Confirmation Card */}
+                {pedidoGenerado?.estadoPago === 'aprobado' ? (
+                  <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-start gap-3">
+                    <Mail className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <p className="font-bold text-emerald-950">
+                        ¡Fotos HD y comprobante enviados a tu correo!
+                      </p>
+                      <p className="text-emerald-700 mt-0.5">
+                        Enviamos el enlace privado de descarga en máxima resolución a{' '}
+                        <strong>{tutorEmail || pedidoGenerado?.tutorEmail || 'tu email registrado'}</strong>.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 flex items-start gap-3">
+                    <Mail className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <p className="font-bold text-slate-800">
+                        Envío automático de fotos HD por correo
+                      </p>
+                      <p className="text-slate-600 mt-0.5">
+                        Al confirmarse el pago en la plataforma (por webhook o verificación del fotógrafo), se enviará de inmediato el enlace de descarga en Ultra HD a{' '}
+                        <strong>{tutorEmail || pedidoGenerado?.tutorEmail || 'tu email registrado'}</strong>.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Extra Copies Confirmation Card if requested */}
                 {pedidoGenerado && (pedidoGenerado.copiasExtras?.carpetasExtras || 0) > 0 && (
@@ -2031,26 +2278,47 @@ export default function PortalFamiliasModal({
               </div>
 
               {/* Instant Download Action */}
-              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-left flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                    <Download className="w-4 h-4 text-amber-600" />
-                    Descarga Inmediata en Ultra HD (Sin Marcas)
-                  </p>
-                  <p className="text-[11px] text-amber-700">
-                    Podés descargar tus fotos ahora mismo en alta resolución además de recibirlas en tu correo.
-                  </p>
+              {pedidoGenerado?.estadoPago === 'aprobado' ? (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-left flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                      <Download className="w-4 h-4 text-amber-600" />
+                      Descarga Inmediata en Ultra HD (Sin Marcas)
+                    </p>
+                    <p className="text-[11px] text-amber-700">
+                      Podés descargar tus fotos ahora mismo en alta resolución además de recibirlas en tu correo.
+                    </p>
+                  </div>
+                  <a
+                    href={FOTOS_MUESTRA[0].url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Descargar Fotos HD</span>
+                  </a>
                 </div>
-                <a
-                  href={FOTOS_MUESTRA[0].url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Descargar Fotos HD</span>
-                </a>
-              </div>
+              ) : (
+                <div className="p-4 rounded-2xl bg-slate-100 border border-slate-300 text-left flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Lock className="w-4 h-4 text-slate-500" />
+                      Descarga Ultra HD (Protegida hasta confirmación de pago)
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      El enlace de descarga en máxima resolución se liberará automáticamente en cuanto se acredite el pago.
+                    </p>
+                  </div>
+                  <button
+                    disabled
+                    className="px-4 py-2 bg-slate-300 text-slate-600 text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 cursor-not-allowed opacity-75"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Esperando Pago</span>
+                  </button>
+                </div>
+              )}
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
                 <a

@@ -299,9 +299,14 @@ export default function AdminLoteFotosTab() {
 
   const handleGuardarConfiguracion = (e: React.FormEvent) => {
     e.preventDefault();
-    saveSupabaseConfig(configUrl, configKey);
+    const res = saveSupabaseConfig(configUrl, configKey);
+    if (!res.ok) {
+      setErrorMessage(res.error || 'Clave de Supabase rechazada por seguridad.');
+      setTimeout(() => setErrorMessage(null), 5000);
+      return;
+    }
     setMostrarConfigSupabase(false);
-    setStatusMessage('Configuración de Supabase actualizada.');
+    setStatusMessage('Configuración de Supabase actualizada con éxito.');
     setTimeout(() => setStatusMessage(null), 3000);
     handleEjecutarDiagnostico();
   };
@@ -431,7 +436,7 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
             <button
               onClick={() => setMostrarConfigSupabase(!mostrarConfigSupabase)}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-              title="Configurar credenciales o Service Role"
+              title="Configurar credenciales Anon de Supabase"
             >
               <Sliders className="w-3.5 h-3.5 text-slate-300" />
               <span>Ajustes</span>
@@ -503,11 +508,11 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
             <div className="flex items-center gap-2 mt-1 font-semibold">
               <Key className="w-3.5 h-3.5 text-amber-400" />
               <span className="text-slate-200">
-                {diagnostico?.keyType === 'service_role' 
-                  ? 'Service Role (Acceso Total)' 
-                  : diagnostico?.keyType === 'publishable_anon'
+                {diagnostico?.keyType === 'publishable_anon'
                   ? 'Anon Publishable'
-                  : 'Clave Personalizada'}
+                  : diagnostico?.keyType === 'custom'
+                  ? 'Anon Personalizada'
+                  : 'Sin Clave'}
               </span>
             </div>
           </div>
@@ -517,10 +522,10 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
         {mostrarConfigSupabase && (
           <form onSubmit={handleGuardarConfiguracion} className="bg-slate-800/90 p-4 rounded-xl border border-slate-700 space-y-3">
             <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">
-              Configurar Claves de Supabase
+              Configurar Clave Pública Anon de Supabase
             </h4>
             <p className="text-[11px] text-slate-300">
-              Podés pegar tu <strong>Service Role Key</strong> (recomendado para fotógrafo administrador, sin restricciones de RLS) o tu <strong>Anon Key</strong>.
+              Podés ingresar tu <strong>Anon Key / Publishable Key</strong> pública de Supabase. Por seguridad, la Service Role Key está deshabilitada en el cliente y solo se ejecuta del lado del servidor.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div className="space-y-1">
@@ -534,14 +539,14 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-slate-300 font-bold">Supabase Key (Anon o Service Role)</label>
+                <label className="text-slate-300 font-bold">Supabase Anon Key (Clave Pública)</label>
                 <input
                   type="password"
                   required
                   value={configKey}
                   onChange={e => setConfigKey(e.target.value)}
                   className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs"
-                  placeholder="sb_publishable_... o ey..."
+                  placeholder="sb_publishable_... o anon key"
                 />
               </div>
             </div>

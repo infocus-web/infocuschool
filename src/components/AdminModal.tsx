@@ -38,10 +38,17 @@ import {
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
 import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
+import { 
+  loginAdminConServidor, 
+  verificarSesionAdmin, 
+  cerrarSesionAdmin, 
+  actualizarEstadoPedidoAdmin 
+} from '../services/adminAuthService';
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
 import AdminResumenKitsSection from './AdminResumenKitsSection';
 import { CircularImprimibleModal } from './CircularImprimibleModal';
+import { enviarFotosPorEmail } from '../services/emailService';
 import { Colegio, Foto } from '../types';
 
 interface AdminModalProps {
@@ -54,6 +61,18 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [pinError, setPinError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Check existing authenticated session on mount
+  useEffect(() => {
+    if (isOpen) {
+      verificarSesionAdmin().then((valido) => {
+        if (valido) {
+          setIsAuthenticated(true);
+        }
+      });
+    }
+  }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
   const [activeTab, setActiveTab] = useState<'inscriptos' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp'>('inscriptos');
@@ -330,15 +349,37 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   if (!isOpen) return null;
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = adminPin.trim();
-    if (clean === '#47483282' || clean === '47483282' || clean.toLowerCase() === 'admin') {
-      setIsAuthenticated(true);
-      setPinError('');
-    } else {
-      setPinError('PIN incorrecto. Ingresá el PIN: #47483282');
+    if (!clean) {
+      setPinError('Ingresá el PIN de acceso.');
+      return;
     }
+
+    setIsLoggingIn(true);
+    setPinError('');
+
+    try {
+      const res = await loginAdminConServidor(clean);
+      if (res.success) {
+        setIsAuthenticated(true);
+        setPinError('');
+        setAdminPin('');
+      } else {
+        setPinError(res.error || 'PIN incorrecto.');
+      }
+    } catch {
+      setPinError('Error de conexión al autenticar contra el servidor.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleCerrarSesion = () => {
+    cerrarSesionAdmin();
+    setIsAuthenticated(false);
+    setAdminPin('');
   };
 
   // Watermark generator via HTML5 Canvas
@@ -457,12 +498,23 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isAuthenticated && (
+              <button
+                onClick={handleCerrarSesion}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-colors cursor-pointer"
+                title="Cerrar sesión de administrador"
+              >
+                Cerrar Sesión
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Auth Gate */}
@@ -486,22 +538,27 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   setAdminPin(e.target.value);
                   setPinError('');
                 }}
-                placeholder="PIN: #47483282"
-                className="w-full text-center px-4 py-3 rounded-xl border border-slate-300 text-sm font-bold tracking-widest focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                disabled={isLoggingIn}
+                placeholder="Ingresá tu PIN de fotógrafo"
+                className="w-full text-center px-4 py-3 rounded-xl border border-slate-300 text-sm font-bold tracking-widest focus:ring-2 focus:ring-amber-500 focus:outline-none disabled:opacity-50"
               />
               {pinError && <p className="text-xs text-rose-600 font-semibold">{pinError}</p>}
 
               <button
                 type="submit"
-                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm shadow transition-all cursor-pointer"
+                disabled={isLoggingIn}
+                className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-bold text-sm shadow transition-all cursor-pointer flex items-center justify-center gap-2"
               >
-                Ingresar al Panel
+                {isLoggingIn ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Validando PIN en el servidor...</span>
+                  </>
+                ) : (
+                  <span>Ingresar al Panel</span>
+                )}
               </button>
             </form>
-
-            <div className="text-[11px] text-slate-400">
-              PIN de acceso: <strong className="text-slate-600 font-mono">#47483282</strong>
-            </div>
           </div>
         ) : (
           /* Authenticated Admin Dashboard */
@@ -737,10 +794,46 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           <td className="py-3 px-4">
                             {p.estadoPago === 'pendiente' ? (
                               <button
-                                onClick={() => {
-                                  const actualizados = pedidosCompletos.map(item => item.id === p.id ? { ...item, estadoPago: 'aprobado' as const } : item);
+                                onClick={async () => {
+                                  const fechaHora = `${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+                                  const actualizados = pedidosCompletos.map(item => 
+                                    item.id === p.id 
+                                      ? { 
+                                          ...item, 
+                                          estadoPago: 'aprobado' as const, 
+                                          estadoEntrega: 'laboratorio_listo' as const,
+                                          emailEnviado: true,
+                                          fechaEnvioEmail: fechaHora
+                                        } 
+                                      : item
+                                  );
                                   setPedidosCompletos(actualizados);
                                   guardarPedidosEnStorage(actualizados);
+
+                                  // Sincronizar con el servidor y Supabase mediante token admin
+                                  actualizarEstadoPedidoAdmin(p.supabaseId || p.id, {
+                                    estadoPago: 'aprobado',
+                                    estadoEntrega: 'laboratorio_listo',
+                                  }).catch((e) => console.warn('Error al sincronizar estado con backend:', e));
+
+                                  if (p.tutorEmail && p.tutorEmail.includes('@')) {
+                                    try {
+                                      await enviarFotosPorEmail({
+                                        to: p.tutorEmail,
+                                        tutorNombre: p.tutorNombre,
+                                        alumnoNombre: p.alumnoNombre,
+                                        colegioNombre: p.colegioNombre,
+                                        cursoCodigo: p.cursoCodigo,
+                                        pedidoId: p.id,
+                                        kitNombre: p.kitNombre,
+                                        total: p.total,
+                                        linkDescargaHD: p.linkDescargaHD,
+                                        esImpreso: p.kitId === 'kit-clasico',
+                                      });
+                                    } catch (e) {
+                                      console.error('Error enviando email al aprobar pago:', e);
+                                    }
+                                  }
                                 }}
                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-xs transition-colors cursor-pointer"
                               >

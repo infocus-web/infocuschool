@@ -13,7 +13,13 @@ import AdminModal from './components/AdminModal';
 import { InscripcionFamilia } from './services/inscripcionesService';
 
 export default function App() {
-  const [familiasModalOpen, setFamiliasModalOpen] = useState(false);
+  const [familiasModalOpen, setFamiliasModalOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const search = new URLSearchParams(window.location.search);
+      return Boolean(search.get('mp_status') && search.get('pedido_id'));
+    }
+    return false;
+  });
   const [inscripcionModalOpen, setInscripcionModalOpen] = useState(false);
   const [selectedColegioId, setSelectedColegioId] = useState<string | undefined>(undefined);
   const [selectedKitId, setSelectedKitId] = useState<string | undefined>(undefined);

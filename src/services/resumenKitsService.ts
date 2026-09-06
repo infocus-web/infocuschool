@@ -113,7 +113,6 @@ export async function extraerResumenKitsDesdeSupabase(): Promise<{
           familias (
             id,
             nombre,
-            whatsapp,
             colegio_id
           )
         `)

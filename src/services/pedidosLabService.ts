@@ -24,7 +24,8 @@ export interface CopiasExtrasConfig {
 }
 
 export interface PedidoEscolarCompleto {
-  id: string; // Ej: IFS-2026-8812
+  id: string; // Ej: IFS-2026-8812 (Identificador amigable para la familia)
+  supabaseId?: string; // UUID estricto de la fila en Supabase (para webhooks y Mercado Pago)
   fecha: string;
   colegioId: string;
   colegioNombre: string;
@@ -414,8 +415,18 @@ export function registrarPedidoDesdePortal(params: {
   const now = new Date();
   const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
+  // UUID estricto compatible con PostgreSQL UUID para la clave primaria de Supabase
+  const supabaseId = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+
   const nuevoPedido: PedidoEscolarCompleto = {
     id: numPedido,
+    supabaseId,
     fecha: fechaStr,
     colegioId: params.colegioId,
     colegioNombre: params.colegioNombre,
@@ -433,14 +444,14 @@ export function registrarPedidoDesdePortal(params: {
     kitNombre: params.kitNombre,
     total: params.total,
     metodoPago: params.metodoPago,
-    estadoPago: 'aprobado',
-    estadoEntrega: 'en_laboratorio',
+    estadoPago: 'pendiente',
+    estadoEntrega: 'en_espera',
     fotosSeleccionadas: params.fotosSeleccionadas,
     copiasExtras: params.copiasExtras,
     archivosParaLaboratorio: archivosLab,
     linkDescargaHD: `https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/${sanitizarParaMinilab(params.cursoCodigo)}/${codigoAlumno}.zip`,
-    emailEnviado: true,
-    fechaEnvioEmail: fechaStr
+    emailEnviado: false,
+    fechaEnvioEmail: undefined
   };
 
   const listaActualizada = [nuevoPedido, ...currentPedidos];
@@ -471,30 +482,16 @@ export function registrarPedidoDesdePortal(params: {
       const carpetas = (nuevoPedido.copiasExtras?.carpetasExtras || 0) + 1;
 
       await supabase.from('pedidos').insert({
+        id: nuevoPedido.supabaseId,
         familia_id: familiaId,
         tipo_kit: tipoKit,
-        estado: nuevoPedido.estadoPago === 'aprobado' ? 'pagado' : 'pendiente_pago',
+        estado: 'pendiente_pago',
         total: nuevoPedido.total,
         carpetas_impresas: carpetas,
+        metodo_pago: nuevoPedido.metodoPago,
       });
 
-      // Envío automático del correo con las fotos en Alta Resolución y comprobante
-      if (nuevoPedido.tutorEmail && nuevoPedido.tutorEmail.includes('@')) {
-        enviarFotosPorEmail({
-          to: nuevoPedido.tutorEmail,
-          tutorNombre: nuevoPedido.tutorNombre,
-          alumnoNombre: nuevoPedido.alumnoNombre,
-          colegioNombre: nuevoPedido.colegioNombre,
-          cursoCodigo: nuevoPedido.cursoCodigo,
-          pedidoId: nuevoPedido.id,
-          kitNombre: nuevoPedido.kitNombre,
-          total: nuevoPedido.total,
-          linkDescargaHD: nuevoPedido.linkDescargaHD,
-          esImpreso: nuevoPedido.kitId === 'kit-clasico',
-        }).catch(errEmail => {
-          console.warn('Aviso: envío automático de correo mediante Resend:', errEmail);
-        });
-      }
+      // El email de confirmación y fotos HD se despacha una vez aprobado el pago (vía webhook de Mercado Pago o confirmación admin)
     } catch (e) {
       console.warn('Sincronización en segundo plano con Supabase no completada:', e);
     }
