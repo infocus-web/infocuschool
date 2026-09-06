@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { Resend } from 'resend';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
+import sharp from 'sharp';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -333,6 +334,80 @@ app.post('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respons
   } catch (err: any) {
     console.error('Error al registrar fotos:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al registrar las fotos' });
+  }
+});
+
+// Migración: genera la miniatura chica y limpia (sin marca de agua) para fotos que se
+// subieron ANTES de que existiera esa miniatura propia (su thumb_path todavía apunta a la
+// misma copia con marca de agua que preview_path). Se procesa de a un lote chico por
+// llamada para no exceder el tiempo máximo de una función serverless; el panel de admin
+// la llama en bucle hasta que "restantes" da 0.
+app.post('/api/admin/fotos/regenerar-miniaturas', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const limite = Math.min(Math.max(parseInt(String(req.body?.limite || '12'), 10) || 12, 1), 30);
+
+    // .eq()/.or() de PostgREST no permite comparar dos columnas entre sí, así que se trae
+    // el universo de fotos y se filtran en el servidor las que todavía no tienen miniatura propia.
+    const { data: todas, error: errorSelect } = await supabase
+      .from('fotos')
+      .select('id, storage_path, thumb_path, preview_path')
+      .order('created_at', { ascending: true });
+    if (errorSelect) throw errorSelect;
+
+    const candidatas = (todas || []).filter((f: any) => !f.thumb_path || f.thumb_path === f.preview_path);
+    const lote = candidatas.slice(0, limite);
+
+    let procesadas = 0;
+    let fallidas = 0;
+
+    for (const fila of lote) {
+      try {
+        const { data: archivo, error: errorDescarga } = await supabase.storage
+          .from('fotos-hd')
+          .download(fila.storage_path);
+        if (errorDescarga || !archivo) throw errorDescarga || new Error('No se pudo descargar el original');
+
+        const buffer = Buffer.from(await archivo.arrayBuffer());
+        const miniaturaBuffer = await sharp(buffer)
+          .resize(500, 500, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 82 })
+          .toBuffer();
+
+        const nombreArchivo = fila.storage_path.split('/').pop() || `${fila.id}.jpg`;
+        const nombreBase = nombreArchivo.replace(/\.[^./]+$/, '');
+        const carpeta = fila.storage_path.replace(/\/originales\/[^/]+$/, '/miniaturas');
+        const pathThumb = `${carpeta}/${nombreBase}.jpg`;
+
+        const { error: errorSubida } = await supabase.storage
+          .from('fotos-web')
+          .upload(pathThumb, miniaturaBuffer, { contentType: 'image/jpeg', upsert: true });
+        if (errorSubida) throw errorSubida;
+
+        const { data: urlData } = supabase.storage.from('fotos-web').getPublicUrl(pathThumb);
+
+        const { error: errorUpdate } = await supabase
+          .from('fotos')
+          .update({ thumb_path: urlData.publicUrl })
+          .eq('id', fila.id);
+        if (errorUpdate) throw errorUpdate;
+
+        procesadas++;
+      } catch (errFila) {
+        console.error(`Error al regenerar miniatura de la foto ${fila.id}:`, errFila);
+        fallidas++;
+      }
+    }
+
+    const restantes = Math.max(candidatas.length - lote.length, 0);
+    return res.json({ success: true, procesadas, fallidas, restantes });
+  } catch (err: any) {
+    console.error('Error al regenerar miniaturas:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al regenerar las miniaturas' });
   }
 });
 
