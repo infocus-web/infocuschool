@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Carga de Padrón — Retrato Escolar</title>
+  <link rel="icon" href="/favicon.svg" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    h1, h2, h3, .font-heading { font-family: 'Outfit', sans-serif; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen py-8 px-4 sm:px-6">
+
+  <div class="max-w-2xl mx-auto space-y-5">
+
+    <!-- Header -->
+    <div class="bg-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+      <div class="absolute -right-10 -bottom-10 w-48 h-48 bg-amber-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="flex items-center gap-3 mb-3">
+        <span class="px-3 py-1 bg-amber-500/20 text-amber-300 text-xs font-bold uppercase tracking-wider rounded-full border border-amber-400/30">
+          Retrato Escolar · Carga de Padrón
+        </span>
+      </div>
+      <h1 class="text-xl sm:text-2xl font-extrabold tracking-tight text-white mb-1">
+        Datos de contacto de las familias
+      </h1>
+      <p id="subtitulo" class="text-slate-300 text-sm leading-relaxed max-w-xl">
+        Verificando el link...
+      </p>
+    </div>
+
+    <!-- Estado: link inválido -->
+    <div id="estadoError" hidden class="bg-white rounded-2xl p-6 shadow-sm border border-red-200 text-center space-y-2">
+      <div class="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto text-xl font-bold">!</div>
+      <p class="font-bold text-slate-900">Este link no es válido</p>
+      <p id="mensajeError" class="text-sm text-slate-500">Pedile al fotógrafo que te envíe el link actualizado.</p>
+    </div>
+
+    <!-- Estado: cargando -->
+    <div id="estadoCargando" class="bg-white rounded-2xl p-8 shadow-sm border border-slate-200 text-center text-sm text-slate-400">
+      Cargando...
+    </div>
+
+    <!-- Formulario -->
+    <div id="estadoFormulario" hidden class="space-y-5">
+
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-3">
+        <h2 class="text-base font-bold text-slate-900">¿Cómo cargar los datos?</h2>
+        <p class="text-sm text-slate-600 leading-relaxed">
+          Pegá abajo una fila por cada padre, madre o tutor autorizado, con estos 3 datos separados por
+          coma (o pegados directo desde una planilla de Excel/Sheets): <strong>Nombre y Apellido</strong>,
+          <strong>Email</strong> y <strong>Teléfono</strong>.
+        </p>
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-500 whitespace-pre-line">
+Mariana Gómez, mariana.gomez@gmail.com, 1145893210
+Carlos Pérez, carlos.perez@hotmail.com, 1156781234
+        </div>
+        <p class="text-xs text-slate-400">
+          Estos datos se usan únicamente para reconocer en forma automática a las familias autorizadas
+          cuando se inscriben en el sitio — no se comparten con nadie más.
+        </p>
+      </div>
+
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-3">
+        <label for="listaTexto" class="block text-sm font-bold text-slate-900">
+          Pegá acá la lista completa
+        </label>
+        <textarea
+          id="listaTexto"
+          rows="10"
+          placeholder="Mariana Gómez, mariana.gomez@gmail.com, 1145893210&#10;Carlos Pérez, carlos.perez@hotmail.com, 1156781234"
+          class="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition font-mono"
+        ></textarea>
+        <p id="contadorFilas" class="text-xs text-slate-400">0 filas detectadas</p>
+
+        <div id="errorEnvio" hidden class="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700"></div>
+
+        <button
+          id="botonEnviar"
+          type="button"
+          class="w-full sm:w-auto px-5 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-extrabold text-sm rounded-xl shadow transition-colors cursor-pointer"
+        >
+          Guardar datos
+        </button>
+      </div>
+    </div>
+
+    <!-- Estado: éxito -->
+    <div id="estadoExito" hidden class="bg-white rounded-2xl p-6 shadow-sm border border-emerald-200 text-center space-y-3">
+      <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto text-xl font-bold">✓</div>
+      <p class="font-bold text-slate-900">¡Datos guardados con éxito!</p>
+      <p id="resumenExito" class="text-sm text-slate-500"></p>
+      <button
+        id="botonCargarMas"
+        type="button"
+        class="text-xs text-amber-700 hover:text-amber-900 underline font-semibold cursor-pointer"
+      >
+        Cargar más familias
+      </button>
+    </div>
+
+    <p class="text-center text-[11px] text-slate-400">
+      Retrato Escolar · retratoescolar.com.ar
+    </p>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const colegioId = params.get('colegio') || '';
+    const codigo = params.get('codigo') || '';
+
+    const el = (id) => document.getElementById(id);
+
+    function mostrarSoloEstado(id) {
+      ['estadoError', 'estadoCargando', 'estadoFormulario', 'estadoExito'].forEach((otro) => {
+        el(otro).hidden = otro !== id;
+      });
+    }
+
+    function parsearFilas(texto) {
+      return texto
+        .split('\n')
+        .map((linea) => linea.trim())
+        .filter((linea) => linea.length > 0)
+        .map((linea) => {
+          const partes = linea.includes('\t') ? linea.split('\t') : linea.split(',');
+          const [nombre, email, telefono] = partes.map((p) => (p || '').trim());
+          return { nombre: nombre || '', email: email || '', telefono: telefono || '' };
+        })
+        .filter((f) => f.nombre && (f.email || f.telefono));
+    }
+
+    function actualizarContador() {
+      const filas = parsearFilas(el('listaTexto').value);
+      el('contadorFilas').textContent = filas.length === 1 ? '1 fila detectada' : `${filas.length} filas detectadas`;
+    }
+
+    async function verificarLink() {
+      if (!colegioId || !codigo) {
+        el('mensajeError').textContent = 'Falta el colegio o el código en el link.';
+        mostrarSoloEstado('estadoError');
+        return;
+      }
+      try {
+        const res = await fetch(`/api/padron/institucion/${encodeURIComponent(colegioId)}?codigo=${encodeURIComponent(codigo)}`);
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          el('mensajeError').textContent = data.error || 'Link no válido.';
+          mostrarSoloEstado('estadoError');
+          return;
+        }
+        el('subtitulo').textContent = `${data.colegioNombre} — completá los datos de las familias autorizadas`;
+        mostrarSoloEstado('estadoFormulario');
+      } catch (err) {
+        el('mensajeError').textContent = 'No pudimos conectar con el servidor. Probá de nuevo en un momento.';
+        mostrarSoloEstado('estadoError');
+      }
+    }
+
+    async function enviarDatos() {
+      const filas = parsearFilas(el('listaTexto').value);
+      const errorBox = el('errorEnvio');
+      errorBox.hidden = true;
+
+      if (filas.length === 0) {
+        errorBox.textContent = 'Pegá al menos una fila con nombre y (email o teléfono) antes de guardar.';
+        errorBox.hidden = false;
+        return;
+      }
+
+      const boton = el('botonEnviar');
+      boton.disabled = true;
+      boton.textContent = 'Guardando...';
+
+      try {
+        const res = await fetch(`/api/padron/institucion/${encodeURIComponent(colegioId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ codigo, filas }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          errorBox.textContent = data.error || 'No se pudieron guardar los datos. Intentá de nuevo.';
+          errorBox.hidden = false;
+          boton.disabled = false;
+          boton.textContent = 'Guardar datos';
+          return;
+        }
+
+        const partes = [];
+        partes.push(data.agregados === 1 ? '1 familia agregada' : `${data.agregados} familias agregadas`);
+        if (data.duplicados > 0) partes.push(`${data.duplicados} ya estaban cargadas`);
+        if (data.invalidas > 0) partes.push(`${data.invalidas} filas se descartaron por datos incompletos`);
+        el('resumenExito').textContent = partes.join(' · ');
+        mostrarSoloEstado('estadoExito');
+      } catch (err) {
+        errorBox.textContent = 'No pudimos conectar con el servidor. Probá de nuevo en un momento.';
+        errorBox.hidden = false;
+      } finally {
+        boton.disabled = false;
+        boton.textContent = 'Guardar datos';
+      }
+    }
+
+    el('listaTexto').addEventListener('input', actualizarContador);
+    el('botonEnviar').addEventListener('click', enviarDatos);
+    el('botonCargarMas').addEventListener('click', () => {
+      el('listaTexto').value = '';
+      actualizarContador();
+      mostrarSoloEstado('estadoFormulario');
+    });
+
+    verificarLink();
+  </script>
+</body>
+</html>
