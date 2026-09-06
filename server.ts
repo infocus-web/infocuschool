@@ -284,6 +284,81 @@ app.delete('/api/admin/pedidos/:id', requireAdminAuth, async (req, res) => {
   }
 });
 
+// Registrar en Supabase las fotos que el admin ya subió a Storage (queda visible al instante para las familias)
+app.post('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { fotos } = req.body || {};
+    if (!Array.isArray(fotos) || fotos.length === 0) {
+      return res.status(400).json({ success: false, error: 'No se recibieron fotos para registrar' });
+    }
+    if (fotos.length > 500) {
+      return res.status(400).json({ success: false, error: 'Demasiadas fotos en un solo lote (máximo 500)' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const filas = fotos
+      .map((f: any) => {
+        const grado = String(f.grado || '').trim();
+        const turno = String(f.turno || '').trim();
+        const division = String(f.division || '').trim();
+        return {
+          colegio_id: f.colegioId ? String(f.colegioId) : null,
+          categoria: f.categoria,
+          grado: grado || null,
+          turno: turno || null,
+          division: division || null,
+          codigo_curso: grado && turno ? determinarCodigoCursoServidor(grado, turno, division) : null,
+          storage_path: f.storagePathHD || '',
+          thumb_path: f.storagePathWeb || null,
+          preview_path: f.storagePathWeb || null,
+          alumno_nombre: f.alumnoNombre || null,
+        };
+      })
+      .filter((f: any) => f.storage_path && f.categoria && f.codigo_curso);
+
+    if (filas.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ninguna foto tiene los datos mínimos (ruta, categoría, grado y turno)' });
+    }
+
+    const { data, error } = await supabase.from('fotos').insert(filas).select();
+    if (error) throw error;
+
+    return res.json({ success: true, registradas: data?.length || 0 });
+  } catch (err: any) {
+    console.error('Error al registrar fotos:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al registrar las fotos' });
+  }
+});
+
+// Panel admin: lista las fotos activas de un curso puntual (grado+turno+división), para revisar o borrar
+app.get('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { grado, turno, division, colegioId } = req.query as Record<string, string | undefined>;
+
+    let builder = supabase.from('fotos').select('*').order('created_at', { ascending: false });
+    if (grado && turno) {
+      builder = builder.eq('codigo_curso', determinarCodigoCursoServidor(grado, turno, division || ''));
+    }
+    if (colegioId) {
+      builder = builder.eq('colegio_id', colegioId);
+    }
+
+    const { data, error } = await builder;
+    if (error) throw error;
+    return res.json({ success: true, fotos: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener las fotos' });
+  }
+});
+
 // Eliminar foto protegida
 app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
   try {
@@ -299,6 +374,48 @@ app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar foto' });
+  }
+});
+
+// Vacía por completo el catálogo de fotos (se usa junto con el botón "Limpiar Supabase" que ya vacía los buckets)
+app.delete('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+    }
+    const { error } = await supabase.from('fotos').delete().not('id', 'is', null);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al limpiar el catálogo de fotos' });
+  }
+});
+
+// Galería pública: fotos reales de un curso puntual (grado+turno+división) para el portal de familias.
+// Si todavía no hay fotos reales cargadas para ese curso, el frontend usa fotos de muestra.
+app.get('/api/fotos', async (req: Request, res: Response) => {
+  try {
+    const { grado, turno, division } = req.query as Record<string, string | undefined>;
+    if (!grado || !turno) {
+      return res.status(400).json({ success: false, error: 'Faltan grado y turno para buscar la galería' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const codigoCurso = determinarCodigoCursoServidor(grado, turno, division || '');
+    const { data, error } = await supabase
+      .from('fotos')
+      .select('*')
+      .eq('codigo_curso', codigoCurso)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+
+    return res.json({ success: true, fotos: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener la galería' });
   }
 });
 
