@@ -34,7 +34,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
       titulo: 'Foto grupal en formato ampliado 20x30 cm',
       descripcion:
         'El recuerdo imborrable de todo el grupo de compañeros. Ordenados por estatura, con nombre del colegio, grado, división y año lectivo.',
-      imagen: 'https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=1200&q=85',
+      imagen: '/foto_grupal_grado.jpg',
       specs: [
         'Formato ampliado 20x30 cm de máxima visibilidad y detalle',
         'Diseño con nombre del curso, división y año lectivo',
