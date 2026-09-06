@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sparkles, Check, Image as ImageIcon, Frame, Bookmark, CreditCard, ChevronRight, ChevronDown } from 'lucide-react';
+import { Sparkles, Check, Image as ImageIcon, Bookmark, ChevronRight, ChevronDown } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 
 interface MuestrarioSectionProps {
@@ -7,13 +7,12 @@ interface MuestrarioSectionProps {
 }
 
 export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProps) {
-  const [activeTab, setActiveTab] = useState<'individual' | 'grupal' | 'docente' | 'impresos'>('individual');
+  const [activeTab, setActiveTab] = useState<'individual' | 'grupal' | 'docente'>('individual');
 
   const tabs = [
     { id: 'individual', label: 'Retratos Individuales', icon: ImageIcon },
     { id: 'grupal', label: 'Foto Grupal de Grado', icon: ImageIcon },
     { id: 'docente', label: 'Con la Seño / Docente', icon: Bookmark },
-    { id: 'impresos', label: 'Kits Físicos & Carpetas', icon: Frame },
   ];
 
   const contentByTab = {
@@ -46,24 +45,12 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
       titulo: 'La foto que atesoran maestras y familias',
       descripcion:
         'Un momento de ternura y complicidad con las maestras de grado o profesores que acompañan a los chicos durante todo el año.',
-      imagen: 'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&w=1200&q=85',
+      imagen: '/foto_con_seno.jpg',
       specs: [
         'Formato 15x21 cm conmemorativo con la seño / docente',
         'Tomas en el aula, pizarrón o biblioteca escolar',
         'Incluida tanto en el Kit Impreso como en el Solo Digital HD',
         'Disponible también para hermanos o primos del mismo colegio',
-      ],
-    },
-    impresos: {
-      titulo: 'Carpeta de presentación y copias fotográficas de laboratorio',
-      descripcion:
-        'Cuidamos cada detalle: papel fotográfico satinado de 260g, carpetas institucionales exclusivas y entrega prolija individual.',
-      imagen: 'https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?auto=format&fit=crop&w=1200&q=85',
-      specs: [
-        '1 carpeta de presentación con diseño conmemorativo exclusivo',
-        '1 foto grupal 20x30 cm + 2 fotos 15x21 cm (individual y con docente)',
-        'Descarga digital HD sin marcas de agua de regalo',
-        'Sobre cerrado individual por grado y división para entrega en mano',
       ],
     },
   };
