@@ -24,7 +24,8 @@ import {
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion,
   prepararEmailAprobacion,
-  determinarCodigoParaInscripcion
+  determinarCodigoParaInscripcion,
+  enviarEmailAprobacionAdmin
 } from '../services/inscripcionesService';
 
 interface AdminInscriptosTabProps {
@@ -54,6 +55,13 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
 
   // Editable codes for pending items
   const [codigosEditables, setCodigosEditables] = useState<Record<string, string>>({});
+
+  // Real state of the email send (Resend) for whichever family is shown in detalleEnvioModal
+  const [envioEmail, setEnvioEmail] = useState<{ enviando: boolean; enviado: boolean; error: string | null }>({
+    enviando: false,
+    enviado: false,
+    error: null
+  });
 
   const cargarInscripciones = useCallback(async (mostrarSpinner = false) => {
     if (mostrarSpinner) setCargando(true);
@@ -94,6 +102,18 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     });
   }, [inscripciones, filtroEstado, searchQuery]);
 
+  // Envía de verdad (vía Resend) el email con el código a la familia dada, y refleja el resultado real
+  const handleEnviarEmail = async (id: string) => {
+    setEnvioEmail({ enviando: true, enviado: false, error: null });
+    const resultado = await enviarEmailAprobacionAdmin(id);
+    if (resultado.success) {
+      setEnvioEmail({ enviando: false, enviado: true, error: null });
+      await cargarInscripciones();
+    } else {
+      setEnvioEmail({ enviando: false, enviado: false, error: resultado.error || 'No se pudo enviar el email.' });
+    }
+  };
+
   const handleAprobar = async (item: InscripcionFamilia, abrirWhatsAppAuto = true) => {
     const codigoElegido =
       codigosEditables[item.id] ||
@@ -129,9 +149,12 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
       whatsappUrl
     });
 
+    // Envío real del email por Resend (el WhatsApp lo despacha vos mismo desde el botón de abajo)
+    void handleEnviarEmail(resultado.familia.id);
+
     setToastNotificacion({
       titulo: `¡Inscripción aprobada para ${item.alumnoNombre}!`,
-      mensaje: `Código ${resultado.codigo} asignado y listo para despachar por WhatsApp (+${item.telefonoWhatsApp}) y por Email (${item.email}).`,
+      mensaje: `Código ${resultado.codigo} asignado. Enviando email a ${item.email} y listo para despachar por WhatsApp (+${item.telefonoWhatsApp}).`,
       tipo: 'success'
     });
 
@@ -629,6 +652,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                               type="button"
                               onClick={() => {
                                 const codigo = item.codigoAsignado || 'SALA3TM';
+                                setEnvioEmail({ enviando: false, enviado: Boolean(item.notificacionEmailEnviada), error: null });
                                 setDetalleEnvioModal({
                                   familia: item,
                                   codigo,
@@ -640,7 +664,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                               className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
                             >
                               <Mail className="w-3 h-3" />
-                              <span>Ver Email Enviado</span>
+                              <span>{item.notificacionEmailEnviada ? 'Ver Email Enviado' : 'Enviar Email'}</span>
                             </button>
                           </>
                         ) : null}
@@ -746,9 +770,24 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                   <Mail className="w-4 h-4 text-blue-600" />
                   <span>Correo Electrónico ({detalleEnvioModal.familia.email})</span>
                 </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                  Despachado
-                </span>
+                {envioEmail.enviando ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-700 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Enviando...
+                  </span>
+                ) : envioEmail.enviado ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                    Enviado ✓
+                  </span>
+                ) : envioEmail.error ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-800">
+                    No se pudo enviar
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-200 text-slate-600">
+                    No enviado
+                  </span>
+                )}
               </div>
               <div className="p-3 bg-white border border-slate-200 rounded-lg text-xs space-y-1">
                 <p className="font-bold text-slate-800">
@@ -757,6 +796,24 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                 <div className="pt-2 border-t border-slate-100 whitespace-pre-line text-slate-600 font-mono text-[11px] max-h-36 overflow-y-auto">
                   {detalleEnvioModal.emailData.contenido}
                 </div>
+              </div>
+              {envioEmail.error && (
+                <p className="text-[11px] text-red-700 font-semibold">{envioEmail.error}</p>
+              )}
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleEnviarEmail(detalleEnvioModal.familia.id)}
+                  disabled={envioEmail.enviando}
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  {envioEmail.enviando ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Mail className="w-3.5 h-3.5" />
+                  )}
+                  <span>{envioEmail.enviado ? 'Reenviar Email' : 'Enviar Email Ahora'}</span>
+                </button>
               </div>
             </div>
 

@@ -173,6 +173,40 @@ export default function ModalInscripcionFamilia({
   // Form errors
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Al abrir el modal, si esta familia ya tiene una inscripción activa en este navegador,
+  // precargamos sus datos en el formulario (así "Cambiar datos" edita lo que ya cargó,
+  // en vez de mostrarse en blanco como si fuera una familia nueva).
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const activa = obtenerFamiliaActiva();
+    if (!activa) return;
+
+    setPadreNombre(activa.padreNombre || '');
+    setTelefonoWhatsApp(activa.telefonoWhatsApp || '');
+    setEmail(activa.email || '');
+    setAlumnoNombre(activa.alumnoNombre || '');
+    setAlumnoApellido(activa.alumnoApellido || '');
+    setTurno(activa.turno || 'Tarde');
+    setGrado(activa.grado || 'Sala 5 años');
+    setDivision(activa.division || 'A');
+    setColegioId(activa.colegioId || colegios[0]?.id || 'col-divino-pastor-2026');
+    setHermanos(
+      (activa.hermanos || []).map((h) => ({
+        id: h.id || `hermano-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        alumnoNombre: h.alumnoNombre,
+        alumnoApellido: h.alumnoApellido,
+        turno: h.turno,
+        grado: h.grado,
+        division: h.division
+      }))
+    );
+    setSolicitaFotoHermanos(activa.solicitaFotoHermanos ?? true);
+    setPaso('formulario');
+    setTab('registro');
+    setFormError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const colegioSeleccionado = colegios.find((c) => c.id === colegioId) || colegios[0] || COLEGIO_POR_DEFECTO;
