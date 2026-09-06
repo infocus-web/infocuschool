@@ -411,20 +411,20 @@ app.post('/api/admin/fotos/regenerar-miniaturas', requireAdminAuth, async (req: 
   }
 });
 
-// Genera un SVG con el texto de la marca de agua repetido en diagonal, más espaciado y
-// liviano que la versión anterior, para componerlo sobre la foto con sharp.
+// Genera un SVG con el texto de la marca de agua repetido en diagonal — visible y legible,
+// sin la densidad exagerada de la versión original, para componerlo sobre la foto con sharp.
 function generarSvgMarcaDeAgua(ancho: number, alto: number): string {
   const texto = 'MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR';
-  const fontSize = Math.max(14, Math.round(ancho * 0.032));
-  const stepX = ancho * 0.75;
-  const stepY = alto * 0.38;
+  const fontSize = Math.max(14, Math.round(ancho * 0.036));
+  const stepX = ancho * 0.58;
+  const stepY = alto * 0.28;
   const anchoVirtual = ancho * 2;
   const altoVirtual = alto * 2;
   const textos: string[] = [];
   for (let y = -altoVirtual / 2; y < altoVirtual / 2; y += stepY) {
     for (let x = -anchoVirtual / 2; x < anchoVirtual / 2; x += stepX) {
       textos.push(
-        `<text x="${x}" y="${y}" font-family="sans-serif" font-weight="bold" font-size="${fontSize}" fill="white" fill-opacity="0.45" stroke="black" stroke-opacity="0.35" stroke-width="1" text-anchor="middle">${texto}</text>`
+        `<text x="${x}" y="${y}" font-family="sans-serif" font-weight="bold" font-size="${fontSize}" fill="white" fill-opacity="0.6" stroke="black" stroke-opacity="0.5" stroke-width="1.2" text-anchor="middle">${texto}</text>`
       );
     }
   }
