@@ -5,6 +5,8 @@ interface WatermarkOverlayProps {
   text?: string;
   density?: 'normal' | 'dense';
   opacity?: number;
+  /** Marca de agua más chica y liviana (usada en la vista ampliada de la foto) */
+  compact?: boolean;
 }
 
 export default function WatermarkOverlay({
@@ -12,6 +14,7 @@ export default function WatermarkOverlay({
   text = 'MUESTRA RETRATO ESCOLAR · NO COPIAR ·',
   density = 'dense',
   opacity = 0.72,
+  compact = false,
 }: WatermarkOverlayProps) {
   if (!visible) return null;
 
@@ -44,7 +47,9 @@ export default function WatermarkOverlay({
         {Array.from({ length: rowCount }).map((_, rIdx) => (
           <div
             key={rIdx}
-            className="flex justify-around items-center whitespace-nowrap font-black uppercase text-white tracking-widest text-[13px] sm:text-[15px]"
+            className={`flex justify-around items-center whitespace-nowrap font-black uppercase text-white tracking-widest ${
+              compact ? 'text-[8px] sm:text-[9px]' : 'text-[13px] sm:text-[15px]'
+            }`}
             style={{
               textShadow:
                 '0 1px 3px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.9), 0 2px 5px rgba(0,0,0,0.85)',

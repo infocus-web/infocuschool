@@ -1322,8 +1322,7 @@ export default function PortalFamiliasModal({
                           className="w-full h-full object-cover object-center pointer-events-none select-none"
                         />
 
-                        {/* Watermark overlay matching exact sample */}
-                        <WatermarkOverlay visible={showWatermark} />
+                        {/* Sin marca de agua en la miniatura: solo se muestra al ampliar la foto */}
 
                         {/* Status badge */}
                         {isSelected && (
@@ -2378,8 +2377,8 @@ export default function PortalFamiliasModal({
                 className="w-full h-full object-contain pointer-events-none select-none"
               />
 
-              {/* Watermark overlay matching exact sample */}
-              <WatermarkOverlay visible={showWatermark} />
+              {/* En la vista ampliada la marca de agua es más chica y liviana (30% opacidad) */}
+              <WatermarkOverlay visible={showWatermark} opacity={0.3} compact />
             </div>
 
             <div className="p-3 flex items-center justify-between gap-3">
