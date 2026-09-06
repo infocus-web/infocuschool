@@ -1335,11 +1335,11 @@ export default function PortalFamiliasModal({
                           </div>
                         )}
 
-                        {/* Zoom button */}
+                        {/* Zoom button (z-30: debe quedar por encima de la marca de agua, que usa z-20 y captura los clics) */}
                         <button
                           type="button"
                           onClick={() => setModalFotoPreview(foto)}
-                          className="absolute bottom-2.5 right-2.5 p-1.5 rounded-lg bg-white/90 hover:bg-white text-slate-800 text-xs shadow-md transition-colors cursor-pointer"
+                          className="absolute bottom-2.5 right-2.5 z-30 p-1.5 rounded-lg bg-white/90 hover:bg-white text-slate-800 text-xs shadow-md transition-colors cursor-pointer"
                           title="Ampliar foto"
                         >
                           <Eye className="w-4 h-4" />
@@ -2382,16 +2382,32 @@ export default function PortalFamiliasModal({
               <WatermarkOverlay visible={showWatermark} />
             </div>
 
-            <div className="p-3 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-bold text-white">{modalFotoPreview.titulo}</p>
+            <div className="p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-white truncate">{modalFotoPreview.titulo}</p>
               </div>
-              <button
-                onClick={() => setModalFotoPreview(null)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs rounded-lg font-semibold"
-              >
-                Cerrar
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {modalFotoPreview.categoria !== 'patio' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (modalFotoPreview.categoria === 'individual') setFotoSeleccionadaIndividual(modalFotoPreview.id);
+                      if (modalFotoPreview.categoria === 'grupal') setFotoSeleccionadaGrupal(modalFotoPreview.id);
+                      if (modalFotoPreview.categoria === 'docente') setFotoSeleccionadaDocente(modalFotoPreview.id);
+                      setModalFotoPreview(null);
+                    }}
+                    className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs rounded-lg font-bold cursor-pointer"
+                  >
+                    Elegir esta foto
+                  </button>
+                )}
+                <button
+                  onClick={() => setModalFotoPreview(null)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs rounded-lg font-semibold cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </div>
         </div>
