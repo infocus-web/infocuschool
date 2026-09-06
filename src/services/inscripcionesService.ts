@@ -238,6 +238,27 @@ export async function aprobarInscripcionAdmin(
   }
 }
 
+export interface ResultadoEnviarEmailAprobacion {
+  success: boolean;
+  error?: string;
+}
+
+/** Panel admin: envía de verdad (vía Resend) el email con el Código de Acceso a una familia ya aprobada */
+export async function enviarEmailAprobacionAdmin(id: string): Promise<ResultadoEnviarEmailAprobacion> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/inscripciones/${encodeURIComponent(id)}/enviar-email`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo enviar el email' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al enviar el email' };
+  }
+}
+
 export interface ResultadoRechazarInscripcion {
   success: boolean;
   familia?: InscripcionFamilia;
