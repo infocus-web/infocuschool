@@ -137,6 +137,38 @@ export async function eliminarColegioAdmin(id: string): Promise<ResultadoElimina
 }
 
 /**
+ * Panel admin: trae el token secreto de carga de padrón de cada colegio (nunca viaja por la lista
+ * pública de colegios). Con esto se arma el link que el fotógrafo comparte con la secretaría.
+ */
+export async function obtenerTokensPadronAdmin(): Promise<Record<string, string>> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/colegios/padron-links');
+    const data = await res.json();
+    if (!res.ok || !data.success) return {};
+    return data.tokens || {};
+  } catch (err) {
+    console.error('Error al obtener los links de padrón:', err);
+    return {};
+  }
+}
+
+/** Panel admin: regenera el token secreto de un colegio (invalida el link anterior) */
+export async function regenerarTokenPadronAdmin(colegioId: string): Promise<{ success: boolean; codigoPadron?: string; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/colegios/${encodeURIComponent(colegioId)}/regenerar-padron`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo regenerar el link.' };
+    }
+    return { success: true, codigoPadron: data.codigoPadron };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al regenerar el link.' };
+  }
+}
+
+/**
  * Hook de React para consumir la lista de colegios y reaccionar automáticamente a altas/bajas/ediciones.
  * La lista vive en Supabase: es la misma para todos los visitantes del sitio.
  */
