@@ -32,6 +32,7 @@ interface FotoLoteItem {
   file?: File;
   previewUrl: string;
   watermarkedUrl: string;
+  thumbUrl: string;
   tipo: 'individual' | 'grupal' | 'docente';
   nombreOriginal: string;
   estado: 'procesada' | 'subiendo' | 'subida' | 'error';
@@ -176,6 +177,28 @@ export default function AdminLoteFotosTab() {
     return canvas.toDataURL('image/jpeg', 0.85);
   };
 
+  // Miniatura liviana SIN marca de agua: es la que ven las familias en la grilla de la
+  // galería. Al ser chica (ideal para una miniatura) no sirve para imprimir ni para robar
+  // una copia útil, así que no hace falta quemarle el texto encima — la protección real
+  // (marca de agua quemada en los píxeles) sigue estando en la versión ampliada.
+  const generarMiniaturaLimpia = (img: HTMLImageElement): string => {
+    const MAX_DIMENSION_THUMB = 500;
+    let anchoDestino = img.width;
+    let altoDestino = img.height;
+    if (anchoDestino > MAX_DIMENSION_THUMB || altoDestino > MAX_DIMENSION_THUMB) {
+      const escala = MAX_DIMENSION_THUMB / Math.max(anchoDestino, altoDestino);
+      anchoDestino = Math.round(anchoDestino * escala);
+      altoDestino = Math.round(altoDestino * escala);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = anchoDestino;
+    canvas.height = altoDestino;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return img.src;
+    ctx.drawImage(img, 0, 0, anchoDestino, altoDestino);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  };
+
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setIsProcessing(true);
@@ -188,14 +211,16 @@ export default function AdminLoteFotosTab() {
       const file = files[i];
       const rawUrl = URL.createObjectURL(file);
 
-      // Create watermark
-      const watermarked = await new Promise<string>((resolve) => {
+      // Genera, a partir de la misma imagen cargada una sola vez, la versión ampliada
+      // (con marca de agua quemada) y la miniatura liviana (limpia, sin marca de agua)
+      const { watermarked, miniatura } = await new Promise<{ watermarked: string; miniatura: string }>((resolve) => {
         const img = new Image();
         img.onload = () => {
           const wm = applyWatermarkToCanvas(img);
-          resolve(wm);
+          const mini = generarMiniaturaLimpia(img);
+          resolve({ watermarked: wm, miniatura: mini });
         };
-        img.onerror = () => resolve(rawUrl);
+        img.onerror = () => resolve({ watermarked: rawUrl, miniatura: rawUrl });
         img.src = rawUrl;
       });
 
@@ -204,6 +229,7 @@ export default function AdminLoteFotosTab() {
         file,
         previewUrl: rawUrl,
         watermarkedUrl: watermarked,
+        thumbUrl: miniatura,
         tipo: tipoFotoLote,
         nombreOriginal: file.name,
         estado: 'procesada',
@@ -244,7 +270,7 @@ export default function AdminLoteFotosTab() {
     let fallidas = 0;
     let canceladaEn = -1;
     const colaActualizada = [...fotosLote];
-    const fotosParaRegistrar: { colegioId: string; categoria: 'individual' | 'grupal' | 'docente'; grado: string; turno: string; division: string; storagePathHD: string; storagePathWeb: string; alumnoNombre?: string }[] = [];
+    const fotosParaRegistrar: { colegioId: string; categoria: 'individual' | 'grupal' | 'docente'; grado: string; turno: string; division: string; storagePathHD: string; storagePathWeb: string; storagePathThumb: string; alumnoNombre?: string }[] = [];
 
     for (let i = 0; i < colaActualizada.length; i++) {
       if (cancelarSubidaRef.current) {
@@ -259,18 +285,22 @@ export default function AdminLoteFotosTab() {
         const pathHD = `2026/${cursoSeleccionado}/originales/${item.nombreOriginal}`;
         const nombreBaseWeb = item.nombreOriginal.replace(/\.[^./]+$/, '');
         const pathWeb = `2026/${cursoSeleccionado}/muestras/${nombreBaseWeb}.jpg`;
+        const pathThumb = `2026/${cursoSeleccionado}/miniaturas/${nombreBaseWeb}.jpg`;
 
         // 1. Upload HD (el archivo original, sin tocar) al bucket privado
         const resHD = await uploadFotoHD(item.file, pathHD);
         // 2. Upload al bucket público de la copia YA reducida y con la marca de agua quemada
         //    en los píxeles (item.watermarkedUrl), no el archivo original — así lo que queda
-        //    en la dirección pública nunca es la foto limpia.
+        //    en la dirección pública nunca es la foto limpia. Esta es la que se ve al ampliar.
         const blobWeb = dataUrlABlob(item.watermarkedUrl);
         const resWeb = await uploadFotoWeb(blobWeb, pathWeb);
+        // 3. Upload de la miniatura chica y limpia (sin marca de agua) para la grilla de la galería
+        const blobThumb = dataUrlABlob(item.thumbUrl);
+        const resThumb = await uploadFotoWeb(blobThumb, pathThumb);
 
-        if (resHD.error || resWeb.error) {
+        if (resHD.error || resWeb.error || resThumb.error) {
           item.estado = 'error';
-          item.errorMensaje = resWeb.error || resHD.error;
+          item.errorMensaje = resWeb.error || resThumb.error || resHD.error;
           fallidas++;
         } else {
           item.estado = 'subida';
@@ -286,6 +316,7 @@ export default function AdminLoteFotosTab() {
             division: seccionActual.division,
             storagePathHD: pathHD,
             storagePathWeb: resWeb.publicUrl || pathWeb,
+            storagePathThumb: resThumb.publicUrl || pathThumb,
             alumnoNombre: item.alumnoNombre
           });
         }
