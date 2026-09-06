@@ -1,106 +1,192 @@
 import { Foto, CategoriaFoto } from '../types';
 import { FOTOS_MUESTRA } from '../data/colegiosData';
 import { eliminarFotoDeStorage } from './supabaseClient';
+import { fetchAdminAutenticado } from './adminAuthService';
 
-export interface FotoSubida {
+/**
+ * Catálogo de fotos activas: vive en Supabase (tabla `fotos`), compartido por todo el sitio.
+ * Antes se guardaba en el almacenamiento local del navegador del fotógrafo, por lo que las
+ * familias nunca veían las fotos reales desde su propio dispositivo — esto ya no ocurre.
+ */
+export interface FotoRegistrada {
   id: string;
-  colegioId: string;
-  cursoCodigo: string;
-  alumnoId?: string;
-  alumnoNombre?: string;
+  colegioId?: string | null;
+  codigoCurso?: string | null;
+  grado?: string | null;
+  division?: string | null;
+  turno?: string | null;
   categoria: 'individual' | 'grupal' | 'docente';
-  nombreOriginal: string;
+  alumnoNombre?: string | null;
   urlWeb: string;
-  urlHD?: string;
-  pathStorageWeb: string;
-  pathStorageHD: string;
-  fechaSubida: string;
-  tamanoBytes?: number;
+  pathStorageWeb?: string | null;
+  pathStorageHD?: string | null;
+  createdAt?: string;
 }
 
-const STORAGE_KEY_FOTOS = 'infocus_fotos_subidas_v1';
+function mapearFilaFoto(row: any): FotoRegistrada {
+  return {
+    id: row.id,
+    colegioId: row.colegio_id,
+    codigoCurso: row.codigo_curso,
+    grado: row.grado,
+    division: row.division,
+    turno: row.turno,
+    categoria: row.categoria,
+    alumnoNombre: row.alumno_nombre,
+    urlWeb: row.preview_path || row.thumb_path || '',
+    pathStorageWeb: row.thumb_path || row.preview_path,
+    pathStorageHD: row.storage_path,
+    createdAt: row.created_at,
+  };
+}
 
-export function obtenerTodasLasFotosSubidas(): FotoSubida[] {
-  if (typeof window === 'undefined') return [];
+export interface DatosFotoParaRegistrar {
+  colegioId: string;
+  categoria: 'individual' | 'grupal' | 'docente';
+  grado: string;
+  turno: string;
+  division: string;
+  storagePathHD: string;
+  storagePathWeb: string;
+  alumnoNombre?: string;
+}
+
+export interface ResultadoRegistrarFotos {
+  success: boolean;
+  registradas?: number;
+  error?: string;
+}
+
+/** Panel admin: registra en Supabase las fotos ya subidas a Storage (queda visible al instante para las familias) */
+export async function registrarFotosAdmin(fotos: DatosFotoParaRegistrar[]): Promise<ResultadoRegistrarFotos> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_FOTOS);
-    if (!raw) return [];
-    return JSON.parse(raw);
+    const res = await fetchAdminAutenticado('/api/admin/fotos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fotos }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudieron registrar las fotos.' };
+    }
+    return { success: true, registradas: data.registradas };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al registrar las fotos.' };
+  }
+}
+
+/** Panel admin: lista las fotos activas de un curso puntual (grado+turno+división) para mostrarlas/borrarlas */
+export async function obtenerFotosActivasAdmin(params: {
+  colegioId?: string;
+  grado: string;
+  turno: string;
+  division?: string;
+}): Promise<FotoRegistrada[]> {
+  try {
+    const query = new URLSearchParams();
+    if (params.colegioId) query.set('colegioId', params.colegioId);
+    query.set('grado', params.grado);
+    query.set('turno', params.turno);
+    if (params.division) query.set('division', params.division);
+
+    const res = await fetchAdminAutenticado(`/api/admin/fotos?${query.toString()}`);
+    const data = await res.json();
+    if (!res.ok || !data.success) return [];
+    return (data.fotos || []).map(mapearFilaFoto);
   } catch (err) {
-    console.error('Error al leer fotos subidas:', err);
+    console.error('Error al obtener las fotos activas:', err);
     return [];
   }
 }
 
-export function obtenerFotosSubidasPorCurso(cursoCodigo: string): FotoSubida[] {
-  const todas = obtenerTodasLasFotosSubidas();
-  const codigoLimpio = cursoCodigo.trim().toUpperCase();
-  return todas.filter(f => f.cursoCodigo.trim().toUpperCase() === codigoLimpio);
+/**
+ * El campo web se guarda como URL pública completa (para poder mostrarla directamente),
+ * pero Storage necesita la ruta relativa dentro del bucket para poder borrar el archivo.
+ */
+function extraerPathStorageWeb(valor?: string | null): string | undefined {
+  if (!valor) return undefined;
+  const marcador = '/fotos-web/';
+  const idx = valor.indexOf(marcador);
+  return idx === -1 ? valor : valor.slice(idx + marcador.length);
 }
 
-export function guardarFotoSubida(nueva: FotoSubida): void {
-  const todas = obtenerTodasLasFotosSubidas();
-  // Evitar duplicados por id o mismo path
-  const filtradas = todas.filter(f => f.id !== nueva.id && f.pathStorageHD !== nueva.pathStorageHD);
-  filtradas.unshift(nueva);
-  
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_FOTOS, JSON.stringify(filtradas));
-    window.dispatchEvent(new CustomEvent('infocus_fotos_updated', { detail: filtradas }));
-  }
-}
-
-export async function eliminarFotoSubida(id: string): Promise<boolean> {
-  const todas = obtenerTodasLasFotosSubidas();
-  const foto = todas.find(f => f.id === id);
-  if (!foto) return false;
-
-  // Eliminar de Supabase Storage si corresponde
+/** Panel admin: elimina una foto (fila en Supabase + los archivos reales en Storage) */
+export async function eliminarFotoActivaAdmin(foto: FotoRegistrada): Promise<{ success: boolean; error?: string }> {
   try {
-    await eliminarFotoDeStorage(foto.pathStorageWeb, foto.pathStorageHD);
-  } catch (e) {
-    console.warn('No se pudo borrar de storage remoto:', e);
+    if (foto.pathStorageWeb || foto.pathStorageHD) {
+      await eliminarFotoDeStorage(extraerPathStorageWeb(foto.pathStorageWeb), foto.pathStorageHD || undefined);
+    }
+    const res = await fetchAdminAutenticado(`/api/admin/fotos/${encodeURIComponent(foto.id)}`, {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo eliminar la foto.' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al eliminar la foto.' };
   }
-
-  const restantes = todas.filter(f => f.id !== id);
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(STORAGE_KEY_FOTOS, JSON.stringify(restantes));
-    window.dispatchEvent(new CustomEvent('infocus_fotos_updated', { detail: restantes }));
-  }
-  return true;
 }
 
-export function limpiarTodasLasFotosSubidas(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(STORAGE_KEY_FOTOS);
-    window.dispatchEvent(new CustomEvent('infocus_fotos_updated', { detail: [] }));
+/** Panel admin: vacía por completo el catálogo de fotos (usado junto con "Limpiar Supabase") */
+export async function limpiarTodasLasFotosAdmin(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/fotos', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo limpiar el catálogo de fotos.' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al limpiar el catálogo de fotos.' };
   }
 }
 
 /**
- * Retorna las fotos disponibles para un curso en el portal de familias.
- * Si el fotógrafo ya subió fotos reales para este curso, devuelve las fotos reales.
- * Si aún no se subieron fotos para el curso, retorna las fotos de muestra estándar.
+ * Galería pública para el portal de familias: trae las fotos reales de un curso puntual
+ * (grado + turno + división) desde Supabase. Si todavía no hay fotos reales cargadas para
+ * ese curso, devuelve las fotos de muestra estándar — igual que antes.
  */
-export function obtenerFotosParaGaleria(cursoCodigo?: string): Foto[] {
-  if (!cursoCodigo) {
+export async function obtenerGaleriaPublica(params: {
+  grado?: string;
+  turno?: string;
+  division?: string;
+}): Promise<Foto[]> {
+  if (!params.grado || !params.turno) {
     return FOTOS_MUESTRA;
   }
+  try {
+    const query = new URLSearchParams();
+    query.set('grado', params.grado);
+    query.set('turno', params.turno);
+    if (params.division) query.set('division', params.division);
 
-  const subidas = obtenerFotosSubidasPorCurso(cursoCodigo);
-  if (subidas.length === 0) {
+    const res = await fetch(`/api/fotos?${query.toString()}`);
+    const data = await res.json();
+    if (!res.ok || !data.success || !Array.isArray(data.fotos) || data.fotos.length === 0) {
+      return FOTOS_MUESTRA;
+    }
+
+    return data.fotos.map((row: any): Foto => {
+      const categoria = row.categoria as CategoriaFoto;
+      const url = row.preview_path || row.thumb_path || row.storage_path || '';
+      return {
+        id: row.id,
+        url,
+        thumbnail: url,
+        categoria,
+        titulo: row.alumno_nombre
+          ? `${row.alumno_nombre} (${categoria})`
+          : `Foto ${categoria}`,
+        descripcion: `Foto ${categoria} del curso`,
+        alumnoNombre: row.alumno_nombre || undefined,
+        grado: row.grado || undefined,
+        division: row.division || undefined,
+      };
+    });
+  } catch (err) {
+    console.error('Error al obtener la galería de fotos:', err);
     return FOTOS_MUESTRA;
   }
-
-  return subidas.map((s): Foto => ({
-    id: s.id,
-    url: s.urlWeb,
-    thumbnail: s.urlWeb,
-    categoria: s.categoria as CategoriaFoto,
-    titulo: s.alumnoNombre 
-      ? `${s.alumnoNombre} (${s.categoria})` 
-      : `${s.categoria.toUpperCase()} - ${s.nombreOriginal}`,
-    descripcion: `Foto ${s.categoria} para ${s.cursoCodigo}`,
-    alumnoNombre: s.alumnoNombre
-  }));
 }
