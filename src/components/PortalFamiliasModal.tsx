@@ -50,7 +50,7 @@ import {
   obtenerFamiliaActiva,
   cerrarSesionFamilia,
   InscripcionFamilia,
-  buscarFamiliaPorCodigoOFamilia,
+  buscarMiInscripcion,
   guardarFamiliaActiva
 } from '../services/inscripcionesService';
 import { obtenerFotosParaGaleria } from '../services/fotosSubidasService';
@@ -325,8 +325,8 @@ export default function PortalFamiliasModal({
     }
   }, [preselectedKitId]);
 
-  // Function to validate and bind course code or school code
-  const validarCodigoIngresado = (codigoInput: string) => {
+  // Function to validate and bind course code, family access code, or school code
+  const validarCodigoIngresado = async (codigoInput: string) => {
     const clean = codigoInput.trim().toUpperCase();
     if (!clean) {
       setCodigoErrorMsg('Por favor ingresá un código para validar.');
@@ -334,9 +334,14 @@ export default function PortalFamiliasModal({
       return false;
     }
 
-    // 0. Search for Family Code (e.g. FAM-4821 or search by parent/code)
-    const famFound = buscarFamiliaPorCodigoOFamilia(clean);
-    if (famFound) {
+    // 0. Search for a registered family's access code (assigned via padrón or manual approval)
+    const famFound = await buscarMiInscripcion(clean);
+    if (famFound && famFound.estado === 'pendiente') {
+      setCodigoErrorMsg('Tu inscripción todavía está pendiente de validación por el equipo fotográfico. Te avisaremos por WhatsApp y Email en cuanto tengas tu código de acceso.');
+      setCodigoValidadoMsg(null);
+      return false;
+    }
+    if (famFound && famFound.estado === 'aceptado' && famFound.codigoAsignado) {
       guardarFamiliaActiva(famFound);
       setFamiliaActiva(famFound);
       setHijoSeleccionadoId('principal');
@@ -399,7 +404,7 @@ export default function PortalFamiliasModal({
   useEffect(() => {
     if (preselectedCodigo) {
       setCodigoAcceso(preselectedCodigo);
-      validarCodigoIngresado(preselectedCodigo);
+      void validarCodigoIngresado(preselectedCodigo);
     }
   }, [preselectedCodigo]);
 
@@ -424,9 +429,9 @@ export default function PortalFamiliasModal({
   const total = precioBase + precioStickers + precioPortarretrato + precioLlavero + precioCopiasExtras;
 
   // Handlers
-  const handleIngresarCodigo = () => {
+  const handleIngresarCodigo = async () => {
     if (!codigoAcceso.trim()) return;
-    const ok = validarCodigoIngresado(codigoAcceso);
+    const ok = await validarCodigoIngresado(codigoAcceso);
     if (ok && nombreAlumno.trim()) {
       setStep(2);
     }

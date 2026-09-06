@@ -1,49 +1,46 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   UserCheck,
   CheckCircle2,
   Clock,
   Search,
-  Key,
   Mail,
-  Send,
-  Sparkles,
   Check,
   RefreshCw,
   Eye,
   MessageCircle,
-  ShieldCheck,
-  ExternalLink,
   Copy,
-  AlertCircle,
-  School,
   X,
-  Users
+  Users,
+  XCircle,
+  Loader2,
+  School
 } from 'lucide-react';
 import {
   InscripcionFamilia,
-  obtenerInscripciones,
-  aprobarInscripcion,
-  rechazarInscripcion,
+  obtenerInscripcionesAdmin,
+  aprobarInscripcionAdmin,
+  rechazarInscripcionAdmin,
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion,
   prepararEmailAprobacion,
   determinarCodigoParaInscripcion
 } from '../services/inscripcionesService';
-import { getCodigosCursos } from '../data/codigosCursos';
 
 interface AdminInscriptosTabProps {
   onProbarCodigo?: (codigo: string) => void;
 }
 
 export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTabProps) {
-  const [inscripciones, setInscripciones] = useState<InscripcionFamilia[]>(() => obtenerInscripciones());
+  const [inscripciones, setInscripciones] = useState<InscripcionFamilia[]>([]);
+  const [cargando, setCargando] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'pendiente' | 'aceptado'>('todos');
   const [searchQuery, setSearchQuery] = useState('');
+  const [procesandoId, setProcesandoId] = useState<string | null>(null);
   const [toastNotificacion, setToastNotificacion] = useState<{
     titulo: string;
     mensaje: string;
-    tipo: 'success' | 'info';
+    tipo: 'success' | 'info' | 'error';
   } | null>(null);
 
   // Modal for previewing sent email / whatsapp dispatch
@@ -58,18 +55,16 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
   // Editable codes for pending items
   const [codigosEditables, setCodigosEditables] = useState<Record<string, string>>({});
 
-  // Listen to cross-modal storage updates
-  useEffect(() => {
-    const handleStorageChange = () => {
-      setInscripciones(obtenerInscripciones());
-    };
-    window.addEventListener('infocus_inscripciones_updated', handleStorageChange);
-    window.addEventListener('storage', handleStorageChange);
-    return () => {
-      window.removeEventListener('infocus_inscripciones_updated', handleStorageChange);
-      window.removeEventListener('storage', handleStorageChange);
-    };
+  const cargarInscripciones = useCallback(async (mostrarSpinner = false) => {
+    if (mostrarSpinner) setCargando(true);
+    const datos = await obtenerInscripcionesAdmin();
+    setInscripciones(datos);
+    if (mostrarSpinner) setCargando(false);
   }, []);
+
+  useEffect(() => {
+    cargarInscripciones(true);
+  }, [cargarInscripciones]);
 
   const totalInscriptos = inscripciones.length;
   const pendientes = useMemo(() => inscripciones.filter((i) => i.estado === 'pendiente'), [inscripciones]);
@@ -99,17 +94,27 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     });
   }, [inscripciones, filtroEstado, searchQuery]);
 
-  const handleAprobar = (item: InscripcionFamilia, abrirWhatsAppAuto = true) => {
+  const handleAprobar = async (item: InscripcionFamilia, abrirWhatsAppAuto = true) => {
     const codigoElegido =
       codigosEditables[item.id] ||
       item.codigoAsignado ||
       determinarCodigoParaInscripcion(item);
 
-    const resultado = aprobarInscripcion(item.id, codigoElegido);
-    if (!resultado) return;
+    setProcesandoId(item.id);
+    const resultado = await aprobarInscripcionAdmin(item.id, codigoElegido);
+    setProcesandoId(null);
 
-    const actualizadas = obtenerInscripciones();
-    setInscripciones(actualizadas);
+    if (!resultado.success || !resultado.familia || !resultado.codigo) {
+      setToastNotificacion({
+        titulo: 'No se pudo aprobar la inscripción',
+        mensaje: resultado.error || 'Error desconocido al aprobar la inscripción.',
+        tipo: 'error'
+      });
+      setTimeout(() => setToastNotificacion(null), 6000);
+      return;
+    }
+
+    await cargarInscripciones();
 
     const emailData = prepararEmailAprobacion(resultado.familia, resultado.codigo);
     const whatsappMsg = generarMensajeWhatsAppAprobacion(resultado.familia, resultado.codigo);
@@ -126,7 +131,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
 
     setToastNotificacion({
       titulo: `¡Inscripción aprobada para ${item.alumnoNombre}!`,
-      mensaje: `Código ${resultado.codigo} asignado y despachado por WhatsApp (+${item.telefonoWhatsApp}) y por Email (${item.email}).`,
+      mensaje: `Código ${resultado.codigo} asignado y listo para despachar por WhatsApp (+${item.telefonoWhatsApp}) y por Email (${item.email}).`,
       tipo: 'success'
     });
 
@@ -144,15 +149,43 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     }
   };
 
-  const handleAprobarTodosLosPendientes = () => {
-    if (pendientes.length === 0) return;
-    pendientes.forEach((item) => {
-      aprobarInscripcion(item.id);
+  const handleRechazar = async (item: InscripcionFamilia) => {
+    setProcesandoId(item.id);
+    const resultado = await rechazarInscripcionAdmin(item.id);
+    setProcesandoId(null);
+
+    if (!resultado.success) {
+      setToastNotificacion({
+        titulo: 'No se pudo rechazar la inscripción',
+        mensaje: resultado.error || 'Error desconocido al rechazar la inscripción.',
+        tipo: 'error'
+      });
+      setTimeout(() => setToastNotificacion(null), 6000);
+      return;
+    }
+
+    await cargarInscripciones();
+    setToastNotificacion({
+      titulo: 'Inscripción rechazada',
+      mensaje: `Se marcó como rechazada la inscripción de ${item.alumnoNombre} ${item.alumnoApellido}.`,
+      tipo: 'info'
     });
-    setInscripciones(obtenerInscripciones());
+    setTimeout(() => setToastNotificacion(null), 5000);
+  };
+
+  const handleAprobarTodosLosPendientes = async () => {
+    if (pendientes.length === 0) return;
+    setProcesandoId('__todos__');
+    for (const item of pendientes) {
+      const codigoElegido =
+        codigosEditables[item.id] || item.codigoAsignado || determinarCodigoParaInscripcion(item);
+      await aprobarInscripcionAdmin(item.id, codigoElegido);
+    }
+    setProcesandoId(null);
+    await cargarInscripciones();
     setToastNotificacion({
       titulo: '¡Todas las solicitudes fueron aprobadas!',
-      mensaje: `Se asignaron y enviaron los códigos correspondientes a las ${pendientes.length} familias pendientes.`,
+      mensaje: `Se asignaron los códigos correspondientes a las ${pendientes.length} familias pendientes.`,
       tipo: 'success'
     });
     setTimeout(() => setToastNotificacion(null), 5000);
@@ -166,11 +199,17 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
           className={`p-4 rounded-2xl border text-left flex items-start justify-between gap-3 shadow-md animate-in slide-in-from-top-2 duration-200 ${
             toastNotificacion.tipo === 'success'
               ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+              : toastNotificacion.tipo === 'error'
+              ? 'bg-red-50 border-red-300 text-red-950'
               : 'bg-amber-50 border-amber-300 text-amber-950'
           }`}
         >
           <div className="flex items-start gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            {toastNotificacion.tipo === 'error' ? (
+              <XCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            ) : (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            )}
             <div>
               <p className="font-bold text-sm">{toastNotificacion.titulo}</p>
               <p className="text-xs opacity-90 mt-0.5">{toastNotificacion.mensaje}</p>
@@ -212,7 +251,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
             <span className="text-xs font-normal text-amber-700">esperando código</span>
           </div>
           <p className="text-[11px] text-amber-800 mt-1">
-            Revisá los datos y hacé clic en el check para enviarles el código
+            No coincidieron automáticamente con el padrón: revisalas y aceptalas o rechazalas
           </p>
         </div>
 
@@ -226,7 +265,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
             <span className="text-xs font-normal text-emerald-700">con código activo</span>
           </div>
           <p className="text-[11px] text-emerald-700 mt-1">
-            Notificados por WhatsApp y Correo Electrónico
+            Automáticos por padrón o aprobados manualmente
           </p>
         </div>
       </div>
@@ -274,6 +313,15 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
 
         {/* Search & Actions */}
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => cargarInscripciones(true)}
+            className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            title="Actualizar lista"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${cargando ? 'animate-spin' : ''}`} />
+            <span>Actualizar</span>
+          </button>
           <div className="relative flex-1 sm:w-64">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
             <input
@@ -289,9 +337,14 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
             <button
               type="button"
               onClick={handleAprobarTodosLosPendientes}
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              disabled={procesandoId === '__todos__'}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             >
-              <Check className="w-3.5 h-3.5" />
+              {procesandoId === '__todos__' ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Check className="w-3.5 h-3.5" />
+              )}
               <span>Aceptar Todos ({pendientes.length})</span>
             </button>
           )}
@@ -306,13 +359,20 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
               <th className="py-3 px-4">Estado & Aprobación</th>
               <th className="py-3 px-4">Alumno & Curso</th>
               <th className="py-3 px-4">Tutor / Contacto</th>
-              <th className="py-3 px-4">Código de Curso</th>
+              <th className="py-3 px-4">Código de Acceso</th>
               <th className="py-3 px-4">Envíos (WhatsApp / Email)</th>
               <th className="py-3 px-4 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {inscripcionesFiltradas.length === 0 ? (
+            {cargando ? (
+              <tr>
+                <td colSpan={6} className="py-12 text-center text-slate-400">
+                  <Loader2 className="w-6 h-6 mx-auto animate-spin mb-2" />
+                  <p className="text-xs">Cargando inscripciones...</p>
+                </td>
+              </tr>
+            ) : inscripcionesFiltradas.length === 0 ? (
               <tr>
                 <td colSpan={6} className="py-12 text-center text-slate-400 space-y-2">
                   <UserCheck className="w-8 h-8 mx-auto text-slate-300" />
@@ -327,10 +387,12 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
             ) : (
               inscripcionesFiltradas.map((item) => {
                 const esPendiente = item.estado === 'pendiente';
+                const esRechazado = item.estado === 'rechazado';
                 const codigoSugerido =
                   codigosEditables[item.id] ||
                   item.codigoAsignado ||
                   determinarCodigoParaInscripcion(item);
+                const procesando = procesandoId === item.id;
 
                 return (
                   <tr
@@ -351,12 +413,33 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             <button
                               type="button"
                               onClick={() => handleAprobar(item, true)}
-                              className="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
-                              title="Aprobar y enviar código de acceso por WhatsApp y Email"
+                              disabled={procesando}
+                              className="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
+                              title="Aprobar y despachar código de acceso por WhatsApp y Email"
                             >
-                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              {procesando ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              )}
                               <span>Aceptar y Enviar</span>
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRechazar(item)}
+                              disabled={procesando}
+                              className="w-full px-3 py-1.5 bg-white hover:bg-red-50 disabled:opacity-60 text-red-600 border border-red-200 font-bold text-[11px] rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                              <span>Rechazar</span>
+                            </button>
+                          </div>
+                        ) : esRechazado ? (
+                          <div className="space-y-1">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-red-100 text-red-900 border border-red-200">
+                              <XCircle className="w-3 h-3 text-red-600" />
+                              <span>Rechazado</span>
+                            </span>
                           </div>
                         ) : (
                           <div className="space-y-1">
@@ -440,25 +523,13 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                       </div>
                     </td>
 
-                    {/* Course Code & Family Code Assigned */}
+                    {/* Access Code Assigned */}
                     <td className="py-3.5 px-4 align-top">
                       <div className="space-y-2">
-                        {/* Código Familiar */}
-                        <div>
-                          <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block mb-0.5">
-                            Código Familiar:
-                          </span>
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-mono font-black text-xs shadow-2xs">
-                            <Users className="w-3 h-3" />
-                            <span>{item.codigoFamiliar || 'FAM-1001'}</span>
-                          </span>
-                        </div>
-
-                        {/* Código de Curso */}
                         {esPendiente ? (
-                          <div className="space-y-1 pt-1 border-t border-slate-100">
+                          <div className="space-y-1">
                             <span className="text-[10px] text-amber-800 font-semibold uppercase tracking-wider block">
-                              Código Curso:
+                              Código a asignar:
                             </span>
                             <input
                               type="text"
@@ -476,14 +547,15 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             </span>
                           </div>
                         ) : (
-                          <div className="space-y-1 pt-1 border-t border-slate-100">
-                            <span className="text-[10px] text-slate-500 font-semibold block">
-                              Curso: <strong className="font-mono text-slate-800">{item.codigoAsignado}</strong>
+                          <div className="space-y-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 text-slate-950 font-mono font-black text-xs shadow-2xs">
+                              <Users className="w-3 h-3" />
+                              <span>{item.codigoAsignado || item.codigoFamiliar || '—'}</span>
                             </span>
-                            {onProbarCodigo && (
+                            {onProbarCodigo && item.codigoAsignado && (
                               <button
                                 type="button"
-                                onClick={() => onProbarCodigo(item.codigoFamiliar || item.codigoAsignado!)}
+                                onClick={() => onProbarCodigo(item.codigoAsignado!)}
                                 className="text-[10px] text-amber-700 hover:text-amber-900 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
                               >
                                 <Eye className="w-2.5 h-2.5" />
@@ -537,16 +609,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                     {/* Action Buttons */}
                     <td className="py-3.5 px-4 align-top text-right">
                       <div className="flex flex-col items-end gap-1.5">
-                        {esPendiente ? (
-                          <button
-                            type="button"
-                            onClick={() => handleAprobar(item, true)}
-                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
-                          >
-                            <Check className="w-3 h-3" />
-                            <span>Aceptar</span>
-                          </button>
-                        ) : (
+                        {esPendiente ? null : !esRechazado ? (
                           <>
                             <a
                               href={generarEnlaceWhatsAppAprobacion(
@@ -580,7 +643,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                               <span>Ver Email Enviado</span>
                             </button>
                           </>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -622,7 +685,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
             <div className="p-4 bg-linear-to-r from-amber-500/10 via-amber-100/60 to-white rounded-xl border border-amber-300 flex items-center justify-between">
               <div>
                 <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
-                  Código de Curso Desbloqueado
+                  Código de Acceso Desbloqueado
                 </span>
                 <span className="text-2xl font-mono font-black text-slate-950 tracking-wider">
                   {detalleEnvioModal.codigo}

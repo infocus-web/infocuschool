@@ -19,9 +19,9 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
     const handleSync = () => {
       setFamiliaActiva(obtenerFamiliaActiva());
     };
-    window.addEventListener('infocus_inscripciones_updated', handleSync);
+    window.addEventListener('infocus_familia_activa_actualizada', handleSync);
     return () => {
-      window.removeEventListener('infocus_inscripciones_updated', handleSync);
+      window.removeEventListener('infocus_familia_activa_actualizada', handleSync);
     };
   }, []);
 

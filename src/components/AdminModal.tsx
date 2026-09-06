@@ -25,8 +25,8 @@ import {
   guardarPedidosEnStorage, 
   PedidoEscolarCompleto 
 } from '../services/pedidosLabService';
-import { 
-  obtenerInscripciones 
+import {
+  obtenerInscripcionesAdmin
 } from '../services/inscripcionesService';
 import { 
   descargarExcelLegibleColegio,
@@ -45,6 +45,7 @@ import {
   actualizarEstadoPedidoAdmin 
 } from '../services/adminAuthService';
 import AdminInscriptosTab from './AdminInscriptosTab';
+import AdminPadronTab from './AdminPadronTab';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
 import AdminResumenKitsSection from './AdminResumenKitsSection';
 import { CircularImprimibleModal } from './CircularImprimibleModal';
@@ -75,37 +76,25 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp'>('inscriptos');
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
 
   // Pending inscriptions count
-  const [pendientesInscripcionCount, setPendientesInscripcionCount] = useState<number>(() => {
-    return obtenerInscripciones().filter((i) => i.estado === 'pendiente').length;
-  });
+  const [pendientesInscripcionCount, setPendientesInscripcionCount] = useState<number>(0);
 
   // Schools list state from dynamic persistent service
   const { colegios: colegiosList, agregarColegio, borrarColegio } = useColegiosLista();
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && isAuthenticated) {
       setPedidosCompletos(obtenerPedidosGuardados());
-      const inscriptos = obtenerInscripciones();
-      setPendientesInscripcionCount(inscriptos.filter((i) => i.estado === 'pendiente').length);
+      obtenerInscripcionesAdmin().then((inscriptos) => {
+        setPendientesInscripcionCount(inscriptos.filter((i) => i.estado === 'pendiente').length);
+      });
     }
-  }, [isOpen, activeTab]);
-
-  useEffect(() => {
-    const handleInscripcionesUpdated = () => {
-      const inscriptos = obtenerInscripciones();
-      setPendientesInscripcionCount(inscriptos.filter((i) => i.estado === 'pendiente').length);
-    };
-    window.addEventListener('infocus_inscripciones_updated', handleInscripcionesUpdated);
-    return () => {
-      window.removeEventListener('infocus_inscripciones_updated', handleInscripcionesUpdated);
-    };
-  }, []);
+  }, [isOpen, isAuthenticated, activeTab]);
 
   // WhatsApp configuration state (persistent in Supabase 'configuraciones' & localStorage)
   const [whatsappNumero, setWhatsappNumero] = useState<string>(() => {
@@ -676,6 +665,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   icon: UserCheck,
                   badge: pendientesInscripcionCount > 0 ? pendientesInscripcionCount : undefined
                 },
+                { id: 'padron', label: 'Padrón Autorizado (Excel/CSV)', icon: FileSpreadsheet },
                 { id: 'laboratorio', label: 'Laboratorio & Ensobrado (ZIP)', icon: Printer },
                 { id: 'pedidos', label: `Pedidos Familias (${pedidosCompletos.length})`, icon: Package },
                 { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
@@ -709,6 +699,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
               <AdminInscriptosTab onProbarCodigo={onProbarCodigo} />
+            )}
+
+            {/* TAB: PADRÓN AUTORIZADO (Excel/CSV) */}
+            {activeTab === 'padron' && (
+              <AdminPadronTab />
             )}
 
             {/* TAB: LABORATORIO & ENSOBRADO */}

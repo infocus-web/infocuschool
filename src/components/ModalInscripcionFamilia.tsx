@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   ShieldCheck,
   ArrowRight,
-  Sparkles,
   Phone,
   Mail,
   User,
@@ -16,30 +15,25 @@ import {
   AlertCircle,
   MessageCircle,
   Key,
-  ExternalLink,
   Copy,
   Check,
-  Send,
   UserCheck,
   Users,
   Trash2,
-  Plus
+  Plus,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import {
   InscripcionFamilia,
   AlumnoHermano,
-  guardarInscripcion,
-  buscarFamiliaPorContacto,
+  validarEInscribirFamilia,
+  buscarMiInscripcion,
   guardarFamiliaActiva,
-  obtenerFamiliaActiva,
-  obtenerInscripciones,
-  aprobarInscripcion,
-  generarEnlaceWhatsAppAprobacion,
-  generarMensajeWhatsAppAprobacion
+  obtenerFamiliaActiva
 } from '../services/inscripcionesService';
 import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
-import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 
 interface ModalInscripcionFamiliaProps {
   isOpen: boolean;
@@ -53,8 +47,9 @@ export default function ModalInscripcionFamilia({
   onInscripcionExitosa
 }: ModalInscripcionFamiliaProps) {
   const [tab, setTab] = useState<'registro' | 'login'>('registro');
-  const [paso, setPaso] = useState<'formulario' | 'solicitar_codigo'>('formulario');
+  const [paso, setPaso] = useState<'formulario' | 'resultado'>('formulario');
   const [familiaCreada, setFamiliaCreada] = useState<InscripcionFamilia | null>(null);
+  const [enviandoRegistro, setEnviandoRegistro] = useState(false);
 
   // Form states for New Inscription
   const [padreNombre, setPadreNombre] = useState('');
@@ -69,7 +64,7 @@ export default function ModalInscripcionFamilia({
   const { config: configWhatsApp } = useWhatsAppConfig();
   const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-divino-pastor-2026');
 
-  // Sibling states (1 family code for all children)
+  // Sibling states (1 access code for all children)
   const [hermanos, setHermanos] = useState<
     Array<{
       id: string;
@@ -142,45 +137,24 @@ export default function ModalInscripcionFamilia({
     }
   };
 
-  // Code verification states in Step "solicitar_codigo"
-  const [codigoIngresado, setCodigoIngresado] = useState('');
-  const [codigoValidado, setCodigoValidado] = useState<{ seccionNombre: string; codigoValido: string } | null>(null);
-  const [codigoError, setCodigoError] = useState<string | null>(null);
   const [mensajeCopiado, setMensajeCopiado] = useState(false);
 
   // Login states
   const [loginQuery, setLoginQuery] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [verificandoLogin, setVerificandoLogin] = useState(false);
+
+  // Refresh pending status
+  const [verificandoEstado, setVerificandoEstado] = useState(false);
 
   // Form errors
   const [formError, setFormError] = useState<string | null>(null);
-
-  // Auto-sync when photographer accepts in the admin panel
-  React.useEffect(() => {
-    const syncInscripcion = () => {
-      if (familiaCreada) {
-        const todas = obtenerInscripciones();
-        const encontrada = todas.find((i) => i.id === familiaCreada.id);
-        if (encontrada) {
-          setFamiliaCreada(encontrada);
-          if (encontrada.estado === 'aceptado' && encontrada.codigoAsignado) {
-            setCodigoIngresado(encontrada.codigoAsignado);
-            handleVerificarCodigo(encontrada.codigoAsignado);
-          }
-        }
-      }
-    };
-    window.addEventListener('infocus_inscripciones_updated', syncInscripcion);
-    return () => {
-      window.removeEventListener('infocus_inscripciones_updated', syncInscripcion);
-    };
-  }, [familiaCreada]);
 
   if (!isOpen) return null;
 
   const colegioSeleccionado = colegios.find((c) => c.id === colegioId) || colegios[0] || COLEGIO_POR_DEFECTO;
 
-  const handleRegistroSubmit = (e: React.FormEvent) => {
+  const handleRegistroSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -219,7 +193,10 @@ export default function ModalInscripcionFamilia({
         colegioNombre: colegioSeleccionado.nombre
       }));
 
-    const nuevaFamilia = guardarInscripcion({
+    setEnviandoRegistro(true);
+    const resultado = await validarEInscribirFamilia({
+      colegioId: colegioSeleccionado.id,
+      colegioNombre: colegioSeleccionado.nombre,
       padreNombre: padreNombre.trim(),
       telefonoWhatsApp: telefonoWhatsApp.trim(),
       email: email.trim(),
@@ -228,89 +205,55 @@ export default function ModalInscripcionFamilia({
       turno,
       grado,
       division,
-      colegioId: colegioSeleccionado.id,
-      colegioNombre: colegioSeleccionado.nombre,
       hermanos: hermanosValidados,
       solicitaFotoHermanos: hermanosValidados.length > 0 ? solicitaFotoHermanos : false
     });
+    setEnviandoRegistro(false);
 
-    setFamiliaCreada(nuevaFamilia);
-    setPaso('solicitar_codigo');
+    if (!resultado.success || !resultado.inscripcion) {
+      setFormError(resultado.error || 'No pudimos registrar la inscripción. Intentá nuevamente.');
+      return;
+    }
+
+    setFamiliaCreada(resultado.inscripcion);
+    setPaso('resultado');
   };
 
-  const handleVerificarCodigo = (codigoAProbar?: string) => {
-    const raw = codigoAProbar !== undefined ? codigoAProbar : codigoIngresado;
-    const clean = raw.trim().toUpperCase();
-    if (!clean) {
-      setCodigoError('Ingresá el código familiar o código provisto por la institución.');
-      setCodigoValidado(null);
-      return;
-    }
-
-    // 0. Search if it matches a family code (e.g. FAM-4821)
-    const famFound = buscarFamiliaPorContacto(clean);
-    if (famFound) {
-      setCodigoValidado({
-        seccionNombre: `Código Familiar: ${famFound.codigoFamiliar || clean} (${famFound.padreNombre})`,
-        codigoValido: famFound.codigoFamiliar || clean
-      });
-      setCodigoError(null);
-      return;
-    }
-
-    // 1. Search in course sections (e.g. SALA3TM, SALA4A, SALA5B...)
-    const match = buscarSeccionPorCodigo(clean);
-    if (match) {
-      setCodigoValidado({
-        seccionNombre: match.seccion.nombreCompleto,
-        codigoValido: match.codigoValido
-      });
-      setCodigoError(null);
-      return;
-    }
-
-    // 2. Search general school code (e.g. ISBA2026, etc.)
-    const colFound = colegios.find((c) => c.codigoAcceso.toUpperCase() === clean);
-    if (colFound) {
-      setCodigoValidado({
-        seccionNombre: `${colFound.nombre} (${grado} "${division}")`,
-        codigoValido: colFound.codigoAcceso
-      });
-      setCodigoError(null);
-      return;
-    }
-
-    setCodigoError(`El código "${raw}" no fue encontrado. Verificá si está bien escrito o solicitalo a la institución por WhatsApp.`);
-    setCodigoValidado(null);
-  };
-
-  const handleAccederConCodigo = () => {
-    if (!familiaCreada) return;
-    const cod = codigoValidado?.codigoValido || familiaCreada.codigoFamiliar || codigoIngresado.trim().toUpperCase();
-    onInscripcionExitosa(familiaCreada, cod);
-  };
-
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
     if (!loginQuery.trim()) {
-      setLoginError('Ingresá tu Código Familiar (ej: FAM-1234), teléfono o correo para ingresar.');
+      setLoginError('Ingresá tu código de acceso, teléfono o correo para ingresar.');
       return;
     }
 
-    const encontrada = buscarFamiliaPorContacto(loginQuery);
+    setVerificandoLogin(true);
+    const encontrada = await buscarMiInscripcion(loginQuery);
+    setVerificandoLogin(false);
+
     if (encontrada) {
       guardarFamiliaActiva(encontrada);
       setFamiliaCreada(encontrada);
-      setCodigoIngresado(encontrada.codigoFamiliar || encontrada.codigoAsignado || '');
-      setPaso('solicitar_codigo');
+      setPaso('resultado');
     } else {
       setLoginError('No encontramos una inscripción con ese código, teléfono o correo. Verificá los datos o completá la pestaña "Inscribirme".');
     }
   };
 
-  // Pre-configured WhatsApp message to request the course code
+  const handleVerificarEstado = async () => {
+    if (!familiaCreada) return;
+    setVerificandoEstado(true);
+    const query = familiaCreada.email || familiaCreada.telefonoWhatsApp;
+    const actualizada = await buscarMiInscripcion(query);
+    setVerificandoEstado(false);
+    if (actualizada) {
+      setFamiliaCreada(actualizada);
+      guardarFamiliaActiva(actualizada);
+    }
+  };
+
+  // Display helpers (reflect either the confirmed registration or the in-progress form)
   const alumnoDisplay = familiaCreada
     ? `${familiaCreada.alumnoNombre} ${familiaCreada.alumnoApellido}`
     : `${alumnoNombre} ${alumnoApellido}`;
@@ -319,15 +262,6 @@ export default function ModalInscripcionFamilia({
   const turnoDisplay = familiaCreada ? familiaCreada.turno : turno;
   const tutorDisplay = familiaCreada ? familiaCreada.padreNombre : padreNombre;
   const colegioDisplay = familiaCreada ? familiaCreada.colegioNombre : colegioSeleccionado.nombre;
-
-  const mensajeWhatsApp = `Hola, me acabo de inscribir en el portal de fotos escolares para mi hijo/a ${alumnoDisplay} de ${gradoDisplay} (División ${divisionDisplay}, Turno ${turnoDisplay}) en ${colegioDisplay}. Soy ${tutorDisplay}. ¿Me podrían facilitar el código de curso para poder acceder a ver las fotos? ¡Muchas gracias!`;
-  const urlWhatsApp = `https://wa.me/5491128625916?text=${encodeURIComponent(mensajeWhatsApp)}`;
-
-  const handleCopiarMensaje = () => {
-    navigator.clipboard.writeText(mensajeWhatsApp);
-    setMensajeCopiado(true);
-    setTimeout(() => setMensajeCopiado(false), 2500);
-  };
 
   // Active family session on this browser
   const miFamiliaActiva = obtenerFamiliaActiva();
@@ -342,7 +276,7 @@ export default function ModalInscripcionFamilia({
         <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3.5">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-md shadow-amber-500/20 shrink-0">
-              {paso === 'solicitar_codigo' ? (
+              {paso === 'resultado' ? (
                 <Key className="w-6 h-6 stroke-[2.2]" />
               ) : (
                 <UserPlus className="w-6 h-6 stroke-[2.2]" />
@@ -351,7 +285,7 @@ export default function ModalInscripcionFamilia({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-extrabold font-['Outfit'] tracking-tight">
-                  {paso === 'solicitar_codigo'
+                  {paso === 'resultado'
                     ? familiaCreada?.estado === 'aceptado'
                       ? 'Código de Acceso Disponible'
                       : 'Solicitud Registrada'
@@ -362,10 +296,10 @@ export default function ModalInscripcionFamilia({
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                {paso === 'solicitar_codigo'
+                {paso === 'resultado'
                   ? familiaCreada?.estado === 'aceptado'
                     ? 'Tu inscripción fue confirmada. Código despachado por WhatsApp y Email.'
-                    : 'Recibirás tu código de acceso a la brevedad por WhatsApp y correo electrónico.'
+                    : 'Tu inscripción quedó pendiente de validación por el equipo fotográfico.'
                   : 'Paso inicial para acceder a las fotos del curso de tu hijo/a'}
               </p>
             </div>
@@ -381,7 +315,7 @@ export default function ModalInscripcionFamilia({
         </div>
 
         {/* Tab Switcher / Step indicator */}
-        {paso === 'solicitar_codigo' ? (
+        {paso === 'resultado' ? (
           <div className="bg-amber-50/80 px-4 py-2.5 border-b border-amber-200/80 flex items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2">
               <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">
@@ -397,7 +331,7 @@ export default function ModalInscripcionFamilia({
               <span className="font-extrabold text-amber-950">
                 {familiaCreada?.estado === 'aceptado'
                   ? 'Código Confirmado'
-                  : 'Validación y Envío de Código'}
+                  : 'Validación en curso'}
               </span>
             </div>
             <button
@@ -445,8 +379,8 @@ export default function ModalInscripcionFamilia({
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
-          {paso === 'solicitar_codigo' ? (
-            /* Step: Contact school via WhatsApp to get the course code */
+          {paso === 'resultado' ? (
+            /* Step: Result of validation against the authorized parent list */
             <div className="space-y-6 text-left">
               {/* Registration confirmation banner */}
               <div className="p-4 bg-gradient-to-r from-emerald-500/10 via-emerald-50 to-amber-50 border border-emerald-300 rounded-2xl flex items-start gap-3.5">
@@ -483,7 +417,7 @@ export default function ModalInscripcionFamilia({
                 </div>
               </div>
 
-              {/* Adaptive Card: Web Photographer Registration Sheet & Approval */}
+              {/* Adaptive Card: Auto-approved (matched authorized parent list) vs Pending manual review */}
               {familiaCreada?.estado === 'aceptado' ? (
                 <div className="bg-gradient-to-b from-emerald-50 via-white to-emerald-50/50 border-2 border-emerald-400 rounded-3xl p-5 sm:p-6 space-y-4 shadow-sm">
                   <div className="flex items-start gap-3.5">
@@ -495,13 +429,13 @@ export default function ModalInscripcionFamilia({
                         <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
                           Inscripción Aprobada
                         </span>
-                        <span className="text-xs text-emerald-800 font-semibold">Código Familiar Habilitado</span>
+                        <span className="text-xs text-emerald-800 font-semibold">Código de Acceso Habilitado</span>
                       </div>
                       <h4 className="text-lg font-black text-slate-900 font-['Outfit']">
-                        ¡Tu Código Familiar ya está activo!
+                        ¡Tu Código de Acceso ya está activo!
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Tu solicitud fue verificada por el equipo fotográfico. Te despachamos tu <strong>Código Familiar Único</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
+                        Verificamos tus datos contra el padrón del colegio. Te despachamos tu <strong>Código de Acceso</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
                       </p>
                     </div>
                   </div>
@@ -510,10 +444,10 @@ export default function ModalInscripcionFamilia({
                   <div className="p-4 bg-emerald-500/10 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
                     <div>
                       <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-900 block">
-                        Tu Código Familiar Único para todos tus hijos:
+                        Tu Código de Acceso para todos tus hijos:
                       </span>
                       <span className="text-2xl sm:text-3xl font-black font-mono tracking-widest text-emerald-950">
-                        {familiaCreada.codigoFamiliar || familiaCreada.codigoAsignado || 'FAM-1001'}
+                        {familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar}
                       </span>
                       <span className="text-[11px] text-emerald-800 font-medium block mt-0.5">
                         Acceso unificado para todos tus hijos en {colegioDisplay}
@@ -523,7 +457,7 @@ export default function ModalInscripcionFamilia({
                       <button
                         type="button"
                         onClick={() => {
-                          const code = familiaCreada.codigoFamiliar || familiaCreada.codigoAsignado || 'FAM-1001';
+                          const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
                           navigator.clipboard.writeText(code);
                           setMensajeCopiado(true);
                           setTimeout(() => setMensajeCopiado(false), 2000);
@@ -536,7 +470,7 @@ export default function ModalInscripcionFamilia({
                       <button
                         type="button"
                         onClick={() => {
-                          const code = familiaCreada.codigoFamiliar || familiaCreada.codigoAsignado || 'FAM-1001';
+                          const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
                           onInscripcionExitosa(familiaCreada, code);
                         }}
                         className="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
@@ -564,35 +498,21 @@ export default function ModalInscripcionFamilia({
                         </span>
                       </div>
                       <h4 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit']">
-                        ¡Tu Código Familiar ha sido generado!
+                        Tu solicitud está en revisión
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Tu solicitud quedó registrada. A la brevedad te validaremos tu <strong>Código Familiar Único</strong> ({familiaCreada?.codigoFamiliar}) por WhatsApp y por Email para que puedas acceder a las galerías y pedidos de todos tus hijos.
+                        No encontramos automáticamente tus datos en el padrón del colegio, así que tu solicitud quedó pendiente de revisión manual por el equipo fotográfico. En cuanto sea validada, vas a recibir tu <strong>Código de Acceso</strong> por WhatsApp y por Email.
                       </p>
                     </div>
                   </div>
 
-                  {/* Pre-assigned Family Code Box */}
-                  <div className="p-3.5 bg-amber-100/60 border border-amber-300 rounded-2xl flex items-center justify-between gap-3">
-                    <div>
-                      <span className="text-[10px] uppercase tracking-wider font-extrabold text-amber-900 block">
-                        Código Familiar Asignado:
-                      </span>
-                      <span className="text-xl sm:text-2xl font-black font-mono tracking-widest text-slate-900">
-                        {familiaCreada?.codigoFamiliar || 'FAM-1001'}
-                      </span>
-                    </div>
-                    <span className="text-[11px] font-bold text-amber-950 bg-amber-200/80 px-2.5 py-1 rounded-lg border border-amber-300">
-                      1 código para todos tus hijos
-                    </span>
-                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                     <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-2xl flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
                         <Phone className="w-4 h-4" />
                       </div>
                       <div className="overflow-hidden">
-                        <span className="text-[10px] font-bold text-emerald-900 uppercase block">Envío por WhatsApp:</span>
+                        <span className="text-[10px] font-bold text-emerald-900 uppercase block">Te avisaremos por WhatsApp:</span>
                         <span className="text-xs font-black text-slate-900 truncate block">
                           {familiaCreada?.telefonoWhatsApp || telefonoWhatsApp}
                         </span>
@@ -603,7 +523,7 @@ export default function ModalInscripcionFamilia({
                         <Mail className="w-4 h-4" />
                       </div>
                       <div className="overflow-hidden">
-                        <span className="text-[10px] font-bold text-sky-900 uppercase block">Envío por Email:</span>
+                        <span className="text-[10px] font-bold text-sky-900 uppercase block">Y por Email:</span>
                         <span className="text-xs font-black text-slate-900 truncate block">
                           {familiaCreada?.email || email}
                         </span>
@@ -611,100 +531,34 @@ export default function ModalInscripcionFamilia({
                     </div>
                   </div>
 
-                  {/* Direct WhatsApp button to request course code */}
-                  <div className="pt-2">
+                  <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+                    <button
+                      type="button"
+                      onClick={handleVerificarEstado}
+                      disabled={verificandoEstado}
+                      className="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                    >
+                      {verificandoEstado ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4" />
+                      )}
+                      <span>Verificar si ya fue aprobada</span>
+                    </button>
                     <a
                       href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
-                        `Hola, completé la inscripción para las fotos de ${alumnoNombre.trim()} ${alumnoApellido.trim()} (${grado} "${division}", Turno ${turno}, ${selectedColegio?.nombre || 'Colegio'}). ¿Me podrían indicar el código de curso para poder acceder a ver las fotos? ¡Muchas gracias!`
+                        `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full py-3 px-4 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      className="flex-1 py-3 px-4 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                     >
                       <MessageCircle className="w-4 h-4 fill-white" />
-                      <span>Solicitar Código por WhatsApp ahora</span>
+                      <span>Consultar por WhatsApp</span>
                     </a>
                   </div>
                 </div>
               )}
-
-              {/* Enter course code received from school */}
-              <div className="bg-slate-50 border border-slate-200 rounded-3xl p-5 sm:p-6 space-y-4">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500" />
-                  <h4 className="text-xs sm:text-sm font-extrabold text-slate-900 uppercase tracking-wide">
-                    ¿Ya te respondieron con tu Código de Curso?
-                  </h4>
-                </div>
-                <p className="text-xs text-slate-600">
-                  Ingresá el código de curso que te entregaron para desbloquear la galería y ver las fotos de tu hijo/a:
-                </p>
-
-                <div className="flex flex-col sm:flex-row gap-2.5">
-                  <div className="relative flex-1">
-                    <input
-                      type="text"
-                      value={codigoIngresado}
-                      onChange={(e) => {
-                        setCodigoIngresado(e.target.value.toUpperCase());
-                        setCodigoError(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleVerificarCodigo();
-                        }
-                      }}
-                      placeholder="Ej: SALA3TM"
-                      className="w-full px-4 py-3 text-sm uppercase font-mono font-extrabold tracking-wider bg-white border-2 border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleVerificarCodigo()}
-                    className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-2 cursor-pointer shrink-0"
-                  >
-                    <Key className="w-4 h-4" />
-                    <span>Validar Código</span>
-                  </button>
-                </div>
-
-                {/* Code Error */}
-                {codigoError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold">Código no reconocido</p>
-                      <p className="mt-0.5">{codigoError}</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Code Validated Success */}
-                {codigoValidado && (
-                  <div className="p-4 bg-emerald-50 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-emerald-950">
-                          ¡Código de curso reconocido: <span className="font-mono font-black">{codigoValidado.codigoValido}</span>!
-                        </p>
-                        <p className="text-[11px] text-emerald-800">
-                          {codigoValidado.seccionNombre} · Galería lista para visualizar
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleAccederConCodigo}
-                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-98 shrink-0"
-                    >
-                      <span>Ver fotos de {familiaCreada?.alumnoNombre}</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
 
               {/* Bottom navigation actions */}
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs border-t border-slate-200">
@@ -716,17 +570,19 @@ export default function ModalInscripcionFamilia({
                   ← Modificar datos de inscripción
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (familiaCreada) {
-                      onInscripcionExitosa(familiaCreada, codigoValidado?.codigoValido);
-                    }
-                  }}
-                  className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer"
-                >
-                  Ingresar al portal para colocar el código luego →
-                </button>
+                {familiaCreada?.estado !== 'aceptado' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaso('formulario');
+                      setTab('login');
+                      setLoginQuery(familiaCreada?.email || familiaCreada?.telefonoWhatsApp || '');
+                    }}
+                    className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer"
+                  >
+                    Ya tengo mi código, ingresar ahora →
+                  </button>
+                )}
               </div>
             </div>
           ) : tab === 'registro' ? (
@@ -775,6 +631,9 @@ export default function ModalInscripcionFamilia({
                         placeholder="Ej: 11 5489-3210"
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                       />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Usá el mismo número que el colegio tiene registrado, así te reconocemos automáticamente.
+                      </p>
                     </div>
 
                     <div>
@@ -790,6 +649,9 @@ export default function ModalInscripcionFamilia({
                         placeholder="Ej: mariana.gomez@gmail.com"
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                       />
+                      <p className="text-[10px] text-slate-500 mt-1">
+                        Usá el mismo correo que el colegio tiene registrado.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -919,7 +781,7 @@ export default function ModalInscripcionFamilia({
                 </div>
               </div>
 
-              {/* Sibling Section / Múltiples Hijos (Un solo código familiar) */}
+              {/* Sibling Section / Múltiples Hijos (Un solo código de acceso) */}
               <div className="bg-white p-5 rounded-2xl border-2 border-amber-200/90 space-y-4 text-left shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-100 pb-3">
                   <div>
@@ -928,7 +790,7 @@ export default function ModalInscripcionFamilia({
                       <span>Hermanos en la Institución</span>
                     </h4>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      ¿Tenés más de un hijo en el colegio? Agregalos aquí para recibir <strong>un único código familiar</strong> y acceder a todos juntos.
+                      ¿Tenés más de un hijo en el colegio? Agregalos aquí para recibir <strong>un único código de acceso</strong> y acceder a todos juntos.
                     </p>
                   </div>
                   <button
@@ -1100,7 +962,7 @@ export default function ModalInscripcionFamilia({
               <div className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-[11px] leading-relaxed">
                 <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                 <span>
-                  <strong>Privacidad y Seguridad:</strong> Tus datos se almacenan de forma segura y confidencial. Cada familia accede únicamente al espacio y pedidos de sus propios hijos.
+                  <strong>Privacidad y Seguridad:</strong> Tus datos se almacenan de forma segura y confidencial, y se validan contra el padrón autorizado por el colegio. Cada familia accede únicamente al espacio y pedidos de sus propios hijos.
                 </span>
               </div>
 
@@ -1108,10 +970,17 @@ export default function ModalInscripcionFamilia({
               <button
                 type="submit"
                 id="btn-confirmar-inscripcion"
-                className="w-full py-3.5 px-6 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 hover:from-amber-300 hover:to-amber-200 text-slate-950 font-extrabold text-sm rounded-2xl shadow-lg shadow-amber-400/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                disabled={enviandoRegistro}
+                className="w-full py-3.5 px-6 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-400 hover:from-amber-300 hover:to-amber-200 disabled:opacity-60 text-slate-950 font-extrabold text-sm rounded-2xl shadow-lg shadow-amber-400/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
               >
-                <span>Completar Inscripción</span>
-                <ArrowRight className="w-4 h-4" />
+                {enviandoRegistro ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <span>Completar Inscripción</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             </form>
           ) : (
@@ -1127,27 +996,34 @@ export default function ModalInscripcionFamilia({
 
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
                   <label className="block text-xs font-bold text-slate-700">
-                    Ingresá tu WhatsApp o Correo registrado
+                    Ingresá tu Código de Acceso, WhatsApp o Correo registrado
                   </label>
                   <div className="relative">
                     <input
                       type="text"
                       value={loginQuery}
                       onChange={(e) => setLoginQuery(e.target.value)}
-                      placeholder="11 2345-6789 o tu-email@correo.com"
+                      placeholder="11 2345-6789, tu-email@correo.com o tu código"
                       className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                     />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Si ya completaste la inscripción de tu hijo/a previamente, podés ingresar directamente ingresando tu número o correo. Luego necesitarás tu código de curso para ver las fotos.
+                    Si ya completaste la inscripción de tu hijo/a previamente, podés ingresar directamente con tu número, correo o código de acceso.
                   </p>
 
                   <button
                     type="submit"
-                    className="w-full py-3 px-6 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    disabled={verificandoLogin}
+                    className="w-full py-3 px-6 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white font-bold text-xs rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <LogIn className="w-4 h-4" />
-                    <span>Ingresar y solicitar código</span>
+                    {verificandoLogin ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <LogIn className="w-4 h-4" />
+                        <span>Ingresar</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </form>
@@ -1161,7 +1037,7 @@ export default function ModalInscripcionFamilia({
                   <div
                     onClick={() => {
                       setFamiliaCreada(miFamiliaActiva);
-                      setPaso('solicitar_codigo');
+                      setPaso('resultado');
                     }}
                     className="p-3.5 bg-amber-50/50 hover:bg-amber-100/60 border border-amber-200 hover:border-amber-300 rounded-xl transition-all flex items-center justify-between gap-3 cursor-pointer group shadow-xs"
                   >
