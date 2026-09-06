@@ -54,7 +54,6 @@ import {
   guardarFamiliaActiva
 } from '../services/inscripcionesService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
-import WatermarkOverlay from './WatermarkOverlay';
 import { Colegio, KitProducto, Foto } from '../types';
 
 interface PortalFamiliasModalProps {
@@ -108,7 +107,6 @@ export default function PortalFamiliasModal({
 
   // Step 2: Gallery
   const [categoriaActiva, setCategoriaActiva] = useState<'individual' | 'grupal' | 'docente' | 'patio'>('individual');
-  const [showWatermark, setShowWatermark] = useState(true);
   const [fotoSeleccionadaIndividual, setFotoSeleccionadaIndividual] = useState<string>('foto-ind-1');
   const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('foto-grup-1');
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('foto-doc-1');
@@ -2376,9 +2374,9 @@ export default function PortalFamiliasModal({
                 draggable={false}
                 className="w-full h-full object-contain pointer-events-none select-none"
               />
-
-              {/* En la vista ampliada la marca de agua es más chica y liviana (30% opacidad) */}
-              <WatermarkOverlay visible={showWatermark} opacity={0.3} compact />
+              {/* Sin overlay de React acá: esta imagen ya trae la marca de agua quemada en
+                  los píxeles desde que se subió — agregar otra capa encima solo duplicaba
+                  el texto y se veía recargado. */}
             </div>
 
             <div className="p-3 flex items-center justify-between gap-3">
