@@ -4,7 +4,7 @@ import {
   Trash2, RefreshCw, ShieldCheck, Check,
   AlertCircle, Database, Copy, HardDrive, Key,
   Sliders, Image as ImageIcon, Sparkles, User,
-  X, CheckSquare, Square
+  X, CheckSquare, Square, Wand2
 } from 'lucide-react';
 import { useColegiosLista } from '../services/colegiosService';
 import { SECCIONES_INICIAL_2026, ALUMNOS_NOMINA_2026 } from '../data/alumnosData';
@@ -24,6 +24,7 @@ import {
   obtenerFotosActivasAdmin,
   eliminarFotoActivaAdmin,
   limpiarTodasLasFotosAdmin,
+  regenerarMiniaturasAdmin,
   FotoRegistrada
 } from '../services/fotosSubidasService';
 
@@ -63,6 +64,10 @@ export default function AdminLoteFotosTab() {
   const [modoSeleccionActivas, setModoSeleccionActivas] = useState(false);
   const [idsSeleccionados, setIdsSeleccionados] = useState<Set<string>>(new Set());
   const [borrandoSeleccionadas, setBorrandoSeleccionadas] = useState(false);
+
+  // Migración de miniaturas limpias para fotos subidas antes de este cambio
+  const [regenerandoMiniaturas, setRegenerandoMiniaturas] = useState(false);
+  const [progresoMiniaturas, setProgresoMiniaturas] = useState<{ procesadas: number; fallidas: number; restantes: number } | null>(null);
 
   // Supabase Diagnostics & Settings
   const [diagnostico, setDiagnostico] = useState<SupabaseDiagnosticResult | null>(null);
@@ -381,6 +386,45 @@ export default function AdminLoteFotosTab() {
     }
   };
 
+  // Migración: fotos que ya estaban subidas antes de separar la miniatura limpia de la
+  // versión con marca de agua. Genera la miniatura faltante a partir del original guardado,
+  // sin tener que volver a subir nada. Se llama al endpoint en bucle porque el servidor
+  // procesa de a un lote chico por vez (para no exceder el tiempo de una función serverless).
+  const handleRegenerarMiniaturas = async () => {
+    const confirmar = window.confirm(
+      'Esto va a generar la miniatura limpia (sin marca de agua) para todas las fotos que ya subiste antes de este cambio — incluidas las de prueba duplicadas. Puede tardar unos minutos. ¿Continuar?'
+    );
+    if (!confirmar) return;
+
+    setRegenerandoMiniaturas(true);
+    setErrorMessage(null);
+    let totalProcesadas = 0;
+    let totalFallidas = 0;
+    let restantes = 1;
+
+    try {
+      while (restantes > 0) {
+        const resultado = await regenerarMiniaturasAdmin(12);
+        if (!resultado.success) {
+          setErrorMessage(resultado.error || 'No se pudieron regenerar las miniaturas.');
+          break;
+        }
+        totalProcesadas += resultado.procesadas || 0;
+        totalFallidas += resultado.fallidas || 0;
+        restantes = resultado.restantes || 0;
+        setProgresoMiniaturas({ procesadas: totalProcesadas, fallidas: totalFallidas, restantes });
+      }
+      setStatusMessage(
+        `¡Listo! Se regeneraron ${totalProcesadas} miniatura(s) limpia(s)${totalFallidas > 0 ? `, ${totalFallidas} fallaron` : ''}.`
+      );
+      setTimeout(() => setStatusMessage(null), 8000);
+      await recargarFotosActivas();
+    } finally {
+      setRegenerandoMiniaturas(false);
+      setProgresoMiniaturas(null);
+    }
+  };
+
   const handleEliminarFotoActiva = async (foto: FotoRegistrada) => {
     const confirmar = window.confirm('¿Deseás eliminar esta foto de Supabase y del catálogo del curso?');
     if (!confirmar) return;
@@ -589,6 +633,19 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
             >
               <Sliders className="w-3.5 h-3.5 text-slate-300" />
               <span>Ajustes</span>
+            </button>
+            <button
+              onClick={handleRegenerarMiniaturas}
+              disabled={regenerandoMiniaturas}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              title="Generar la miniatura limpia (sin marca de agua) para fotos subidas antes de este cambio"
+            >
+              <Wand2 className={`w-3.5 h-3.5 text-amber-400 ${regenerandoMiniaturas ? 'animate-pulse' : ''}`} />
+              <span>
+                {regenerandoMiniaturas
+                  ? `Regenerando miniaturas... (${progresoMiniaturas?.procesadas || 0} listas, ${progresoMiniaturas?.restantes ?? '…'} restantes)`
+                  : 'Regenerar Miniaturas'}
+              </span>
             </button>
             <button
               onClick={handleLimpiarSupabaseCompleto}
