@@ -303,6 +303,365 @@ app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
 });
 
 // ==============================================================================
+// 4B. INSCRIPCIONES: VALIDACIÓN AUTOMÁTICA CONTRA PADRÓN Y GESTIÓN ADMIN
+// ==============================================================================
+
+// Determina el código de curso sugerido según sala/turno/división (mismo criterio usado en el frontend)
+function determinarCodigoCursoServidor(grado: string, turno: string, division: string): string {
+  const g = (grado || '').toLowerCase();
+  const t = (turno || '').toLowerCase();
+  const d = (division || '').toLowerCase();
+
+  if (g.includes('3')) {
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA3JE';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA3TT';
+    return 'SALA3TM';
+  }
+  if (g.includes('4')) {
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA4JE';
+    if (d.includes('c')) return 'SALA4C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA4TT';
+    return 'SALA4A';
+  }
+  if (g.includes('5')) {
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA5JE';
+    if (d.includes('c')) return 'SALA5C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA5B';
+    return 'SALA5A';
+  }
+  return 'SALA3TM';
+}
+
+function normalizarTelefonoServidor(tel: string): string {
+  return (tel || '').replace(/\D/g, '');
+}
+
+// Inscripción pública: valida contra el padrón autorizado del colegio y asigna código al instante si coincide.
+// Todo el acceso a `padres_autorizados` e `inscripciones` pasa exclusivamente por acá, del lado del servidor
+// (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
+app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
+  try {
+    const {
+      colegioId,
+      colegioNombre,
+      padreNombre,
+      telefonoWhatsApp,
+      email,
+      alumnoNombre,
+      alumnoApellido,
+      grado,
+      division,
+      turno,
+      solicitaFotoHermanos,
+      hermanos
+    } = req.body || {};
+
+    if (!padreNombre || !alumnoNombre || !colegioId || !telefonoWhatsApp || !email) {
+      return res.status(400).json({ success: false, error: 'Faltan datos obligatorios para la inscripción' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const telDigits = normalizarTelefonoServidor(telefonoWhatsApp);
+    const telUltimos = telDigits.length >= 8 ? telDigits.slice(-8) : telDigits;
+    const cleanEmail = String(email || '').trim().toLowerCase();
+
+    let matchPadre: any = null;
+    try {
+      const { data: candidatos, error: errAuth } = await supabase
+        .from('padres_autorizados')
+        .select('*')
+        .eq('colegio_id', colegioId)
+        .eq('usado', false);
+
+      if (!errAuth && Array.isArray(candidatos)) {
+        matchPadre = candidatos.find((p: any) => {
+          if (cleanEmail && p.email && String(p.email).trim().toLowerCase() === cleanEmail) return true;
+          if (telDigits) {
+            const pTel = normalizarTelefonoServidor(p.telefono || '');
+            if (pTel && (pTel === telDigits || (telUltimos.length >= 8 && pTel.endsWith(telUltimos)))) return true;
+          }
+          return false;
+        }) || null;
+      }
+    } catch (e) {
+      console.warn('Advertencia al consultar padres_autorizados:', e);
+    }
+
+    const now = new Date();
+    const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    let estado: 'aceptado' | 'pendiente' = 'pendiente';
+    let codigoAcceso: string | null = null;
+
+    if (matchPadre) {
+      estado = 'aceptado';
+      codigoAcceso = String(
+        matchPadre.codigo_asignado || determinarCodigoCursoServidor(grado, turno, division)
+      ).trim().toUpperCase();
+    }
+
+    const inscripcionRow: Record<string, any> = {
+      padre_nombre: String(padreNombre).trim(),
+      telefono_whatsapp: String(telefonoWhatsApp).trim(),
+      email: cleanEmail,
+      alumno_nombre: String(alumnoNombre).trim(),
+      alumno_apellido: String(alumnoApellido || '').trim(),
+      turno: String(turno || 'Mañana').trim(),
+      grado: String(grado || 'Sala 3 años').trim(),
+      division: String(division || 'A').trim(),
+      colegio_id: colegioId,
+      colegio_nombre: String(colegioNombre || 'Colegio').trim(),
+      estado,
+      codigo_asignado: codigoAcceso,
+      codigo_familiar: codigoAcceso,
+      solicita_foto_hermanos: Boolean(solicitaFotoHermanos || (hermanos && hermanos.length > 0)),
+      hermanos: hermanos || [],
+      fecha_inscripcion: fechaStr,
+      fecha_aprobacion: estado === 'aceptado' ? fechaStr : null,
+      notificacion_whatsapp_enviada: false,
+      notificacion_email_enviada: false,
+    };
+
+    const { data: inserted, error: errInsert } = await supabase
+      .from('inscripciones')
+      .insert(inscripcionRow)
+      .select()
+      .single();
+
+    if (errInsert) throw errInsert;
+
+    if (matchPadre && matchPadre.id) {
+      await supabase
+        .from('padres_autorizados')
+        .update({ usado: true, updated_at: new Date().toISOString() })
+        .eq('id', matchPadre.id);
+    }
+
+    return res.json({
+      success: true,
+      estado,
+      codigoAcceso,
+      inscripcion: inserted,
+    });
+  } catch (err: any) {
+    console.error('Error al validar inscripción:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error interno al procesar inscripción' });
+  }
+});
+
+// Recuperar mi inscripción por teléfono, email o código (público). Devuelve como máximo UN registro
+// propio — nunca la tabla completa — y usa siempre comparaciones exactas/parametrizadas (nada de
+// interpolar el texto del usuario en un filtro .or() crudo, que sería explotable).
+app.post('/api/inscripciones/buscar', async (req: Request, res: Response) => {
+  try {
+    const { query } = req.body || {};
+    const q = String(query || '').trim();
+    if (q.length < 3) {
+      return res.status(400).json({ success: false, error: 'Ingresá tu código, teléfono o email.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const qUpper = q.toUpperCase();
+    const qEmail = q.toLowerCase();
+    const qTel = normalizarTelefonoServidor(q);
+
+    let encontrada: any = null;
+
+    const tryEq = async (column: string, value: string) => {
+      if (encontrada || !value) return;
+      const { data } = await supabase.from('inscripciones').select('*').eq(column, value).limit(1);
+      if (data && data.length > 0) encontrada = data[0];
+    };
+
+    await tryEq('codigo_asignado', qUpper);
+    await tryEq('codigo_familiar', qUpper);
+    await tryEq('email', qEmail);
+
+    if (!encontrada && qTel.length >= 6) {
+      const { data } = await supabase.from('inscripciones').select('*').ilike('telefono_whatsapp', `%${qTel}%`).limit(1);
+      if (data && data.length > 0) encontrada = data[0];
+    }
+
+    if (!encontrada) {
+      return res.json({ success: false });
+    }
+
+    return res.json({ success: true, inscripcion: encontrada });
+  } catch (err: any) {
+    console.error('Error al buscar inscripción:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al buscar la inscripción' });
+  }
+});
+
+// --- Rutas de administración de inscripciones y padrón (protegidas con requireAdminAuth) ---
+
+app.get('/api/admin/inscripciones', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase.from('inscripciones').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return res.json({ success: true, inscripciones: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener inscripciones' });
+  }
+});
+
+app.post('/api/admin/inscripciones/:id/aprobar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { codigo } = req.body || {};
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const { data: existente, error: errGet } = await supabase.from('inscripciones').select('*').eq('id', id).single();
+    if (errGet || !existente) {
+      return res.status(404).json({ success: false, error: 'Inscripción no encontrada' });
+    }
+
+    const codigoFinal = String(
+      codigo || existente.codigo_asignado || determinarCodigoCursoServidor(existente.grado, existente.turno, existente.division)
+    ).trim().toUpperCase();
+
+    const now = new Date();
+    const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    const { data, error } = await supabase
+      .from('inscripciones')
+      .update({
+        estado: 'aceptado',
+        codigo_asignado: codigoFinal,
+        codigo_familiar: codigoFinal,
+        fecha_aprobacion: fechaStr,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return res.json({ success: true, inscripcion: data, codigo: codigoFinal });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al aprobar inscripción' });
+  }
+});
+
+app.post('/api/admin/inscripciones/:id/rechazar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase
+      .from('inscripciones')
+      .update({ estado: 'rechazado', updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) throw error;
+    return res.json({ success: true, inscripcion: data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al rechazar inscripción' });
+  }
+});
+
+app.get('/api/admin/padron', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const colegioId = req.query.colegioId as string | undefined;
+    let builder = supabase.from('padres_autorizados').select('*').order('created_at', { ascending: false });
+    if (colegioId) {
+      builder = builder.eq('colegio_id', colegioId);
+    }
+    const { data, error } = await builder;
+    if (error) throw error;
+    return res.json({ success: true, padron: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener el padrón' });
+  }
+});
+
+// Importar filas del padrón (ya parseadas desde el Excel/CSV en el navegador con la librería xlsx)
+app.post('/api/admin/padron/importar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { filas, colegioId } = req.body || {};
+    if (!Array.isArray(filas) || filas.length === 0) {
+      return res.status(400).json({ success: false, error: 'No se recibieron filas para importar' });
+    }
+    if (filas.length > 2000) {
+      return res.status(400).json({ success: false, error: 'Demasiadas filas en un solo lote (máximo 2000)' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const filasNormalizadas = filas
+      .map((f: any) => ({
+        colegio_id: f.colegioId || f.colegio_id || colegioId,
+        nombre: String(f.nombre || '').trim(),
+        telefono: f.telefono ? String(f.telefono).trim() : null,
+        email: f.email ? String(f.email).trim().toLowerCase() : null,
+        alumno_nombre: f.alumnoNombre || f.alumno_nombre || null,
+        grado: f.grado || null,
+        division: f.division || null,
+        turno: f.turno || null,
+        codigo_asignado: String(f.codigoAsignado || f.codigo_asignado || '').trim().toUpperCase() || null,
+      }))
+      .filter((f: any) => f.colegio_id && f.nombre && (f.telefono || f.email));
+
+    if (filasNormalizadas.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ninguna fila tiene los datos mínimos (colegio, nombre y teléfono o email)' });
+    }
+
+    const { data, error } = await supabase.from('padres_autorizados').insert(filasNormalizadas).select();
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      importados: data?.length || 0,
+      descartados: filas.length - filasNormalizadas.length,
+    });
+  } catch (err: any) {
+    console.error('Error al importar padrón:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al importar el padrón' });
+  }
+});
+
+app.delete('/api/admin/padron/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { error } = await supabase.from('padres_autorizados').delete().eq('id', id);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar del padrón' });
+  }
+});
+
+// ==============================================================================
 // 5. HELPER PARA ENVÍO DE EMAIL CON RESEND
 // ==============================================================================
 interface DatosCorreoFotosHD {
