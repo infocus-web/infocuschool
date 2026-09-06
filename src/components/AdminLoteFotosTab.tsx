@@ -65,6 +65,9 @@ export default function AdminLoteFotosTab() {
   const [modoSeleccionActivas, setModoSeleccionActivas] = useState(false);
   const [idsSeleccionados, setIdsSeleccionados] = useState<Set<string>>(new Set());
   const [borrandoSeleccionadas, setBorrandoSeleccionadas] = useState(false);
+  // Filtro por categoría en "Fotos Activas": permite ver/seleccionar/borrar sólo una
+  // categoría puntual (por ejemplo, sólo "Grupal") sin tocar el resto del curso.
+  const [filtroCategoriaActivas, setFiltroCategoriaActivas] = useState<'todas' | 'individual' | 'grupal' | 'docente'>('todas');
 
   // Migración de miniaturas limpias para fotos subidas antes de este cambio
   const [regenerandoMiniaturas, setRegenerandoMiniaturas] = useState(false);
@@ -108,6 +111,10 @@ export default function AdminLoteFotosTab() {
 
   useEffect(() => {
     recargarFotosActivas();
+    // Al cambiar de curso, no arrastrar selección ni filtro del curso anterior.
+    setFiltroCategoriaActivas('todas');
+    setModoSeleccionActivas(false);
+    setIdsSeleccionados(new Set());
   }, [cursoSeleccionado, colegioSeleccionado]);
 
   // Ejecutar diagnóstico automático al iniciar
@@ -493,6 +500,23 @@ export default function AdminLoteFotosTab() {
     setIdsSeleccionados(new Set());
   };
 
+  // Conteo de fotos activas por categoría (para las pestañas de filtro) y la lista ya
+  // filtrada según la categoría elegida — "todas" muestra el curso completo, como antes.
+  const conteoActivasPorCategoria = useMemo(() => {
+    const conteo = { individual: 0, grupal: 0, docente: 0 };
+    for (const f of fotosActivasCurso) {
+      if (f.categoria === 'individual') conteo.individual++;
+      else if (f.categoria === 'grupal') conteo.grupal++;
+      else if (f.categoria === 'docente') conteo.docente++;
+    }
+    return conteo;
+  }, [fotosActivasCurso]);
+
+  const fotosActivasFiltradas = useMemo(() => {
+    if (filtroCategoriaActivas === 'todas') return fotosActivasCurso;
+    return fotosActivasCurso.filter(f => f.categoria === filtroCategoriaActivas);
+  }, [fotosActivasCurso, filtroCategoriaActivas]);
+
   const handleToggleSeleccionFoto = (id: string) => {
     setIdsSeleccionados(prev => {
       const next = new Set(prev);
@@ -503,7 +527,9 @@ export default function AdminLoteFotosTab() {
   };
 
   const handleSeleccionarTodasActivas = () => {
-    setIdsSeleccionados(new Set(fotosActivasCurso.map(f => f.id)));
+    // Respeta el filtro de categoría activo: si estás viendo sólo "Grupal", selecciona
+    // sólo esas — no todo el curso.
+    setIdsSeleccionados(new Set(fotosActivasFiltradas.map(f => f.id)));
   };
 
   const handleEliminarSeleccionadas = async () => {
@@ -1138,6 +1164,33 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
           </div>
         </div>
 
+        {fotosActivasCurso.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            {([
+              { id: 'todas' as const, label: 'Todas', cantidad: fotosActivasCurso.length },
+              { id: 'individual' as const, label: 'Individual', cantidad: conteoActivasPorCategoria.individual },
+              { id: 'grupal' as const, label: 'Grupal', cantidad: conteoActivasPorCategoria.grupal },
+              { id: 'docente' as const, label: 'Docente', cantidad: conteoActivasPorCategoria.docente },
+            ]).map(op => (
+              <button
+                key={op.id}
+                type="button"
+                onClick={() => {
+                  setFiltroCategoriaActivas(op.id);
+                  setIdsSeleccionados(new Set());
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                  filtroCategoriaActivas === op.id
+                    ? 'bg-amber-400 text-slate-950'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {op.label} ({op.cantidad})
+              </button>
+            ))}
+          </div>
+        )}
+
         {modoSeleccionActivas && (
           <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
             <span className="text-xs font-bold text-amber-900">
@@ -1148,7 +1201,7 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
               onClick={handleSeleccionarTodasActivas}
               className="px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-lg transition-colors cursor-pointer"
             >
-              Seleccionar todas ({fotosActivasCurso.length})
+              Seleccionar todas las {filtroCategoriaActivas === 'todas' ? '' : `de "${filtroCategoriaActivas}"`} ({fotosActivasFiltradas.length})
             </button>
             <button
               type="button"
@@ -1178,9 +1231,18 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
               El almacenamiento está limpio y listo. Arrastrá las fotos del curso arriba para comenzar la carga a Supabase Pro.
             </p>
           </div>
+        ) : fotosActivasFiltradas.length === 0 ? (
+          <div className="p-8 rounded-2xl bg-slate-50 border border-dashed border-slate-300 text-center space-y-2">
+            <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center mx-auto">
+              <Camera className="w-5 h-5" />
+            </div>
+            <p className="text-sm font-bold text-slate-700">
+              No hay fotos "{filtroCategoriaActivas}" en {seccionActual.nombreCompleto}
+            </p>
+          </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {fotosActivasCurso.map((foto) => {
+            {fotosActivasFiltradas.map((foto) => {
               const seleccionada = idsSeleccionados.has(foto.id);
               return (
               <div
