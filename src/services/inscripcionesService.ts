@@ -1,3 +1,5 @@
+import { fetchAdminAutenticado } from './adminAuthService';
+
 export type EstadoInscripcion = 'pendiente' | 'aceptado' | 'rechazado';
 
 export interface AlumnoHermano {
@@ -26,8 +28,8 @@ export interface InscripcionFamilia {
   colegioNombre: string;
   fechaInscripcion: string;
   estado: EstadoInscripcion;
-  codigoAsignado?: string;   // Código de curso asignado o código de acceso
-  codigoFamiliar: string;    // Código Familiar único para todos los hermanos (ej: FAM-4821)
+  codigoAsignado?: string;   // Código de acceso único asignado (curso o padrón)
+  codigoFamiliar: string;    // Alias del código de acceso (compatibilidad con vistas existentes)
   solicitaFotoHermanos?: boolean; // Si los padres desean toma conjunta de hermanos
   hermanos?: AlumnoHermano[]; // Lista de hermanos adicionales
   fechaAprobacion?: string;
@@ -35,24 +37,27 @@ export interface InscripcionFamilia {
   notificacionEmailEnviada?: boolean;
 }
 
-const STORAGE_KEY_INSCRIPCIONES = 'infocus_familias_inscriptas_v1';
-const STORAGE_KEY_ACTIVO = 'infocus_familia_activa_v1';
-
-export function generarCodigoFamiliarUnico(existentes: InscripcionFamilia[] = []): string {
-  const usados = new Set(existentes.map((f) => (f.codigoFamiliar || '').toUpperCase()));
-  let codigo = '';
-  do {
-    const num = Math.floor(1000 + Math.random() * 9000);
-    codigo = `FAM-${num}`;
-  } while (usados.has(codigo));
-  return codigo;
+/** Fila del padrón de padres autorizados (cargado por el colegio vía Excel/CSV) */
+export interface FilaPadron {
+  id: string;
+  colegioId: string;
+  nombre: string;
+  telefono?: string | null;
+  email?: string | null;
+  alumnoNombre?: string | null;
+  grado?: string | null;
+  division?: string | null;
+  turno?: string | null;
+  codigoAsignado?: string | null;
+  usado: boolean;
+  createdAt?: string;
 }
 
-// Registro inicial de inscripciones (vacío por defecto para que las familias no vean datos ficticios)
-const INSCRIPCIONES_INICIALES: InscripcionFamilia[] = [];
+const STORAGE_KEY_ACTIVO = 'infocus_familia_activa_v1';
 
 /**
  * Determines the recommended course code based on the student's sala, turno, and division.
+ * Se usa solo como referencia visual (el servidor calcula el código real de forma independiente).
  */
 export function determinarCodigoParaInscripcion(datos: { grado: string; turno: string; division: string }): string {
   const g = datos.grado.toLowerCase();
@@ -80,155 +85,244 @@ export function determinarCodigoParaInscripcion(datos: { grado: string; turno: s
   return 'SALA3TM';
 }
 
-export function obtenerInscripciones(): InscripcionFamilia[] {
-  if (typeof window === 'undefined') return [];
+/** Convierte una fila snake_case de Supabase (tabla `inscripciones`) al tipo usado en el frontend */
+function mapearFilaSupabaseAInscripcion(row: any): InscripcionFamilia {
+  return {
+    id: row.id,
+    padreNombre: row.padre_nombre || '',
+    telefonoWhatsApp: row.telefono_whatsapp || '',
+    email: row.email || '',
+    alumnoNombre: row.alumno_nombre || '',
+    alumnoApellido: row.alumno_apellido || '',
+    turno: row.turno || '',
+    grado: row.grado || '',
+    division: row.division || '',
+    colegioId: row.colegio_id || '',
+    colegioNombre: row.colegio_nombre || '',
+    fechaInscripcion: row.fecha_inscripcion || '',
+    estado: (row.estado as EstadoInscripcion) || 'pendiente',
+    codigoAsignado: row.codigo_asignado || undefined,
+    codigoFamiliar: row.codigo_familiar || row.codigo_asignado || '',
+    solicitaFotoHermanos: Boolean(row.solicita_foto_hermanos),
+    hermanos: row.hermanos || [],
+    fechaAprobacion: row.fecha_aprobacion || undefined,
+    notificacionWhatsAppEnviada: Boolean(row.notificacion_whatsapp_enviada),
+    notificacionEmailEnviada: Boolean(row.notificacion_email_enviada)
+  };
+}
+
+/** Convierte una fila snake_case de Supabase (tabla `padres_autorizados`) al tipo usado en el frontend */
+function mapearFilaPadron(row: any): FilaPadron {
+  return {
+    id: row.id,
+    colegioId: row.colegio_id,
+    nombre: row.nombre,
+    telefono: row.telefono ?? null,
+    email: row.email ?? null,
+    alumnoNombre: row.alumno_nombre ?? null,
+    grado: row.grado ?? null,
+    division: row.division ?? null,
+    turno: row.turno ?? null,
+    codigoAsignado: row.codigo_asignado ?? null,
+    usado: Boolean(row.usado),
+    createdAt: row.created_at
+  };
+}
+
+/**
+ * Envía la inscripción al servidor. El servidor valida contra el padrón de padres autorizados
+ * (cargado por el colegio) y sólo genera un código de acceso automático si el teléfono o el
+ * email coinciden con un padre autorizado; en caso contrario, la inscripción queda "pendiente"
+ * para revisión manual del fotógrafo.
+ */
+export interface ResultadoValidarInscripcion {
+  success: boolean;
+  estado?: EstadoInscripcion;
+  codigoAcceso?: string | null;
+  inscripcion?: InscripcionFamilia;
+  error?: string;
+}
+
+export async function validarEInscribirFamilia(datos: {
+  colegioId: string;
+  colegioNombre: string;
+  padreNombre: string;
+  telefonoWhatsApp: string;
+  email: string;
+  alumnoNombre: string;
+  alumnoApellido: string;
+  grado: string;
+  division: string;
+  turno: string;
+  solicitaFotoHermanos?: boolean;
+  hermanos?: AlumnoHermano[];
+}): Promise<ResultadoValidarInscripcion> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_INSCRIPCIONES);
-    if (!raw) {
-      return [];
+    const res = await fetch('/api/inscripciones/validar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(datos)
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No pudimos registrar la inscripción. Intentá nuevamente.' };
     }
-    const parsed: InscripcionFamilia[] = JSON.parse(raw);
-    // Remove sample/mock registrations (Benjamín Gómez, Mateo Benítez, Sofía Rossi)
-    const cleaned = parsed.filter(
-      (item) =>
-        !['INS-2026-001', 'INS-2026-002', 'INS-2026-003'].includes(item.id) &&
-        !['Benjamín Gómez', 'Mateo Benítez', 'Sofía Rossi'].includes(
-          `${item.alumnoNombre} ${item.alumnoApellido}`.trim()
-        )
-    );
-    if (cleaned.length !== parsed.length) {
-      localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(cleaned));
-    }
-    return cleaned.map((item, idx) => ({
-      ...item,
-      estado: item.estado || 'pendiente',
-      codigoFamiliar: item.codigoFamiliar || `FAM-${String(1000 + idx).slice(-4)}`,
-      codigoAsignado: item.codigoAsignado || item.codigoFamiliar || determinarCodigoParaInscripcion(item),
-      hermanos: item.hermanos || [],
-      solicitaFotoHermanos: item.solicitaFotoHermanos ?? Boolean(item.hermanos && item.hermanos.length > 0)
-    }));
+    const inscripcion = mapearFilaSupabaseAInscripcion(data.inscripcion);
+    guardarFamiliaActiva(inscripcion);
+    return { success: true, estado: data.estado, codigoAcceso: data.codigoAcceso, inscripcion };
+  } catch (err: any) {
+    console.error('Error al validar/inscribir familia:', err);
+    return { success: false, error: 'Error al conectar con el servidor. Verificá tu conexión e intentá de nuevo.' };
+  }
+}
+
+/**
+ * Busca la inscripción propia por código de acceso, teléfono o email (endpoint público,
+ * sólo devuelve como máximo un registro propio, nunca la tabla completa).
+ */
+export async function buscarMiInscripcion(query: string): Promise<InscripcionFamilia | null> {
+  try {
+    if (!query || query.trim().length < 3) return null;
+    const res = await fetch('/api/inscripciones/buscar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: query.trim() })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success || !data.inscripcion) return null;
+    return mapearFilaSupabaseAInscripcion(data.inscripcion);
   } catch (err) {
-    console.error('Error al leer inscripciones:', err);
+    console.error('Error al buscar inscripción:', err);
+    return null;
+  }
+}
+
+/** Panel admin: lista completa de inscripciones (requiere sesión de administrador) */
+export async function obtenerInscripcionesAdmin(): Promise<InscripcionFamilia[]> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/inscripciones');
+    const data = await res.json();
+    if (!res.ok || !data.success) return [];
+    return (data.inscripciones || []).map(mapearFilaSupabaseAInscripcion);
+  } catch (err) {
+    console.error('Error al obtener inscripciones (admin):', err);
     return [];
   }
 }
 
-export function guardarInscripcion(
-  datos: Omit<InscripcionFamilia, 'id' | 'fechaInscripcion' | 'estado' | 'codigoFamiliar'> & {
-    codigoFamiliar?: string;
-  }
-): InscripcionFamilia {
-  const lista = obtenerInscripciones();
-  const idNuevo = `INS-2026-${String(lista.length + 1).padStart(3, '0')}`;
-  const now = new Date();
-  const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-  const codigoFamiliar = (datos.codigoFamiliar || generarCodigoFamiliarUnico(lista)).trim().toUpperCase();
-  const codigoSugerido = determinarCodigoParaInscripcion(datos);
-
-  const nueva: InscripcionFamilia = {
-    ...datos,
-    id: idNuevo,
-    fechaInscripcion: fechaStr,
-    estado: 'pendiente',
-    codigoFamiliar,
-    codigoAsignado: codigoFamiliar, // El código de acceso principal ahora es el Código Familiar único
-    hermanos: datos.hermanos || [],
-    solicitaFotoHermanos: datos.solicitaFotoHermanos ?? Boolean(datos.hermanos && datos.hermanos.length > 0),
-    notificacionWhatsAppEnviada: false,
-    notificacionEmailEnviada: false
-  };
-
-  const actualizada = [nueva, ...lista];
-  try {
-    localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(actualizada));
-    guardarFamiliaActiva(nueva);
-    window.dispatchEvent(new CustomEvent('infocus_inscripciones_updated', { detail: actualizada }));
-  } catch (err) {
-    console.error('Error al guardar inscripción:', err);
-  }
-
-  return nueva;
+export interface ResultadoAprobarInscripcion {
+  success: boolean;
+  familia?: InscripcionFamilia;
+  codigo?: string;
+  error?: string;
 }
 
-/**
- * Approves a registration from the photographer's panel.
- * Sets estado = 'aceptado', assigns the code, registers timestamps,
- * and generates dispatch metadata for WhatsApp & Email.
- */
-export function aprobarInscripcion(
+/** Panel admin: aprueba una inscripción pendiente y le asigna (o confirma) el código de acceso */
+export async function aprobarInscripcionAdmin(
   id: string,
   codigoPersonalizado?: string
-): { familia: InscripcionFamilia; codigo: string } | null {
-  const lista = obtenerInscripciones();
-  const index = lista.findIndex((item) => item.id === id);
-  if (index === -1) return null;
-
-  const now = new Date();
-  const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-  const item = lista[index];
-  const codigoFinal = (
-    codigoPersonalizado ||
-    item.codigoFamiliar ||
-    item.codigoAsignado ||
-    generarCodigoFamiliarUnico(lista)
-  ).trim().toUpperCase();
-
-  const familiaActualizada: InscripcionFamilia = {
-    ...item,
-    estado: 'aceptado',
-    codigoFamiliar: item.codigoFamiliar || codigoFinal,
-    codigoAsignado: codigoFinal,
-    fechaAprobacion: fechaStr,
-    notificacionWhatsAppEnviada: true,
-    notificacionEmailEnviada: true
-  };
-
-  lista[index] = familiaActualizada;
-
+): Promise<ResultadoAprobarInscripcion> {
   try {
-    localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(lista));
-
-    // Update active family if matches
-    const activa = obtenerFamiliaActiva();
-    if (activa && activa.id === id) {
-      guardarFamiliaActiva(familiaActualizada);
+    const res = await fetchAdminAutenticado(`/api/admin/inscripciones/${encodeURIComponent(id)}/aprobar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo: codigoPersonalizado })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Error al aprobar la inscripción' };
     }
-
-    window.dispatchEvent(new CustomEvent('infocus_inscripciones_updated', { detail: lista }));
-  } catch (err) {
-    console.error('Error al aprobar inscripción:', err);
+    return { success: true, familia: mapearFilaSupabaseAInscripcion(data.inscripcion), codigo: data.codigo };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al aprobar la inscripción' };
   }
-
-  return { familia: familiaActualizada, codigo: codigoFinal };
 }
 
-/**
- * Rejects an inscription if needed.
- */
-export function rechazarInscripcion(id: string): InscripcionFamilia | null {
-  const lista = obtenerInscripciones();
-  const index = lista.findIndex((item) => item.id === id);
-  if (index === -1) return null;
+export interface ResultadoRechazarInscripcion {
+  success: boolean;
+  familia?: InscripcionFamilia;
+  error?: string;
+}
 
-  lista[index] = {
-    ...lista[index],
-    estado: 'rechazado'
-  };
-
+/** Panel admin: rechaza una inscripción */
+export async function rechazarInscripcionAdmin(
+  id: string
+): Promise<ResultadoRechazarInscripcion> {
   try {
-    localStorage.setItem(STORAGE_KEY_INSCRIPCIONES, JSON.stringify(lista));
-    window.dispatchEvent(new CustomEvent('infocus_inscripciones_updated', { detail: lista }));
-  } catch (err) {
-    console.error('Error al rechazar inscripción:', err);
+    const res = await fetchAdminAutenticado(`/api/admin/inscripciones/${encodeURIComponent(id)}/rechazar`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Error al rechazar la inscripción' };
+    }
+    return { success: true, familia: mapearFilaSupabaseAInscripcion(data.inscripcion) };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al rechazar la inscripción' };
   }
+}
 
-  return lista[index];
+/** Panel admin: lista el padrón de padres autorizados, opcionalmente filtrado por colegio */
+export async function obtenerPadronAdmin(colegioId?: string): Promise<FilaPadron[]> {
+  try {
+    const url = colegioId
+      ? `/api/admin/padron?colegioId=${encodeURIComponent(colegioId)}`
+      : '/api/admin/padron';
+    const res = await fetchAdminAutenticado(url);
+    const data = await res.json();
+    if (!res.ok || !data.success) return [];
+    return (data.padron || []).map(mapearFilaPadron);
+  } catch (err) {
+    console.error('Error al obtener el padrón:', err);
+    return [];
+  }
+}
+
+/** Panel admin: importa filas ya parseadas (desde un Excel/CSV leído en el navegador) al padrón */
+export async function importarPadronAdmin(
+  filas: Array<{
+    colegioId: string;
+    nombre: string;
+    telefono?: string;
+    email?: string;
+    alumnoNombre?: string;
+    grado?: string;
+    division?: string;
+    turno?: string;
+    codigoAsignado?: string;
+  }>,
+  colegioId: string
+): Promise<{ success: boolean; importados?: number; descartados?: number; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/padron/importar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filas, colegioId })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Error al importar el padrón' };
+    }
+    return { success: true, importados: data.importados, descartados: data.descartados };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al importar el padrón' };
+  }
+}
+
+/** Panel admin: elimina una fila del padrón */
+export async function eliminarPadronAdmin(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/padron/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al eliminar del padrón' };
+  }
 }
 
 /**
- * Formats official WhatsApp approval text with single family code and siblings
+ * Formats official WhatsApp approval text with the family's single access code and siblings
  */
 export function generarMensajeWhatsAppAprobacion(familia: InscripcionFamilia, codigo: string): string {
   const hijosNombres = [
@@ -242,7 +336,7 @@ export function generarMensajeWhatsAppAprobacion(familia: InscripcionFamilia, co
     ? `\n📸 *Foto de hermanos:* Incluida en la sesión fotográfica.`
     : '';
 
-  return `¡Hola ${familia.padreNombre}! Tu inscripción familiar en el portal de fotos escolares para *${hijosNombres}* (${familia.colegioNombre}) ha sido APROBADA con éxito por el equipo fotográfico.\n\n🔑 Tu *CÓDIGO FAMILIAR ÚNICO* es: *${codigo}*${fotoHermanosNota}\n\nCon este único código podrás ingresar al portal, ver las galerías protegidas de todos tus hijos en un solo lugar y armar tu pedido o combos con un solo pago.\n\nAccedé directamente aquí: https://retratoescolar.com.ar`;
+  return `¡Hola ${familia.padreNombre}! Tu inscripción familiar en el portal de fotos escolares para *${hijosNombres}* (${familia.colegioNombre}) ha sido APROBADA con éxito por el equipo fotográfico.\n\n🔑 Tu *CÓDIGO DE ACCESO* es: *${codigo}*${fotoHermanosNota}\n\nCon este único código podrás ingresar al portal, ver las galerías protegidas de todos tus hijos en un solo lugar y armar tu pedido o combos con un solo pago.\n\nAccedé directamente aquí: https://retratoescolar.com.ar`;
 }
 
 /**
@@ -255,7 +349,7 @@ export function generarEnlaceWhatsAppAprobacion(familia: InscripcionFamilia, cod
 }
 
 /**
- * Prepara el contenido y asunto formal del correo de aprobación con el código familiar asignado
+ * Prepara el contenido y asunto formal del correo de aprobación con el código de acceso asignado
  */
 export function prepararEmailAprobacion(familia: InscripcionFamilia, codigo: string) {
   const now = new Date();
@@ -268,8 +362,8 @@ export function prepararEmailAprobacion(familia: InscripcionFamilia, codigo: str
     )
   ].join('\n');
 
-  const asunto = `Retrato Escolar: Tu Código Familiar Único (${codigo}) - ${familia.colegioNombre}`;
-  const contenido = `Estimado/a ${familia.padreNombre},\n\nLe confirmamos que su registro familiar para el ciclo escolar 2026 en ${familia.colegioNombre} ha sido validado con éxito.\n\nAlumnos vinculados a su cuenta familiar:\n${listaHijos}\n${familia.solicitaFotoHermanos ? '✓ Foto de hermanos juntos: Solicitada y programada\n' : ''}\n=========================================\nSU CÓDIGO FAMILIAR ÚNICO: ${codigo}\n=========================================\n\nCon este único código de familia podrá:\n1. Ingresar a retratoescolar.com.ar\n2. Ver las galerías individuales y grupales de todos sus hijos sin tener que usar códigos diferentes.\n3. Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago.\n\nPara cualquier consulta, nuestro equipo fotográfico está a su entera disposición.\n\nAtentamente,\nEquipo de Fotografía Escolar · Retrato Escolar (retratoescolar.com.ar)`;
+  const asunto = `Retrato Escolar: Tu Código de Acceso (${codigo}) - ${familia.colegioNombre}`;
+  const contenido = `Estimado/a ${familia.padreNombre},\n\nLe confirmamos que su registro familiar para el ciclo escolar 2026 en ${familia.colegioNombre} ha sido validado con éxito.\n\nAlumnos vinculados a su cuenta familiar:\n${listaHijos}\n${familia.solicitaFotoHermanos ? '✓ Foto de hermanos juntos: Solicitada y programada\n' : ''}\n=========================================\nSU CÓDIGO DE ACCESO: ${codigo}\n=========================================\n\nCon este único código podrá:\n1. Ingresar a retratoescolar.com.ar\n2. Ver las galerías individuales y grupales de todos sus hijos sin tener que usar códigos diferentes.\n3. Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago.\n\nPara cualquier consulta, nuestro equipo fotográfico está a su entera disposición.\n\nAtentamente,\nEquipo de Fotografía Escolar · Retrato Escolar (retratoescolar.com.ar)`;
 
   return {
     asunto,
@@ -283,6 +377,7 @@ export function prepararEmailAprobacion(familia: InscripcionFamilia, codigo: str
 // Alias para compatibilidad
 export const simularEnvioEmailAprobacion = prepararEmailAprobacion;
 
+/** Sesión activa de familia en este navegador (caché local, no reemplaza la base de datos) */
 export function obtenerFamiliaActiva(): InscripcionFamilia | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -301,7 +396,8 @@ export function guardarFamiliaActiva(familia: InscripcionFamilia | null): void {
     } else {
       localStorage.removeItem(STORAGE_KEY_ACTIVO);
     }
-    window.dispatchEvent(new CustomEvent('infocus_inscripciones_updated', { detail: familia }));
+    // Notifica a otros componentes en la misma pestaña (ej. Hero) que la sesión de familia activa cambió
+    window.dispatchEvent(new CustomEvent('infocus_familia_activa_actualizada', { detail: familia }));
   } catch (err) {
     console.error('Error al guardar familia activa:', err);
   }
@@ -309,34 +405,4 @@ export function guardarFamiliaActiva(familia: InscripcionFamilia | null): void {
 
 export function cerrarSesionFamilia(): void {
   guardarFamiliaActiva(null);
-}
-
-export function buscarFamiliaPorCodigoOFamilia(query: string): InscripcionFamilia | undefined {
-  if (!query || query.trim().length < 2) return undefined;
-  const q = query.trim().toUpperCase();
-  const qClean = q.replace(/[\s-+()]/g, '');
-  const lista = obtenerInscripciones();
-
-  return lista.find((item) => {
-    // 1. Coincidencia exacta con Código Familiar (ej: FAM-4821)
-    if (item.codigoFamiliar && item.codigoFamiliar.toUpperCase() === q) return true;
-    // 2. Coincidencia con código asignado anterior
-    if (item.codigoAsignado && item.codigoAsignado.toUpperCase() === q) return true;
-    // 3. Email
-    if (item.email.trim().toLowerCase() === query.trim().toLowerCase()) return true;
-    // 4. Celular limpio
-    const telClean = item.telefonoWhatsApp.replace(/[\s-+()]/g, '');
-    if (telClean && (telClean.includes(qClean) || qClean.includes(telClean)) && qClean.length >= 6) return true;
-    // 5. Nombre de alumno principal o hermanos
-    const nombreCompleto = `${item.alumnoNombre} ${item.alumnoApellido}`.toUpperCase();
-    if (nombreCompleto.includes(q)) return true;
-    if (item.hermanos && item.hermanos.some((h) => `${h.alumnoNombre} ${h.alumnoApellido}`.toUpperCase().includes(q))) {
-      return true;
-    }
-    return false;
-  });
-}
-
-export function buscarFamiliaPorContacto(query: string): InscripcionFamilia | undefined {
-  return buscarFamiliaPorCodigoOFamilia(query);
 }
