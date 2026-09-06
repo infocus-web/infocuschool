@@ -411,6 +411,115 @@ app.post('/api/admin/fotos/regenerar-miniaturas', requireAdminAuth, async (req: 
   }
 });
 
+// Genera un SVG con el texto de la marca de agua repetido en diagonal, más espaciado y
+// liviano que la versión anterior, para componerlo sobre la foto con sharp.
+function generarSvgMarcaDeAgua(ancho: number, alto: number): string {
+  const texto = 'MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR';
+  const fontSize = Math.max(14, Math.round(ancho * 0.032));
+  const stepX = ancho * 0.75;
+  const stepY = alto * 0.38;
+  const anchoVirtual = ancho * 2;
+  const altoVirtual = alto * 2;
+  const textos: string[] = [];
+  for (let y = -altoVirtual / 2; y < altoVirtual / 2; y += stepY) {
+    for (let x = -anchoVirtual / 2; x < anchoVirtual / 2; x += stepX) {
+      textos.push(
+        `<text x="${x}" y="${y}" font-family="sans-serif" font-weight="bold" font-size="${fontSize}" fill="white" fill-opacity="0.45" stroke="black" stroke-opacity="0.35" stroke-width="1" text-anchor="middle">${texto}</text>`
+      );
+    }
+  }
+  return `<svg width="${ancho}" height="${alto}" xmlns="http://www.w3.org/2000/svg">
+    <g transform="translate(${ancho / 2}, ${alto / 2}) rotate(-25)">
+      ${textos.join('\n')}
+    </g>
+  </svg>`;
+}
+
+// Migración: re-genera la copia "ampliada" (con marca de agua quemada en los píxeles) de
+// fotos que ya estaban subidas, usando la nueva marca más liviana y espaciada — a partir
+// del original guardado, sin que el fotógrafo tenga que volver a subir nada. Se procesa de
+// a un lote chico por llamada, igual que la migración de miniaturas.
+app.post('/api/admin/fotos/regenerar-marca-agua', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const limite = Math.min(Math.max(parseInt(String(req.body?.limite || '8'), 10) || 8, 1), 20);
+    const offset = Math.max(parseInt(String(req.body?.offset || '0'), 10) || 0, 0);
+
+    const { data: todas, error: errorSelect } = await supabase
+      .from('fotos')
+      .select('id, storage_path')
+      .order('created_at', { ascending: true });
+    if (errorSelect) throw errorSelect;
+
+    const universo = todas || [];
+    const lote = universo.slice(offset, offset + limite);
+
+    let procesadas = 0;
+    let fallidas = 0;
+
+    for (const fila of lote) {
+      try {
+        const { data: archivo, error: errorDescarga } = await supabase.storage
+          .from('fotos-hd')
+          .download(fila.storage_path);
+        if (errorDescarga || !archivo) throw errorDescarga || new Error('No se pudo descargar el original');
+
+        const buffer = Buffer.from(await archivo.arrayBuffer());
+        const MAX_DIMENSION = 1600;
+        const metadata = await sharp(buffer).metadata();
+        let anchoDestino = metadata.width || MAX_DIMENSION;
+        let altoDestino = metadata.height || Math.round(MAX_DIMENSION * 0.75);
+        if (anchoDestino > MAX_DIMENSION || altoDestino > MAX_DIMENSION) {
+          const escala = MAX_DIMENSION / Math.max(anchoDestino, altoDestino);
+          anchoDestino = Math.round(anchoDestino * escala);
+          altoDestino = Math.round(altoDestino * escala);
+        }
+
+        const baseResized = await sharp(buffer).resize(anchoDestino, altoDestino, { fit: 'fill' }).toBuffer();
+        const svgMarcaAgua = await sharp(Buffer.from(generarSvgMarcaDeAgua(anchoDestino, altoDestino))).png().toBuffer();
+
+        const ampliadaBuffer = await sharp(baseResized)
+          .composite([{ input: svgMarcaAgua }])
+          .jpeg({ quality: 85 })
+          .toBuffer();
+
+        const nombreArchivo = fila.storage_path.split('/').pop() || `${fila.id}.jpg`;
+        const nombreBase = nombreArchivo.replace(/\.[^./]+$/, '');
+        const carpeta = fila.storage_path.replace(/\/originales\/[^/]+$/, '/muestras-v2');
+        const pathAmpliada = `${carpeta}/${nombreBase}.jpg`;
+
+        const { error: errorSubida } = await supabase.storage
+          .from('fotos-web')
+          .upload(pathAmpliada, ampliadaBuffer, { contentType: 'image/jpeg', upsert: true });
+        if (errorSubida) throw errorSubida;
+
+        const { data: urlData } = supabase.storage.from('fotos-web').getPublicUrl(pathAmpliada);
+
+        const { error: errorUpdate } = await supabase
+          .from('fotos')
+          .update({ preview_path: urlData.publicUrl })
+          .eq('id', fila.id);
+        if (errorUpdate) throw errorUpdate;
+
+        procesadas++;
+      } catch (errFila) {
+        console.error(`Error al regenerar marca de agua de la foto ${fila.id}:`, errFila);
+        fallidas++;
+      }
+    }
+
+    const restantes = Math.max(universo.length - (offset + lote.length), 0);
+    return res.json({ success: true, procesadas, fallidas, restantes, siguienteOffset: offset + lote.length });
+  } catch (err: any) {
+    console.error('Error al regenerar marca de agua:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al regenerar la marca de agua' });
+  }
+});
+
 // Panel admin: lista las fotos activas de un curso puntual (grado+turno+división), para revisar o borrar
 app.get('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response) => {
   try {
