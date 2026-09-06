@@ -19,11 +19,11 @@ import {
   resetSupabaseConfig
 } from '../services/supabaseClient';
 import {
-  guardarFotoSubida,
-  obtenerFotosSubidasPorCurso,
-  eliminarFotoSubida,
-  limpiarTodasLasFotosSubidas,
-  FotoSubida
+  registrarFotosAdmin,
+  obtenerFotosActivasAdmin,
+  eliminarFotoActivaAdmin,
+  limpiarTodasLasFotosAdmin,
+  FotoRegistrada
 } from '../services/fotosSubidasService';
 
 interface FotoLoteItem {
@@ -47,7 +47,7 @@ export default function AdminLoteFotosTab() {
 
   // Clean initial queue: ready for real student photos
   const [fotosLote, setFotosLote] = useState<FotoLoteItem[]>([]);
-  const [fotosActivasCurso, setFotosActivasCurso] = useState<FotoSubida[]>([]);
+  const [fotosActivasCurso, setFotosActivasCurso] = useState<FotoRegistrada[]>([]);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -76,17 +76,20 @@ export default function AdminLoteFotosTab() {
     return ALUMNOS_NOMINA_2026.filter(a => a.seccionId === seccionActual.id);
   }, [seccionActual]);
 
-  // Cargar fotos activas del curso
-  const recargarFotosActivas = () => {
-    setFotosActivasCurso(obtenerFotosSubidasPorCurso(cursoSeleccionado));
+  // Cargar fotos activas del curso (desde Supabase, vía el panel admin)
+  const recargarFotosActivas = async () => {
+    const fotos = await obtenerFotosActivasAdmin({
+      colegioId: colegioSeleccionado,
+      grado: seccionActual.sala,
+      turno: seccionActual.turno,
+      division: seccionActual.division,
+    });
+    setFotosActivasCurso(fotos);
   };
 
   useEffect(() => {
     recargarFotosActivas();
-    const handleSync = () => recargarFotosActivas();
-    window.addEventListener('infocus_fotos_updated', handleSync);
-    return () => window.removeEventListener('infocus_fotos_updated', handleSync);
-  }, [cursoSeleccionado]);
+  }, [cursoSeleccionado, colegioSeleccionado]);
 
   // Ejecutar diagnóstico automático al iniciar
   useEffect(() => {
@@ -203,6 +206,7 @@ export default function AdminLoteFotosTab() {
     let exitosas = 0;
     let fallidas = 0;
     const colaActualizada = [...fotosLote];
+    const fotosParaRegistrar: { colegioId: string; categoria: 'individual' | 'grupal' | 'docente'; grado: string; turno: string; division: string; storagePathHD: string; storagePathWeb: string; alumnoNombre?: string }[] = [];
 
     for (let i = 0; i < colaActualizada.length; i++) {
       const item = colaActualizada[i];
@@ -227,19 +231,15 @@ export default function AdminLoteFotosTab() {
           item.errorMensaje = undefined;
           exitosas++;
 
-          // Registrar en el catálogo de fotos activas
-          guardarFotoSubida({
-            id: `subida-${Date.now()}-${i}`,
+          // Preparar para registrar en el catálogo de fotos activas (Supabase)
+          fotosParaRegistrar.push({
             colegioId: colegioSeleccionado,
-            cursoCodigo: cursoSeleccionado,
             categoria: item.tipo,
-            nombreOriginal: item.nombreOriginal,
-            urlWeb: resWeb.publicUrl || item.watermarkedUrl,
-            urlHD: resHD.path,
-            pathStorageWeb: pathWeb,
-            pathStorageHD: pathHD,
-            fechaSubida: new Date().toLocaleString('es-AR'),
-            tamanoBytes: item.file.size,
+            grado: seccionActual.sala,
+            turno: seccionActual.turno,
+            division: seccionActual.division,
+            storagePathHD: pathHD,
+            storagePathWeb: resWeb.publicUrl || pathWeb,
             alumnoNombre: item.alumnoNombre
           });
         }
@@ -249,8 +249,16 @@ export default function AdminLoteFotosTab() {
       }
     }
 
+    // Registrar en Supabase, en un solo lote, las fotos subidas con éxito
+    if (fotosParaRegistrar.length > 0) {
+      const resultadoRegistro = await registrarFotosAdmin(fotosParaRegistrar);
+      if (!resultadoRegistro.success) {
+        setErrorMessage(resultadoRegistro.error || 'Las fotos se subieron a Storage pero no se pudieron registrar en el catálogo.');
+      }
+    }
+
     setIsUploading(false);
-    recargarFotosActivas();
+    await recargarFotosActivas();
 
     if (fallidas > 0) {
       setErrorMessage(`Se subieron ${exitosas} fotos. ${fallidas} fotos fallaron. Verificá los permisos RLS en Supabase.`);
@@ -273,9 +281,9 @@ export default function AdminLoteFotosTab() {
     try {
       const resWeb = await limpiarStorageBucket('fotos-web');
       const resHD = await limpiarStorageBucket('fotos-hd');
-      limpiarTodasLasFotosSubidas();
+      await limpiarTodasLasFotosAdmin();
       setFotosLote([]);
-      recargarFotosActivas();
+      await recargarFotosActivas();
 
       setStatusMessage(`¡Supabase Storage limpiado con éxito! Se eliminaron ${resWeb.eliminados + resHD.eliminados} archivos. Listo para la subida de fotos escolares.`);
       setTimeout(() => setStatusMessage(null), 5000);
@@ -287,12 +295,17 @@ export default function AdminLoteFotosTab() {
     }
   };
 
-  const handleEliminarFotoActiva = async (fotoId: string) => {
+  const handleEliminarFotoActiva = async (foto: FotoRegistrada) => {
     const confirmar = window.confirm('¿Deseás eliminar esta foto de Supabase y del catálogo del curso?');
     if (!confirmar) return;
 
-    await eliminarFotoSubida(fotoId);
-    recargarFotosActivas();
+    const resultado = await eliminarFotoActivaAdmin(foto);
+    if (!resultado.success) {
+      setErrorMessage(resultado.error || 'No se pudo eliminar la foto.');
+      setTimeout(() => setErrorMessage(null), 5000);
+      return;
+    }
+    await recargarFotosActivas();
     setStatusMessage('Foto eliminada de Supabase.');
     setTimeout(() => setStatusMessage(null), 3000);
   };
@@ -858,10 +871,10 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                 className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs group relative"
               >
                 <div className="relative aspect-4/3 bg-black overflow-hidden">
-                  <img 
-                    src={foto.urlWeb} 
-                    alt={foto.nombreOriginal}
-                    className="w-full h-full object-cover" 
+                  <img
+                    src={foto.urlWeb}
+                    alt={foto.alumnoNombre || foto.categoria}
+                    className="w-full h-full object-cover"
                   />
                   <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-950/80 text-amber-300 uppercase">
                     {foto.categoria}
@@ -869,7 +882,7 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
 
                   <button
                     type="button"
-                    onClick={() => handleEliminarFotoActiva(foto.id)}
+                    onClick={() => handleEliminarFotoActiva(foto)}
                     className="absolute top-1.5 right-1.5 p-1 rounded bg-rose-600/90 text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                     title="Eliminar de Supabase"
                   >
@@ -878,8 +891,8 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                 </div>
 
                 <div className="p-2 text-[10px]">
-                  <p className="font-semibold text-slate-800 truncate" title={foto.nombreOriginal}>
-                    {foto.nombreOriginal}
+                  <p className="font-semibold text-slate-800 truncate uppercase" title={foto.categoria}>
+                    {foto.categoria}
                   </p>
                   {foto.alumnoNombre && (
                     <p className="text-amber-700 font-bold truncate">
@@ -887,7 +900,7 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                     </p>
                   )}
                   <div className="flex items-center justify-between text-slate-400 mt-0.5 text-[9px]">
-                    <span className="truncate">{foto.fechaSubida.split(' ')[0]}</span>
+                    <span className="truncate">{foto.createdAt ? new Date(foto.createdAt).toLocaleDateString('es-AR') : ''}</span>
                     <span className="text-emerald-600 font-bold">✓ En Supabase</span>
                   </div>
                 </div>

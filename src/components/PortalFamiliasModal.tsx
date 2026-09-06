@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, FormEvent } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { ViewfinderFocusIcon } from './RetratoEscolarLogo';
 import {
   X,
@@ -53,7 +53,7 @@ import {
   buscarMiInscripcion,
   guardarFamiliaActiva
 } from '../services/inscripcionesService';
-import { obtenerFotosParaGaleria } from '../services/fotosSubidasService';
+import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
 import WatermarkOverlay from './WatermarkOverlay';
 import { Colegio, KitProducto, Foto } from '../types';
 
@@ -114,14 +114,18 @@ export default function PortalFamiliasModal({
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('foto-doc-1');
   const [modalFotoPreview, setModalFotoPreview] = useState<Foto | null>(null);
 
-  // Dynamic photos for this course (real photos uploaded to Supabase or fallback samples)
-  const cursoActivoCodigo = useMemo(() => {
-    return (codigoAcceso.trim() || seccionDetectada?.nemotecnico || '').toUpperCase();
-  }, [codigoAcceso, seccionDetectada]);
+  // Dynamic photos for this course (real photos uploaded to Supabase, o las de muestra si todavía no hay)
+  const [fotosDisponibles, setFotosDisponibles] = useState<Foto[]>(FOTOS_MUESTRA);
 
-  const fotosDisponibles = useMemo(() => {
-    return obtenerFotosParaGaleria(cursoActivoCodigo);
-  }, [cursoActivoCodigo]);
+  useEffect(() => {
+    let cancelado = false;
+    obtenerGaleriaPublica({ grado, turno, division }).then((fotos) => {
+      if (!cancelado) setFotosDisponibles(fotos);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [grado, turno, division]);
 
   // Sincronizar selección predeterminada cuando las fotos cargan
   useEffect(() => {
