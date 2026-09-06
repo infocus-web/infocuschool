@@ -1,9 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  Camera, Upload, CheckCircle2, 
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import {
+  Camera, Upload, CheckCircle2,
   Trash2, RefreshCw, ShieldCheck, Check,
   AlertCircle, Database, Copy, HardDrive, Key,
-  Sliders, Image as ImageIcon, Sparkles, User
+  Sliders, Image as ImageIcon, Sparkles, User,
+  X, CheckSquare, Square
 } from 'lucide-react';
 import { useColegiosLista } from '../services/colegiosService';
 import { SECCIONES_INICIAL_2026, ALUMNOS_NOMINA_2026 } from '../data/alumnosData';
@@ -54,6 +55,13 @@ export default function AdminLoteFotosTab() {
   const [uploadProgress, setUploadProgress] = useState<{ actual: number; total: number }>({ actual: 0, total: 0 });
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const cancelarSubidaRef = useRef(false);
+  const [cancelandoSubida, setCancelandoSubida] = useState(false);
+
+  // Selección múltiple para borrar varias fotos activas de una sola vez
+  const [modoSeleccionActivas, setModoSeleccionActivas] = useState(false);
+  const [idsSeleccionados, setIdsSeleccionados] = useState<Set<string>>(new Set());
+  const [borrandoSeleccionadas, setBorrandoSeleccionadas] = useState(false);
 
   // Supabase Diagnostics & Settings
   const [diagnostico, setDiagnostico] = useState<SupabaseDiagnosticResult | null>(null);
@@ -219,18 +227,30 @@ export default function AdminLoteFotosTab() {
     setTimeout(() => setStatusMessage(null), 3000);
   };
 
+  const handleCancelarSubida = () => {
+    cancelarSubidaRef.current = true;
+    setCancelandoSubida(true);
+  };
+
   const handleSubirASupabase = async () => {
     if (fotosLote.length === 0) return;
     setIsUploading(true);
+    setCancelandoSubida(false);
+    cancelarSubidaRef.current = false;
     setErrorMessage(null);
     setUploadProgress({ actual: 0, total: fotosLote.length });
 
     let exitosas = 0;
     let fallidas = 0;
+    let canceladaEn = -1;
     const colaActualizada = [...fotosLote];
     const fotosParaRegistrar: { colegioId: string; categoria: 'individual' | 'grupal' | 'docente'; grado: string; turno: string; division: string; storagePathHD: string; storagePathWeb: string; alumnoNombre?: string }[] = [];
 
     for (let i = 0; i < colaActualizada.length; i++) {
+      if (cancelarSubidaRef.current) {
+        canceladaEn = i;
+        break;
+      }
       const item = colaActualizada[i];
       if (item.file && item.estado !== 'subida') {
         item.estado = 'subiendo';
@@ -284,9 +304,18 @@ export default function AdminLoteFotosTab() {
     }
 
     setIsUploading(false);
+    setCancelandoSubida(false);
+    cancelarSubidaRef.current = false;
     await recargarFotosActivas();
 
-    if (fallidas > 0) {
+    const fueCancelada = canceladaEn !== -1;
+    const pendientes = colaActualizada.filter(f => f.estado !== 'subida').length;
+
+    if (fueCancelada) {
+      setStatusMessage(`Subida cancelada: ${exitosas} foto(s) ya quedaron guardadas en Supabase, ${pendientes} quedaron pendientes en la lista para subir después.`);
+      setTimeout(() => setStatusMessage(null), 7000);
+      setFotosLote(colaActualizada.filter(f => f.estado !== 'subida'));
+    } else if (fallidas > 0) {
       setErrorMessage(`Se subieron ${exitosas} fotos. ${fallidas} fotos fallaron. Verificá los permisos RLS en Supabase.`);
       setMostrarSqlHelper(true);
     } else {
@@ -334,6 +363,56 @@ export default function AdminLoteFotosTab() {
     await recargarFotosActivas();
     setStatusMessage('Foto eliminada de Supabase.');
     setTimeout(() => setStatusMessage(null), 3000);
+  };
+
+  const handleToggleModoSeleccion = () => {
+    setModoSeleccionActivas(prev => !prev);
+    setIdsSeleccionados(new Set());
+  };
+
+  const handleToggleSeleccionFoto = (id: string) => {
+    setIdsSeleccionados(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSeleccionarTodasActivas = () => {
+    setIdsSeleccionados(new Set(fotosActivasCurso.map(f => f.id)));
+  };
+
+  const handleEliminarSeleccionadas = async () => {
+    if (idsSeleccionados.size === 0) return;
+    const confirmar = window.confirm(
+      `¿Deseás eliminar ${idsSeleccionados.size} foto(s) de Supabase y del catálogo del curso? Esta acción no se puede deshacer.`
+    );
+    if (!confirmar) return;
+
+    setBorrandoSeleccionadas(true);
+    const aBorrar = fotosActivasCurso.filter(f => idsSeleccionados.has(f.id));
+    let exitosas = 0;
+    let fallidas = 0;
+
+    for (const foto of aBorrar) {
+      const resultado = await eliminarFotoActivaAdmin(foto);
+      if (resultado.success) exitosas++;
+      else fallidas++;
+    }
+
+    setBorrandoSeleccionadas(false);
+    setIdsSeleccionados(new Set());
+    setModoSeleccionActivas(false);
+    await recargarFotosActivas();
+
+    if (fallidas > 0) {
+      setErrorMessage(`Se eliminaron ${exitosas} foto(s). ${fallidas} no se pudieron eliminar.`);
+      setTimeout(() => setErrorMessage(null), 6000);
+    } else {
+      setStatusMessage(`${exitosas} foto(s) eliminadas de Supabase.`);
+      setTimeout(() => setStatusMessage(null), 4000);
+    }
   };
 
   const handleGuardarConfiguracion = (e: React.FormEvent) => {
@@ -775,6 +854,18 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                   </>
                 )}
               </button>
+              {isUploading && (
+                <button
+                  type="button"
+                  onClick={handleCancelarSubida}
+                  disabled={cancelandoSubida}
+                  title="Termina la foto que se está subiendo ahora y detiene el resto — lo que ya se subió queda guardado"
+                  className="px-3 py-2 bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-700 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>{cancelandoSubida ? 'Cancelando...' : 'Cancelar subida'}</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -869,13 +960,62 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
             </span>
           </div>
 
-          {fotosActivasCurso.length > 0 && (
-            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>{fotosActivasCurso.length} fotos listas para venta</span>
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {fotosActivasCurso.length > 0 && !modoSeleccionActivas && (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>{fotosActivasCurso.length} fotos listas para venta</span>
+              </span>
+            )}
+            {fotosActivasCurso.length > 0 && (
+              <button
+                type="button"
+                onClick={handleToggleModoSeleccion}
+                className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                {modoSeleccionActivas ? (
+                  <>
+                    <X className="w-3.5 h-3.5" />
+                    <span>Cancelar selección</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckSquare className="w-3.5 h-3.5" />
+                    <span>Seleccionar varias</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
+
+        {modoSeleccionActivas && (
+          <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200">
+            <span className="text-xs font-bold text-amber-900">
+              {idsSeleccionados.size} seleccionada(s)
+            </span>
+            <button
+              type="button"
+              onClick={handleSeleccionarTodasActivas}
+              className="px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:text-amber-950 bg-white hover:bg-amber-100 border border-amber-300 rounded-lg transition-colors cursor-pointer"
+            >
+              Seleccionar todas ({fotosActivasCurso.length})
+            </button>
+            <button
+              type="button"
+              onClick={handleEliminarSeleccionadas}
+              disabled={idsSeleccionados.size === 0 || borrandoSeleccionadas}
+              className="ml-auto px-3 py-1.5 text-xs font-extrabold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              {borrandoSeleccionadas ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5" />
+              )}
+              <span>Eliminar seleccionadas{idsSeleccionados.size > 0 ? ` (${idsSeleccionados.size})` : ''}</span>
+            </button>
+          </div>
+        )}
 
         {fotosActivasCurso.length === 0 ? (
           <div className="p-8 rounded-2xl bg-slate-50 border border-dashed border-slate-300 text-center space-y-2">
@@ -891,29 +1031,44 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {fotosActivasCurso.map((foto) => (
-              <div 
+            {fotosActivasCurso.map((foto) => {
+              const seleccionada = idsSeleccionados.has(foto.id);
+              return (
+              <div
                 key={foto.id}
-                className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs group relative"
+                onClick={() => modoSeleccionActivas && handleToggleSeleccionFoto(foto.id)}
+                className={`bg-white rounded-xl border overflow-hidden shadow-2xs group relative ${
+                  modoSeleccionActivas ? 'cursor-pointer' : ''
+                } ${seleccionada ? 'border-amber-500 ring-2 ring-amber-400/40' : 'border-slate-200'}`}
               >
                 <div className="relative aspect-4/3 bg-black overflow-hidden">
                   <img
                     src={foto.urlWeb}
                     alt={foto.alumnoNombre || foto.categoria}
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover ${seleccionada ? 'opacity-80' : ''}`}
                   />
                   <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-950/80 text-amber-300 uppercase">
                     {foto.categoria}
                   </span>
 
-                  <button
-                    type="button"
-                    onClick={() => handleEliminarFotoActiva(foto)}
-                    className="absolute top-1.5 right-1.5 p-1 rounded bg-rose-600/90 text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                    title="Eliminar de Supabase"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  {modoSeleccionActivas ? (
+                    <div
+                      className={`absolute top-1.5 right-1.5 p-0.5 rounded shadow ${
+                        seleccionada ? 'bg-amber-500 text-slate-950' : 'bg-white/90 text-slate-500'
+                      }`}
+                    >
+                      {seleccionada ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleEliminarFotoActiva(foto)}
+                      className="absolute top-1.5 right-1.5 p-1 rounded bg-rose-600/90 text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                      title="Eliminar de Supabase"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="p-2 text-[10px]">
@@ -931,7 +1086,8 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
