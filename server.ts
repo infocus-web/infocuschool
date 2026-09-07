@@ -12,6 +12,11 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+// Detrás del proxy de Vercel, sin esto Express cree que cada request llega por "http"
+// (aunque el visitante esté en https) — eso rompe cualquier lógica que dependa de
+// req.protocol, como la URL de retorno que le mandamos a Mercado Pago más abajo.
+app.set('trust proxy', true);
+
 app.use(express.json());
 
 // ==============================================================================
@@ -1794,7 +1799,14 @@ app.post('/api/mercadopago/crear-preferencia', async (req, res) => {
       });
     }
 
-    const appUrl = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+    // Mercado Pago exige que "back_urls.success" sea una URL https válida cuando se usa
+    // "auto_return" — si no, devuelve el error engañoso "auto_return invalid. back_url.success
+    // must be defined" aunque la URL sí esté definida. En producción (fuera de localhost)
+    // forzamos https siempre, sin depender de que el proxy haya informado bien el protocolo.
+    const hostDetectado = req.get('host') || '';
+    const esLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostDetectado);
+    const protocoloFinal = esLocal ? req.protocol : 'https';
+    const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
     const preference = new Preference(mpConfig);
 
     const preferenceData = {
