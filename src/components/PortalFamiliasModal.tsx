@@ -146,9 +146,6 @@ export default function PortalFamiliasModal({
   const [selectedKit, setSelectedKit] = useState<KitProducto>(
     KITS_DISPONIBLES.find((k) => k.id === 'kit-clasico') || KITS_DISPONIBLES[0]
   );
-  const [extraStickers, setExtraStickers] = useState(false);
-  const [extraPortarretrato, setExtraPortarretrato] = useState(false);
-  const [extraLlavero, setExtraLlavero] = useState(false);
   // Copia extra de la carpeta completa para abuelos o familiares
   const [extraCarpetas, setExtraCarpetas] = useState<number>(0);
 
@@ -423,12 +420,9 @@ export default function PortalFamiliasModal({
   // Calculate Total
   const PRECIO_CARPETA_EXTRA = 15000;
   const precioBase = selectedKit.precio;
-  const precioStickers = extraStickers ? 2500 : 0;
-  const precioPortarretrato = extraPortarretrato ? 4200 : 0;
-  const precioLlavero = extraLlavero ? 2200 : 0;
   const totalCopiasExtrasCantidad = extraCarpetas;
   const precioCopiasExtras = extraCarpetas * PRECIO_CARPETA_EXTRA;
-  const total = precioBase + precioStickers + precioPortarretrato + precioLlavero + precioCopiasExtras;
+  const total = precioBase + precioCopiasExtras;
 
   // Handlers
   const handleIngresarCodigo = async () => {
@@ -1680,96 +1674,6 @@ export default function PortalFamiliasModal({
                 )}
               </div>
 
-              {/* Optional Add-ons */}
-              <div className="bg-white rounded-2xl p-5 border border-slate-200 text-left space-y-3">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Adicionales opcionales para complementar tu pedido:
-                </h4>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div
-                    onClick={() => setExtraStickers(!extraStickers)}
-                    className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
-                      extraStickers
-                        ? 'bg-amber-50/80 border-amber-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-slate-900">
-                        8 Stickers personalizados
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Para cuadernos y cartucheras (+ $2.500)
-                      </p>
-                    </div>
-                    <div
-                      className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ml-2 ${
-                        extraStickers
-                          ? 'bg-amber-400 border-amber-500 text-slate-950'
-                          : 'border-slate-300 bg-white'
-                      }`}
-                    >
-                      {extraStickers && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={() => setExtraPortarretrato(!extraPortarretrato)}
-                    className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
-                      extraPortarretrato
-                        ? 'bg-amber-50/80 border-amber-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-slate-900">
-                        Portarretrato de álamo
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Madera natural 15x21 cm (+ $4.200)
-                      </p>
-                    </div>
-                    <div
-                      className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ml-2 ${
-                        extraPortarretrato
-                          ? 'bg-amber-400 border-amber-500 text-slate-950'
-                          : 'border-slate-300 bg-white'
-                      }`}
-                    >
-                      {extraPortarretrato && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={() => setExtraLlavero(!extraLlavero)}
-                    className={`p-3.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
-                      extraLlavero
-                        ? 'bg-amber-50/80 border-amber-400'
-                        : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-slate-900">
-                        Llavero escolar bifaz
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Acrílico con foto individual y grupal (+ $2.200)
-                      </p>
-                    </div>
-                    <div
-                      className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ml-2 ${
-                        extraLlavero
-                          ? 'bg-amber-400 border-amber-500 text-slate-950'
-                          : 'border-slate-300 bg-white'
-                      }`}
-                    >
-                      {extraLlavero && <Check className="w-3.5 h-3.5 stroke-[3]" />}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
               {/* Subtotal & Navigation */}
               <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-left">
@@ -1942,24 +1846,6 @@ export default function PortalFamiliasModal({
                         <span>{selectedKit.nombre}</span>
                         <span>${precioBase.toLocaleString('es-AR')}</span>
                       </div>
-                      {extraStickers && (
-                        <div className="flex justify-between">
-                          <span>Plancha 8 stickers</span>
-                          <span>$2.500</span>
-                        </div>
-                      )}
-                      {extraPortarretrato && (
-                        <div className="flex justify-between">
-                          <span>Portarretrato madera</span>
-                          <span>$4.200</span>
-                        </div>
-                      )}
-                      {extraLlavero && (
-                        <div className="flex justify-between">
-                          <span>Llavero escolar bifaz</span>
-                          <span>$2.200</span>
-                        </div>
-                      )}
                       {extraCarpetas > 0 && (
                         <div className="flex justify-between text-amber-300 font-semibold">
                           <span>Carpeta Escolar Extra Completa (x{extraCarpetas})</span>
