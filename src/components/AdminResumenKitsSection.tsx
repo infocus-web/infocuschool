@@ -77,16 +77,16 @@ export default function AdminResumenKitsSection({ className = '' }: Props) {
   };
 
   return (
-    <div className={`bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-5 ${className}`}>
+    <div className={`bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200 shadow-xs space-y-3 ${className}`}>
       {/* Header de la sección */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center shrink-0">
-            <Package className="w-5 h-5" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center shrink-0">
+            <Package className="w-4 h-4" />
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit']">
+              <h3 className="text-sm sm:text-base font-black text-slate-900 font-['Outfit']">
                 Resumen de Familias por Kit de Fotos
               </h3>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -128,41 +128,26 @@ export default function AdminResumenKitsSection({ className = '' }: Props) {
         </div>
       </div>
 
-      {/* Métricas destacadas generales */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/80 flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Total Familias</span>
-            <div className="text-2xl font-black text-slate-900 font-['Outfit'] mt-0.5">
-              {cargando ? '...' : `${totalFamilias}`} <span className="text-xs font-normal text-slate-500 font-sans">familias</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-700 flex items-center justify-center">
-            <Users className="w-4 h-4" />
+      {/* Métricas destacadas generales: tarjetas compactas de una sola línea */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="px-3 py-1.5 rounded-xl bg-amber-50/50 border border-amber-200/80 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider">Total Familias</span>
+          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            {cargando ? '...' : `${totalFamilias}`} <span className="text-[10px] font-normal text-slate-500 font-sans">familias</span>
           </div>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-sky-50/50 border border-sky-200/80 flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-sky-800 uppercase tracking-wider">Pedidos Registrados</span>
-            <div className="text-2xl font-black text-slate-900 font-['Outfit'] mt-0.5">
-              {cargando ? '...' : `${totalPedidos}`} <span className="text-xs font-normal text-slate-500 font-sans">pedidos</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-xl bg-sky-500/15 text-sky-700 flex items-center justify-center">
-            <Package className="w-4 h-4" />
+        <div className="px-3 py-1.5 rounded-xl bg-sky-50/50 border border-sky-200/80 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold text-sky-800 uppercase tracking-wider">Pedidos Registrados</span>
+          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            {cargando ? '...' : `${totalPedidos}`} <span className="text-[10px] font-normal text-slate-500 font-sans">pedidos</span>
           </div>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-emerald-50/50 border border-emerald-200/80 flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">Recaudación Supabase</span>
-            <div className="text-2xl font-black text-slate-900 font-['Outfit'] mt-0.5">
-              ${cargando ? '...' : totalRecaudado.toLocaleString('es-AR')} <span className="text-xs font-normal text-slate-500 font-sans">ARS</span>
-            </div>
-          </div>
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-700 flex items-center justify-center">
-            <DollarSign className="w-4 h-4" />
+        <div className="px-3 py-1.5 rounded-xl bg-emerald-50/50 border border-emerald-200/80 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Recaudación Supabase</span>
+          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            ${cargando ? '...' : totalRecaudado.toLocaleString('es-AR')} <span className="text-[10px] font-normal text-slate-500 font-sans">ARS</span>
           </div>
         </div>
       </div>
