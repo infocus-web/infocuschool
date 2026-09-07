@@ -24,12 +24,35 @@ import {
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion,
   prepararEmailAprobacion,
-  determinarCodigoParaInscripcion,
   enviarEmailAprobacionAdmin
 } from '../services/inscripcionesService';
 
 interface AdminInscriptosTabProps {
   onProbarCodigo?: (codigo: string) => void;
+}
+
+// Código sugerido para aprobar una inscripción: ya NO se calcula con una fórmula pública a
+// partir de grado/turno/división (eso era adivinable por cualquiera — ver el arreglo de
+// seguridad en server.ts, `codigos_seccion`). En cambio, se deriva del `id` interno de la
+// inscripción (un UUID que la familia y el público nunca ven), así que es estable en pantalla
+// (no cambia en cada re-render) pero imposible de reconstruir desde afuera. Es sólo una
+// SUGERENCIA visual para el fotógrafo — el servidor es quien decide el código final real
+// (reutiliza el de la sección si ya existe, o registra éste si es la primera vez).
+function sugerirCodigoSeguro(semilla: string): string {
+  let h1 = 0xdeadbeef ^ semilla.length;
+  let h2 = 0x41c6ce57 ^ semilla.length;
+  for (let i = 0; i < semilla.length; i++) {
+    const ch = semilla.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const crudo = ((h1 >>> 0).toString(36) + (h2 >>> 0).toString(36) + 'X7K9QPWM2R')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const codigo = crudo.slice(0, 8).padEnd(8, 'X');
+  return `${codigo.slice(0, 4)}-${codigo.slice(4, 8)}`;
 }
 
 export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTabProps) {
@@ -118,7 +141,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     const codigoElegido =
       codigosEditables[item.id] ||
       item.codigoAsignado ||
-      determinarCodigoParaInscripcion(item);
+      sugerirCodigoSeguro(item.id);
 
     setProcesandoId(item.id);
     const resultado = await aprobarInscripcionAdmin(item.id, codigoElegido);
@@ -201,7 +224,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     setProcesandoId('__todos__');
     for (const item of pendientes) {
       const codigoElegido =
-        codigosEditables[item.id] || item.codigoAsignado || determinarCodigoParaInscripcion(item);
+        codigosEditables[item.id] || item.codigoAsignado || sugerirCodigoSeguro(item.id);
       await aprobarInscripcionAdmin(item.id, codigoElegido);
     }
     setProcesandoId(null);
@@ -410,7 +433,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                 const codigoSugerido =
                   codigosEditables[item.id] ||
                   item.codigoAsignado ||
-                  determinarCodigoParaInscripcion(item);
+                  sugerirCodigoSeguro(item.id);
                 const procesando = procesandoId === item.id;
 
                 return (
@@ -639,7 +662,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             <a
                               href={generarEnlaceWhatsAppAprobacion(
                                 item,
-                                item.codigoAsignado || determinarCodigoParaInscripcion(item)
+                                item.codigoAsignado || sugerirCodigoSeguro(item.id)
                               )}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -653,7 +676,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             <button
                               type="button"
                               onClick={() => {
-                                const codigo = item.codigoAsignado || determinarCodigoParaInscripcion(item);
+                                const codigo = item.codigoAsignado || sugerirCodigoSeguro(item.id);
                                 setEnvioEmail({ enviando: false, enviado: Boolean(item.notificacionEmailEnviada), error: null });
                                 setDetalleEnvioModal({
                                   familia: item,

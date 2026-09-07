@@ -107,6 +107,10 @@ export default function PortalFamiliasModal({
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
   const [codigoErrorMsg, setCodigoErrorMsg] = useState<string | null>(null);
   const [familiaActiva, setFamiliaActiva] = useState<InscripcionFamilia | null>(null);
+  // Código real y secreto ya validado contra el servidor (ver `codigos_seccion` en server.ts).
+  // Es la ÚNICA llave que habilita traer fotos reales — elegir grado/turno/división del
+  // desplegable ya NO alcanza para verlas (antes sí, y ahí estaba el problema de seguridad).
+  const [codigoSeccionValidado, setCodigoSeccionValidado] = useState<string | null>(null);
 
   // "No encuentro mi código de curso": en vez de abrir WhatsApp, la solicitud queda
   // guardada para que el fotógrafo la vea en el panel admin sin recibir un WhatsApp por cada una
@@ -129,13 +133,16 @@ export default function PortalFamiliasModal({
 
   useEffect(() => {
     let cancelado = false;
-    obtenerGaleriaPublica({ grado, turno, division }).then((fotos) => {
-      if (!cancelado) setFotosDisponibles(fotos);
+    // Sin un código real y validado, sólo se muestran las fotos de muestra (ver comentario
+    // en `codigoSeccionValidado` y en `obtenerGaleriaPublica`) — elegir grado/turno/división
+    // del desplegable ya no alcanza para traer fotos reales de ningún curso.
+    obtenerGaleriaPublica({ codigo: codigoSeccionValidado }).then((resultado) => {
+      if (!cancelado) setFotosDisponibles(resultado.fotos);
     });
     return () => {
       cancelado = true;
     };
-  }, [grado, turno, division]);
+  }, [codigoSeccionValidado]);
 
   // Sincronizar selección predeterminada cuando las fotos cargan
   useEffect(() => {
@@ -401,11 +408,15 @@ export default function PortalFamiliasModal({
       return false;
     }
 
-    // 0. Search for a registered family's access code (assigned via padrón or manual approval)
+    // 0. Search for a registered family's access code (assigned via padrón o aprobación manual).
+    // Este es el ÚNICO camino que desbloquea fotos reales: `famFound.codigoAsignado` es el
+    // código real y secreto de la sección (ver `codigos_seccion` en server.ts), no una fórmula
+    // adivinable a partir de grado/turno/división.
     const famFound = await buscarMiInscripcion(clean);
     if (famFound && famFound.estado === 'pendiente') {
       setCodigoErrorMsg('Tu inscripción todavía está pendiente de validación por el equipo fotográfico. Te avisaremos por WhatsApp y Email en cuanto tengas tu código de acceso.');
       setCodigoValidadoMsg(null);
+      setCodigoSeccionValidado(null);
       return false;
     }
     if (famFound && famFound.estado === 'aceptado' && famFound.codigoAsignado) {
@@ -434,10 +445,13 @@ export default function PortalFamiliasModal({
         `¡Código Familiar verificado (${famFound.codigoFamiliar})! Familia ${famFound.padreNombre} · ${totalHijos} hijo${totalHijos > 1 ? 's' : ''} (${nombresHijos})`
       );
       setCodigoErrorMsg(null);
+      setCodigoSeccionValidado(famFound.codigoAsignado);
       return true;
     }
 
-    // 1. Search for course section by nemotecnico or PIN
+    // 1. Búsqueda en el sistema viejo de secciones de nivel inicial (PINs/nemotécnicos guardados
+    // en localStorage). Se mantiene solo para identificar de qué curso se trata y precargar el
+    // desplegable — YA NO desbloquea fotos reales por sí sola (ver codigoSeccionValidado arriba).
     const match = buscarSeccionPorCodigo(clean);
     if (match) {
       const colInicial = colegios[0] || null;
@@ -446,25 +460,29 @@ export default function PortalFamiliasModal({
       setTurno(match.seccion.turno);
       setDivision(match.seccion.division);
       setSeccionDetectada(match.seccion);
-      setCodigoValidadoMsg(`¡Código reconocido! Curso: ${match.seccion.nombreCompleto}`);
+      setCodigoValidadoMsg(`Curso identificado: ${match.seccion.nombreCompleto}. Para ver las fotos reales, ingresá el código de acceso que te enviamos por WhatsApp o Email.`);
       setCodigoErrorMsg(null);
+      setCodigoSeccionValidado(null);
       return true;
     }
 
-    // 2. Search for general school access code (e.g. ISBA2026)
+    // 2. Código general de institución (ej: ISBA2026): sólo identifica el colegio para
+    // facilitar la búsqueda — tampoco desbloquea fotos reales por sí solo.
     const colFound = colegios.find(
       (c) => c.codigoAcceso.toUpperCase() === clean
     );
     if (colFound) {
       setSelectedColegio(colFound);
       setSeccionDetectada(null);
-      setCodigoValidadoMsg(`¡Código de institución reconocido: ${colFound.nombre}!`);
+      setCodigoValidadoMsg(`Institución reconocida: ${colFound.nombre}. Para ver las fotos reales, ingresá el código de acceso de tu curso.`);
       setCodigoErrorMsg(null);
+      setCodigoSeccionValidado(null);
       return true;
     }
 
     setCodigoErrorMsg(`Código "${codigoInput}" no encontrado. Verificá si está bien escrito o seleccioná tu curso abajo.`);
     setCodigoValidadoMsg(null);
+    setCodigoSeccionValidado(null);
     return false;
   };
 
