@@ -141,7 +141,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     }
   }, [isOpen, isAuthenticated, activeTab]);
 
-  // WhatsApp configuration state (persistent in Supabase 'configuraciones' & localStorage)
+  // WhatsApp configuration state (persistent in Supabase 'configuracion' & localStorage)
   const [whatsappNumero, setWhatsappNumero] = useState<string>(() => {
     const cfg = obtenerConfiguracionWhatsApp();
     return cfg.whatsappFlotante || cfg.whatsappSolicitudCodigo || '5491128625916';
@@ -178,7 +178,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     }
 
     try {
-      // 1. Guardar de forma persistente en Supabase en la tabla 'configuraciones'
+      // 1. Guardar de forma persistente en Supabase en la tabla 'configuracion'
       const supabase = getSupabase();
       let persistidoEnSupabase = false;
 
@@ -186,7 +186,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
         const payload = {
           clave: 'whatsapp_flotante',
           valor: limpio,
-          telefono: limpio,
           datos_extra: {
             actualizado_desde: 'AdminModal',
             tipo: 'widget_flotante',
@@ -194,17 +193,12 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
           updated_at: new Date().toISOString(),
         };
 
-        // Guardar explícitamente en la tabla 'configuraciones' de Supabase
-        const { error: errConfiguraciones } = await supabase
-          .from('configuraciones')
-          .upsert(payload, { onConflict: 'clave' });
-
-        // Guardar también en tabla 'configuracion' por compatibilidad
+        // Guardar en la tabla 'configuracion' (única tabla real de configuración en Supabase)
         const { error: errConfiguracion } = await supabase
           .from('configuracion')
           .upsert(payload, { onConflict: 'clave' });
 
-        if (!errConfiguraciones || !errConfiguracion) {
+        if (!errConfiguracion) {
           persistidoEnSupabase = true;
         }
       }
@@ -215,7 +209,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
       setWhatsappFeedback(
         persistidoEnSupabase
-          ? `¡Número ${formatearNumeroVisual(limpio)} guardado y persistido con éxito en la tabla 'configuraciones' de Supabase!`
+          ? `¡Número ${formatearNumeroVisual(limpio)} guardado y persistido con éxito en Supabase!`
           : `¡Número ${formatearNumeroVisual(limpio)} guardado con éxito! El widget flotante ya lo está consumiendo dinámicamente.`
       );
 
@@ -696,7 +690,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
           </div>
         ) : (
           /* Authenticated Admin Dashboard */
-          <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
 
             {/* Navigation tabs: al inicio del panel, botones azul oscuro con letras
                 amarillas. Antes era una fila con scroll horizontal que escondía la
@@ -755,31 +749,32 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
               })}
             </div>
 
-            {/* Top metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-xs text-slate-500">Recaudación Confirmada</span>
-                <div className="text-2xl font-black text-slate-900 font-['Outfit']">
-                  ${totalRecaudado.toLocaleString('es-AR')} <span className="text-xs font-normal text-slate-500">ARS</span>
+            {/* Top metrics: tarjetas compactas en una sola línea, para no ocupar
+                media pantalla mostrando 3 números. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500 font-semibold">Recaudación Confirmada</span>
+                <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+                  ${totalRecaudado.toLocaleString('es-AR')} <span className="text-[10px] font-normal text-slate-500">ARS</span>
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-xs text-slate-500">Pedidos Totales</span>
-                <div className="text-2xl font-black text-slate-900 font-['Outfit']">
+              <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500 font-semibold">Pedidos Totales</span>
+                <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
                   {pedidosCompletos.length} pedidos
                 </div>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-                <span className="text-xs text-slate-500">Colegios Activos</span>
-                <div className="text-2xl font-black text-slate-900 font-['Outfit']">
+              <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500 font-semibold">Colegios Activos</span>
+                <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
                   {colegiosList.length} instituciones
                 </div>
               </div>
             </div>
 
-            {/* SECCIÓN WHATSAPP: CAMPO DE ENTRADA Y BOTÓN GUARDAR EN TABLA 'configuraciones' DE SUPABASE */}
+            {/* SECCIÓN WHATSAPP: CAMPO DE ENTRADA Y BOTÓN GUARDAR EN TABLA 'configuracion' DE SUPABASE */}
             <div className="bg-white rounded-2xl p-4 sm:p-5 border-2 border-emerald-500/40 shadow-xs space-y-3.5 relative overflow-hidden">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -793,7 +788,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                       </h4>
                       <span className="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300 flex items-center gap-1">
                         <Database className="w-2.5 h-2.5" />
-                        <span>Supabase: configuraciones</span>
+                        <span>Supabase: configuracion</span>
                       </span>
                     </div>
                     <p className="text-xs text-slate-500">
