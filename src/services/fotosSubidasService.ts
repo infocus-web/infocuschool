@@ -109,7 +109,11 @@ function extraerPathStorageWeb(valor?: string | null): string | undefined {
   if (!valor) return undefined;
   const marcador = '/fotos-web/';
   const idx = valor.indexOf(marcador);
-  return idx === -1 ? valor : valor.slice(idx + marcador.length);
+  const path = idx === -1 ? valor : valor.slice(idx + marcador.length);
+  // Las URLs guardadas pueden traer "?v=..." al final (para evitar caché del navegador tras
+  // pisar el archivo) — hay que sacarlo para quedarnos con la ruta real dentro del bucket.
+  const idxQuery = path.indexOf('?');
+  return idxQuery === -1 ? path : path.slice(0, idxQuery);
 }
 
 /** Panel admin: elimina una foto (fila en Supabase + los archivos reales en Storage) */
