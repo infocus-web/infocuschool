@@ -133,35 +133,17 @@ export async function guardarConfiguracionWhatsApp(
   try {
     const supabase = getSupabase();
     if (supabase) {
-      // 1. Guardar en tabla 'configuraciones' (solicitada explícitamente)
-      const payloadFlotante = {
-        clave: 'whatsapp_flotante',
-        valor: actualizada.whatsappFlotante || numeroSanitizado,
-        telefono: actualizada.whatsappFlotante || numeroSanitizado,
-        datos_extra: {
-          nombreContacto: actualizada.nombreContacto,
-          mensajePredeterminado: actualizada.mensajePredeterminado,
-        },
-        updated_at: new Date().toISOString(),
+      // Guardar en la tabla 'configuracion' (única tabla real de configuración en Supabase).
+      const datosExtraFlotante = {
+        nombreContacto: actualizada.nombreContacto,
+        mensajePredeterminado: actualizada.mensajePredeterminado,
+      };
+      const datosExtraSolicitud = {
+        nombreContacto: actualizada.nombreContacto,
+        mensajePredeterminado: actualizada.mensajePredeterminado,
+        whatsappFlotante: actualizada.whatsappFlotante,
       };
 
-      const payloadSolicitud = {
-        clave: 'whatsapp_solicitud_codigo',
-        valor: numeroSanitizado,
-        telefono: numeroSanitizado,
-        datos_extra: {
-          nombreContacto: actualizada.nombreContacto,
-          mensajePredeterminado: actualizada.mensajePredeterminado,
-          whatsappFlotante: actualizada.whatsappFlotante,
-        },
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error: errConfiguraciones } = await supabase
-        .from('configuraciones')
-        .upsert([payloadFlotante, payloadSolicitud], { onConflict: 'clave' });
-
-      // 2. Guardar también en tabla 'configuracion' (singular) por compatibilidad
       const { error: errConfiguracion } = await supabase
         .from('configuracion')
         .upsert(
@@ -169,27 +151,27 @@ export async function guardarConfiguracionWhatsApp(
             {
               clave: 'whatsapp_flotante',
               valor: actualizada.whatsappFlotante || numeroSanitizado,
-              datos_extra: payloadFlotante.datos_extra,
+              datos_extra: datosExtraFlotante,
               updated_at: new Date().toISOString(),
             },
             {
               clave: 'whatsapp_solicitud_codigo',
               valor: numeroSanitizado,
-              datos_extra: payloadSolicitud.datos_extra,
+              datos_extra: datosExtraSolicitud,
               updated_at: new Date().toISOString(),
             },
           ],
           { onConflict: 'clave' }
         );
 
-      if (!errConfiguraciones || !errConfiguracion) {
+      if (!errConfiguracion) {
         supabaseOk = true;
         actualizada.guardadoEnSupabase = true;
         if (typeof window !== 'undefined') {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(actualizada));
         }
       } else {
-        errorSupabase = errConfiguraciones?.message || errConfiguracion?.message;
+        errorSupabase = errConfiguracion?.message;
         actualizada.guardadoEnSupabase = false;
       }
     } else {
@@ -231,37 +213,19 @@ export async function sincronizarDesdeSupabase(): Promise<ConfiguracionWhatsApp 
     const supabase = getSupabase();
     if (!supabase) return null;
 
-    // Intentar leer de 'configuraciones' primero
-    let data: any[] | null = null;
-    let error: any = null;
-
-    const resConfiguraciones = await supabase
-      .from('configuraciones')
-      .select('clave, valor, telefono, datos_extra, updated_at')
+    // Leer de la tabla 'configuracion' (única tabla real de configuración en Supabase).
+    const { data, error } = await supabase
+      .from('configuracion')
+      .select('clave, valor, datos_extra, updated_at')
       .in('clave', ['whatsapp_flotante', 'whatsapp_solicitud_codigo', 'whatsapp']);
-
-    data = resConfiguraciones.data;
-    error = resConfiguraciones.error;
-
-    // Si la tabla 'configuraciones' no existe o está vacía, probar con 'configuracion'
-    if (error || !data || data.length === 0) {
-      const resConfiguracion = await supabase
-        .from('configuracion')
-        .select('clave, valor, datos_extra, updated_at')
-        .in('clave', ['whatsapp_flotante', 'whatsapp_solicitud_codigo']);
-      if (resConfiguracion.data && resConfiguracion.data.length > 0) {
-        data = resConfiguracion.data;
-        error = null;
-      }
-    }
 
     if (error || !data || data.length === 0) return null;
 
     const rowFlotante = data.find((d: any) => d.clave === 'whatsapp_flotante' || d.clave === 'whatsapp');
     const rowSolicitud = data.find((d: any) => d.clave === 'whatsapp_solicitud_codigo');
 
-    const numFlotante = (rowFlotante?.valor || (rowFlotante as any)?.telefono)
-      ? sanitizarNumeroWhatsApp(rowFlotante.valor || (rowFlotante as any)?.telefono)
+    const numFlotante = rowFlotante?.valor
+      ? sanitizarNumeroWhatsApp(rowFlotante.valor)
       : (rowSolicitud?.datos_extra?.whatsappFlotante
           ? sanitizarNumeroWhatsApp(rowSolicitud.datos_extra.whatsappFlotante)
           : undefined);
