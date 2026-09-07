@@ -52,7 +52,8 @@ import {
   cerrarSesionFamilia,
   InscripcionFamilia,
   buscarMiInscripcion,
-  guardarFamiliaActiva
+  guardarFamiliaActiva,
+  determinarCodigoParaInscripcion
 } from '../services/inscripcionesService';
 import { enviarSolicitudCodigo } from '../services/solicitudesCodigoService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
@@ -534,7 +535,10 @@ export default function PortalFamiliasModal({
     setMpRedirectUrl(null);
 
     const numLista = Math.floor(1 + Math.random() * 25);
-    const codCurso = codigoAcceso.trim() || seccionDetectada?.nemotecnico || 'SALA-3TM';
+    const codCurso =
+      codigoAcceso.trim() ||
+      seccionDetectada?.nemotecnico ||
+      determinarCodigoParaInscripcion({ grado, turno, division });
 
     const nuevoPedido = registrarPedidoDesdePortal({
       colegioId: selectedColegio?.id || 'col-general',
