@@ -66,11 +66,19 @@ export const KITS_DISPONIBLES: KitProducto[] = [
   },
 ];
 
+// Fotos reales del repo (public/): reemplazan las fotos de stock (Unsplash) que se usaban antes.
+// Nota: por ahora se repite la misma foto para las 3 "tomas" individuales y para las 2 variantes
+// grupales, porque todavía no hay más fotos de muestra distintas cargadas — si Pablo suma más
+// fotos a public/, alcanza con darles su propia entrada acá.
+const FOTO_INDIVIDUAL_MUESTRA = '/individual.png';
+const FOTO_GRUPAL_MUESTRA = '/grupal.jpg';
+const FOTO_DOCENTE_MUESTRA = '/con%20la%20seno.png';
+
 export const FOTOS_MUESTRA: Foto[] = [
   {
     id: 'foto-ind-1',
-    url: '/alumna_instituto.jpg',
-    thumbnail: '/alumna_instituto.jpg',
+    url: FOTO_INDIVIDUAL_MUESTRA,
+    thumbnail: FOTO_INDIVIDUAL_MUESTRA,
     categoria: 'individual',
     titulo: 'Individual - Toma 1',
     descripcion: '',
@@ -79,8 +87,8 @@ export const FOTOS_MUESTRA: Foto[] = [
   },
   {
     id: 'foto-ind-2',
-    url: 'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=400&q=80',
+    url: FOTO_INDIVIDUAL_MUESTRA,
+    thumbnail: FOTO_INDIVIDUAL_MUESTRA,
     categoria: 'individual',
     titulo: 'Individual - Toma 2',
     descripcion: '',
@@ -89,8 +97,8 @@ export const FOTOS_MUESTRA: Foto[] = [
   },
   {
     id: 'foto-ind-3',
-    url: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=400&q=80',
+    url: FOTO_INDIVIDUAL_MUESTRA,
+    thumbnail: FOTO_INDIVIDUAL_MUESTRA,
     categoria: 'individual',
     titulo: 'Individual - Toma 3',
     descripcion: '',
@@ -99,8 +107,8 @@ export const FOTOS_MUESTRA: Foto[] = [
   },
   {
     id: 'foto-grup-1',
-    url: 'https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1577896851231-70ef18881754?auto=format&fit=crop&w=400&q=80',
+    url: FOTO_GRUPAL_MUESTRA,
+    thumbnail: FOTO_GRUPAL_MUESTRA,
     categoria: 'grupal',
     titulo: 'Grupal de Grado',
     descripcion: '',
@@ -108,19 +116,9 @@ export const FOTOS_MUESTRA: Foto[] = [
     division: 'A',
   },
   {
-    id: 'foto-grup-2',
-    url: 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1580582932707-520aed937b7b?auto=format&fit=crop&w=400&q=80',
-    categoria: 'grupal',
-    titulo: 'Grupal Divertida',
-    descripcion: '',
-    grado: '3° grado',
-    division: 'A',
-  },
-  {
     id: 'foto-doc-1',
-    url: 'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1524178232363-1fb2b075b655?auto=format&fit=crop&w=400&q=80',
+    url: FOTO_DOCENTE_MUESTRA,
+    thumbnail: FOTO_DOCENTE_MUESTRA,
     categoria: 'docente',
     titulo: 'Con la Docente',
     descripcion: '',
@@ -129,8 +127,8 @@ export const FOTOS_MUESTRA: Foto[] = [
   },
   {
     id: 'foto-pat-1',
-    url: 'https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&w=1200&q=85',
-    thumbnail: 'https://images.unsplash.com/photo-1503676260728-1c00da094a0b?auto=format&fit=crop&w=400&q=80',
+    url: FOTO_GRUPAL_MUESTRA,
+    thumbnail: FOTO_GRUPAL_MUESTRA,
     categoria: 'patio',
     titulo: 'Otras Fotos',
     descripcion: '',
@@ -143,7 +141,7 @@ export const PREGUNTAS_FRECUENTES = [
   {
     pregunta: '¿Cómo accedo a las fotos de mi hijo/a?',
     respuesta:
-      'Al momento de inscribirse en el portal como padre/madre, debés contactarte por WhatsApp con la institución educativa para solicitar el Código de Curso correspondiente a tu hijo/a. Con ese código (como SALA3TM, SALA4A o SALA5B) podrás acceder directamente a ver las fotografías escolares protegidas.',
+      'Al momento de inscribirse en el portal como padre/madre, debés contactarte por WhatsApp con la institución educativa para solicitar el Código de Curso correspondiente a tu hijo/a. Con ese código (como SALA-3TM, SALA-4A o SALA-5B) podrás acceder directamente a ver las fotografías escolares protegidas.',
   },
   {
     pregunta: '¿Puedo comprar solo la versión digital HD sin imprimir?',

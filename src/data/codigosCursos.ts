@@ -13,17 +13,17 @@ export interface CursoCodigoInfo {
 
 // Initial default codes for each section
 export const CODIGOS_CURSOS_INICIALES: Record<string, string> = {
-  's3-tm': 'SALA3TM',
-  's3-tt': 'SALA3TT',
-  's3-je': 'SALA3JE',
-  's4-a': 'SALA4A',
-  's4-tt': 'SALA4TT',
-  's4-c': 'SALA4C',
-  's4-je': 'SALA4JE',
-  's5-a': 'SALA5A',
-  's5-b-tt': 'SALA5B',
-  's5-c': 'SALA5C',
-  's5-je': 'SALA5JE',
+  's3-tm': 'SALA-3TM',
+  's3-tt': 'SALA-3TT',
+  's3-je': 'SALA-3JE',
+  's4-a': 'SALA-4A',
+  's4-tt': 'SALA-4TT',
+  's4-c': 'SALA-4C',
+  's4-je': 'SALA-4JE',
+  's5-a': 'SALA-5A',
+  's5-b-tt': 'SALA-5B',
+  's5-c': 'SALA-5C',
+  's5-je': 'SALA-5JE',
 };
 
 const STORAGE_KEY = 'historias_colegio_codigos_cursos_2026';
@@ -76,11 +76,11 @@ export function regenerarTodosLosCodigos(tipo: 'nemotecnico' | 'pin' = 'nemotecn
   const updated: Record<string, string> = {};
   SECCIONES_INICIAL_2026.forEach((sec) => {
     if (tipo === 'nemotecnico') {
-      // e.g. SALA3-TM, SALA4-A, etc.
+      // e.g. SALA-3TM, SALA-4A, etc. (guión después de SALA para que el número no se confunda con una letra)
       const salaNum = sec.sala.replace(/\D/g, '') || '3';
       const cleanTurno = sec.turno === 'Mañana' ? 'TM' : sec.turno === 'Tarde' ? 'TT' : 'JE';
       const cleanDiv = sec.division.replace(/[^A-Za-z0-9]/g, '').slice(0, 2);
-      updated[sec.id] = `SALA${salaNum}-${cleanTurno}${cleanDiv ? '-' + cleanDiv : ''}`.toUpperCase();
+      updated[sec.id] = `SALA-${salaNum}${cleanTurno}${cleanDiv}`.toUpperCase();
     } else {
       // 5-character secure pin, e.g. INF34
       const rnd = Math.floor(100 + Math.random() * 900);
