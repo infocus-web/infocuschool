@@ -1334,6 +1334,98 @@ async function validarTokenPadronInstitucion(colegioId: string, codigo: string) 
   return { ok: true as const, supabase, colegio };
 }
 
+// Resuelve el colegio únicamente por su código de padrón (10 caracteres, ya es único de por
+// sí), sin necesitar el UUID del colegio en la URL. Es lo que permite el link corto
+// /padron.html?c=CODIGO en vez de .../padron.html?colegio=<uuid>&codigo=<codigo>.
+async function resolverColegioPorCodigoPadron(codigo: string) {
+  const supabase = getServerSupabase();
+  if (!supabase) {
+    return { ok: false as const, status: 500, error: 'Supabase no configurado en el servidor' };
+  }
+  const codigoLimpio = String(codigo || '').trim().toUpperCase();
+  if (!codigoLimpio) {
+    return { ok: false as const, status: 400, error: 'Falta el código del link' };
+  }
+  const { data: colegio, error } = await supabase
+    .from('colegios')
+    .select('id, nombre, codigo_padron')
+    .eq('codigo_padron', codigoLimpio)
+    .maybeSingle();
+
+  if (error || !colegio) {
+    return { ok: false as const, status: 404, error: 'Link no válido' };
+  }
+  return { ok: true as const, supabase, colegio };
+}
+
+// Normaliza las filas recibidas, descarta inválidas/duplicadas del mismo envío, filtra las
+// que ya estaban cargadas para ese colegio y guarda el resto en padres_autorizados. Usada
+// tanto por la ruta vieja (colegio + código en la URL) como por la ruta corta (solo código).
+async function procesarCargaPadron(
+  supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
+  colegioId: string,
+  filas: any,
+  res: Response
+) {
+  if (!Array.isArray(filas) || filas.length === 0) {
+    return res.status(400).json({ success: false, error: 'No se recibieron filas para cargar' });
+  }
+  if (filas.length > 2000) {
+    return res.status(400).json({ success: false, error: 'Demasiadas filas en un solo envío (máximo 2000)' });
+  }
+
+  const vistas = new Set<string>();
+  const filasNormalizadas = filas
+    .map((f: any) => {
+      const nombre = String(f.nombre || '').trim();
+      const email = f.email ? String(f.email).trim().toLowerCase() : '';
+      const telefono = f.telefono ? normalizarTelefonoServidor(String(f.telefono)) : '';
+      return { nombre, email: email || null, telefono: telefono || null };
+    })
+    .filter((f: any) => f.nombre && (f.telefono || f.email))
+    .filter((f: any) => {
+      // Descarta duplicados dentro del mismo envío
+      const clave = f.email || f.telefono;
+      if (vistas.has(clave)) return false;
+      vistas.add(clave);
+      return true;
+    });
+
+  const invalidas = filas.length - filasNormalizadas.length;
+
+  if (filasNormalizadas.length === 0) {
+    return res.status(400).json({ success: false, error: 'Ninguna fila tiene los datos mínimos (nombre y al menos email o teléfono)' });
+  }
+
+  // Evitar duplicados contra lo que ya está cargado para este colegio
+  const { data: existentes } = await supabase
+    .from('padres_autorizados')
+    .select('email, telefono')
+    .eq('colegio_id', colegioId);
+
+  const emailsExistentes = new Set((existentes || []).map((r: any) => (r.email || '').toLowerCase()).filter(Boolean));
+  const telefonosExistentes = new Set((existentes || []).map((r: any) => normalizarTelefonoServidor(r.telefono || '')).filter(Boolean));
+
+  const filasNuevas = filasNormalizadas.filter((f: any) => {
+    if (f.email && emailsExistentes.has(f.email)) return false;
+    if (f.telefono && telefonosExistentes.has(f.telefono)) return false;
+    return true;
+  });
+  const duplicadas = filasNormalizadas.length - filasNuevas.length;
+
+  if (filasNuevas.length === 0) {
+    return res.json({ success: true, agregados: 0, duplicados: duplicadas, invalidas });
+  }
+
+  const { data, error } = await supabase
+    .from('padres_autorizados')
+    .insert(filasNuevas.map((f: any) => ({ colegio_id: colegioId, nombre: f.nombre, email: f.email, telefono: f.telefono })))
+    .select();
+  if (error) throw error;
+
+  return res.json({ success: true, agregados: data?.length || 0, duplicados: duplicadas, invalidas });
+}
+
 // Valida el link (colegioId + código) y devuelve el nombre del colegio para mostrar en la página
 app.get('/api/padron/institucion/:colegioId', async (req: Request, res: Response) => {
   const { colegioId } = req.params;
@@ -1358,67 +1450,36 @@ app.post('/api/padron/institucion/:colegioId', async (req: Request, res: Respons
     if (!resultado.ok) {
       return res.status(resultado.status).json({ success: false, error: resultado.error });
     }
-    const { supabase } = resultado;
-
-    if (!Array.isArray(filas) || filas.length === 0) {
-      return res.status(400).json({ success: false, error: 'No se recibieron filas para cargar' });
-    }
-    if (filas.length > 2000) {
-      return res.status(400).json({ success: false, error: 'Demasiadas filas en un solo envío (máximo 2000)' });
-    }
-
-    const vistas = new Set<string>();
-    const filasNormalizadas = filas
-      .map((f: any) => {
-        const nombre = String(f.nombre || '').trim();
-        const email = f.email ? String(f.email).trim().toLowerCase() : '';
-        const telefono = f.telefono ? normalizarTelefonoServidor(String(f.telefono)) : '';
-        return { nombre, email: email || null, telefono: telefono || null };
-      })
-      .filter((f: any) => f.nombre && (f.telefono || f.email))
-      .filter((f: any) => {
-        // Descarta duplicados dentro del mismo envío
-        const clave = f.email || f.telefono;
-        if (vistas.has(clave)) return false;
-        vistas.add(clave);
-        return true;
-      });
-
-    const invalidas = filas.length - filasNormalizadas.length;
-
-    if (filasNormalizadas.length === 0) {
-      return res.status(400).json({ success: false, error: 'Ninguna fila tiene los datos mínimos (nombre y al menos email o teléfono)' });
-    }
-
-    // Evitar duplicados contra lo que ya está cargado para este colegio
-    const { data: existentes } = await supabase
-      .from('padres_autorizados')
-      .select('email, telefono')
-      .eq('colegio_id', colegioId);
-
-    const emailsExistentes = new Set((existentes || []).map((r: any) => (r.email || '').toLowerCase()).filter(Boolean));
-    const telefonosExistentes = new Set((existentes || []).map((r: any) => normalizarTelefonoServidor(r.telefono || '')).filter(Boolean));
-
-    const filasNuevas = filasNormalizadas.filter((f: any) => {
-      if (f.email && emailsExistentes.has(f.email)) return false;
-      if (f.telefono && telefonosExistentes.has(f.telefono)) return false;
-      return true;
-    });
-    const duplicadas = filasNormalizadas.length - filasNuevas.length;
-
-    if (filasNuevas.length === 0) {
-      return res.json({ success: true, agregados: 0, duplicados: duplicadas, invalidas });
-    }
-
-    const { data, error } = await supabase
-      .from('padres_autorizados')
-      .insert(filasNuevas.map((f: any) => ({ colegio_id: colegioId, nombre: f.nombre, email: f.email, telefono: f.telefono })))
-      .select();
-    if (error) throw error;
-
-    return res.json({ success: true, agregados: data?.length || 0, duplicados: duplicadas, invalidas });
+    return await procesarCargaPadron(resultado.supabase, resultado.colegio.id, filas, res);
   } catch (err: any) {
     console.error('Error al cargar padrón desde la institución:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al guardar los datos' });
+  }
+});
+
+// Versión de link corto: el mismo flujo de arriba, pero identificando el colegio solo por
+// su código de padrón (sin el UUID en la URL) — así el link que se comparte con cada familia
+// es bastante más corto: /padron.html?c=CODIGO en vez de .../padron.html?colegio=<uuid>&codigo=<codigo>.
+app.get('/api/padron/link/:codigo', async (req: Request, res: Response) => {
+  const { codigo } = req.params;
+  const resultado = await resolverColegioPorCodigoPadron(codigo);
+  if (!resultado.ok) {
+    return res.status(resultado.status).json({ success: false, error: resultado.error });
+  }
+  return res.json({ success: true, colegioNombre: resultado.colegio.nombre });
+});
+
+app.post('/api/padron/link/:codigo', async (req: Request, res: Response) => {
+  try {
+    const { codigo } = req.params;
+    const { filas } = req.body || {};
+    const resultado = await resolverColegioPorCodigoPadron(codigo);
+    if (!resultado.ok) {
+      return res.status(resultado.status).json({ success: false, error: resultado.error });
+    }
+    return await procesarCargaPadron(resultado.supabase, resultado.colegio.id, filas, res);
+  } catch (err: any) {
+    console.error('Error al cargar padrón desde la institución (link corto):', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al guardar los datos' });
   }
 });
