@@ -1345,8 +1345,10 @@ app.get('/api/padron/institucion/:colegioId', async (req: Request, res: Response
   return res.json({ success: true, colegioNombre: resultado.colegio.nombre });
 });
 
-// Recibe la lista pegada por la secretaría del colegio y la guarda en padres_autorizados,
-// evitando duplicados (por teléfono o email) contra lo ya cargado para ese colegio.
+// Recibe los datos que cada padre/madre/tutor/a carga desde padron.html (una fila,
+// la suya propia) y los guarda en padres_autorizados, evitando duplicados (por
+// teléfono o email) contra lo ya cargado para ese colegio. Acepta también varias
+// filas de una vez por si en el futuro se vuelve a usar una carga masiva.
 app.post('/api/padron/institucion/:colegioId', async (req: Request, res: Response) => {
   try {
     const { colegioId } = req.params;
