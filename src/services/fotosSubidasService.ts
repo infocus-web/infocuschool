@@ -219,32 +219,60 @@ export async function regenerarMarcaAguaAdmin(limite = 8, offset = 0): Promise<R
   }
 }
 
+export interface SeccionGaleria {
+  colegioId: string;
+  grado: string;
+  turno: string;
+  division: string;
+}
+
+export interface ResultadoGaleriaPublica {
+  fotos: Foto[];
+  /** Sección real confirmada por el servidor a partir del código (null si se usó FOTOS_MUESTRA). */
+  seccion: SeccionGaleria | null;
+}
+
 /**
- * Galería pública para el portal de familias: trae las fotos reales de un curso puntual
- * (grado + turno + división) desde Supabase. Si todavía no hay fotos reales cargadas para
- * ese curso, devuelve las fotos de muestra estándar — igual que antes.
+ * Galería pública para el portal de familias: trae las fotos reales del curso al que
+ * pertenece un código de acceso válido.
+ *
+ * IMPORTANTE — SEGURIDAD: antes esta función (y el endpoint `/api/fotos`) recibían
+ * directamente grado/turno/división, que son datos públicos visibles en un combo del sitio.
+ * Eso permitía ver las fotos reales de cualquier curso sin ningún código, con sólo elegir las
+ * opciones del desplegable. Ahora la ÚNICA llave es el código secreto de la sección: el
+ * servidor lo valida contra `codigos_seccion` y es quien decide a qué grado/turno/división
+ * corresponde — nunca se confía en lo que mande el navegador. Sin un código válido, se
+ * devuelven las fotos de muestra (para poder mostrar una vista previa antes de inscribirse).
  */
-export async function obtenerGaleriaPublica(params: {
-  grado?: string;
-  turno?: string;
-  division?: string;
-}): Promise<Foto[]> {
-  if (!params.grado || !params.turno) {
-    return FOTOS_MUESTRA;
+export async function obtenerGaleriaPublica(params: { codigo?: string | null }): Promise<ResultadoGaleriaPublica> {
+  const codigo = (params.codigo || '').trim();
+  if (!codigo) {
+    return { fotos: FOTOS_MUESTRA, seccion: null };
   }
   try {
     const query = new URLSearchParams();
-    query.set('grado', params.grado);
-    query.set('turno', params.turno);
-    if (params.division) query.set('division', params.division);
+    query.set('codigo', codigo);
 
     const res = await fetch(`/api/fotos?${query.toString()}`);
     const data = await res.json();
-    if (!res.ok || !data.success || !Array.isArray(data.fotos) || data.fotos.length === 0) {
-      return FOTOS_MUESTRA;
+    if (!res.ok || !data.success) {
+      return { fotos: FOTOS_MUESTRA, seccion: null };
     }
 
-    return data.fotos.map((row: any): Foto => {
+    const seccion: SeccionGaleria | null = data.seccion
+      ? {
+          colegioId: data.seccion.colegioId,
+          grado: data.seccion.grado,
+          turno: data.seccion.turno,
+          division: data.seccion.division,
+        }
+      : null;
+
+    if (!Array.isArray(data.fotos) || data.fotos.length === 0) {
+      return { fotos: FOTOS_MUESTRA, seccion };
+    }
+
+    const fotos = data.fotos.map((row: any): Foto => {
       const categoria = row.categoria as CategoriaFoto;
       // La vista ampliada usa la copia con la marca de agua quemada en los píxeles
       // (preview_path). La miniatura de la grilla usa la copia chica y limpia (thumb_path)
@@ -266,8 +294,10 @@ export async function obtenerGaleriaPublica(params: {
         division: row.division || undefined,
       };
     });
+
+    return { fotos, seccion };
   } catch (err) {
     console.error('Error al obtener la galería de fotos:', err);
-    return FOTOS_MUESTRA;
+    return { fotos: FOTOS_MUESTRA, seccion: null };
   }
 }
