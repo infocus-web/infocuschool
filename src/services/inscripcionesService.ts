@@ -56,33 +56,71 @@ export interface FilaPadron {
 const STORAGE_KEY_ACTIVO = 'infocus_familia_activa_v1';
 
 /**
- * Determines the recommended course code based on the student's sala, turno, and division.
- * Se usa solo como referencia visual (el servidor calcula el código real de forma independiente).
+ * Determines the recommended course code based on the student's sala/grado/año, turno, and division.
+ * Se usa solo como referencia visual (el servidor calcula el código real de forma independiente,
+ * en `determinarCodigoCursoServidor` dentro de server.ts — mantener ambas en sincro).
  */
 export function determinarCodigoParaInscripcion(datos: { grado: string; turno: string; division: string }): string {
-  const g = datos.grado.toLowerCase();
-  const t = datos.turno.toLowerCase();
+  const g = (datos.grado || '').toLowerCase();
+  const t = (datos.turno || '').toLowerCase();
   const d = (datos.division || '').toLowerCase();
+  const esJornadaExtendida = t.includes('jornada') || t.includes('extendida') || d.includes('jornada') || d.includes('extendida');
 
-  if (g.includes('3')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-3JE';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
-    return 'SALA-3TM';
-  }
-  if (g.includes('4')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-4JE';
-    if (d.includes('c')) return 'SALA-4C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
-    return 'SALA-4A';
-  }
-  if (g.includes('5')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-5JE';
-    if (d.includes('c')) return 'SALA-5C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
-    return 'SALA-5A';
+  // Nivel inicial (jardín): "Sala 3/4/5 años" — se mantienen los mismos códigos de
+  // siempre (SALA-3TM, SALA-4A, etc.) para no romper los cursos de nivel inicial que
+  // ya tienen fotos cargadas con ellos.
+  if (g.includes('sala')) {
+    if (g.includes('3')) {
+      if (esJornadaExtendida) return 'SALA-3JE';
+      if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
+      return 'SALA-3TM';
+    }
+    if (g.includes('4')) {
+      if (esJornadaExtendida) return 'SALA-4JE';
+      if (d.includes('c')) return 'SALA-4C';
+      if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
+      return 'SALA-4A';
+    }
+    if (g.includes('5')) {
+      if (esJornadaExtendida) return 'SALA-5JE';
+      if (d.includes('c')) return 'SALA-5C';
+      if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
+      return 'SALA-5A';
+    }
   }
 
-  return 'SALA-3TM';
+  const turnoAbrev = esJornadaExtendida ? 'JE' : (t.includes('tarde') ? 'TT' : 'TM');
+
+  // Abreviatura de la división (ej: "División C" -> "C", "Jornada Extendida" -> "JO"),
+  // para diferenciar divisiones dentro del mismo grado y turno.
+  const divisionAbrev = d
+    .replace(/divisi[oó]n/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 2) || 'X';
+
+  // Primaria: "1° grado" a "7° grado" (o variantes equivalentes que digan "grado").
+  const matchGrado = g.match(/(\d+)\s*°?\s*grado/);
+  if (matchGrado) {
+    return `GRADO${matchGrado[1]}-${divisionAbrev}${turnoAbrev}`;
+  }
+
+  // Secundaria: "1° año" a "6° año".
+  const matchAnio = g.match(/(\d+)\s*°?\s*a[ñn]o/);
+  if (matchAnio) {
+    return `ANIO${matchAnio[1]}-${divisionAbrev}${turnoAbrev}`;
+  }
+
+  // Cualquier otro texto de grado no contemplado arriba: código determinístico a partir
+  // del texto real (antes acá se devolvía siempre 'SALA-3TM' de memoria).
+  const gradoSlug = g
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toUpperCase()
+    .slice(0, 12) || 'CURSO';
+  return `${gradoSlug}-${divisionAbrev}${turnoAbrev}`;
 }
 
 /** Convierte una fila snake_case de Supabase (tabla `inscripciones`) al tipo usado en el frontend */
