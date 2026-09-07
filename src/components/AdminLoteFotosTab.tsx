@@ -357,6 +357,17 @@ export default function AdminLoteFotosTab() {
           item.errorMensaje = undefined;
           exitosas++;
 
+          // "?v=..." al final de la URL: como el nombre de archivo en Storage siempre es el
+          // mismo para una foto dada (se sube con upsert:true, pisando la anterior si ya
+          // existía), el navegador puede quedarse con la versión vieja en su caché de
+          // imágenes aunque el archivo del servidor ya haya cambiado — pasó varias veces
+          // durante las pruebas de la marca de agua. Agregar un parámetro con la hora de
+          // subida hace que cada versión tenga una URL distinta, así el navegador siempre
+          // pide la imagen de nuevo en vez de reusar una vieja.
+          const versionCache = Date.now();
+          const urlWeb = resWeb.publicUrl ? `${resWeb.publicUrl}?v=${versionCache}` : pathWeb;
+          const urlThumb = resThumb.publicUrl ? `${resThumb.publicUrl}?v=${versionCache}` : pathThumb;
+
           // Preparar para registrar en el catálogo de fotos activas (Supabase)
           fotosParaRegistrar.push({
             colegioId: colegioSeleccionado,
@@ -365,8 +376,8 @@ export default function AdminLoteFotosTab() {
             turno: seccionActual.turno,
             division: seccionActual.division,
             storagePathHD: pathHD,
-            storagePathWeb: resWeb.publicUrl || pathWeb,
-            storagePathThumb: resThumb.publicUrl || pathThumb,
+            storagePathWeb: urlWeb,
+            storagePathThumb: urlThumb,
             alumnoNombre: item.alumnoNombre
           });
         }
