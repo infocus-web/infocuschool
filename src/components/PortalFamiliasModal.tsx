@@ -1065,70 +1065,25 @@ export default function PortalFamiliasModal({
                 </div>
               </div>
 
-              {/* Desplegable de Colegios */}
-              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs text-left space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="select-colegio-dropdown" className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <School className="w-4 h-4 text-amber-500" />
-                    <span>O elegí tu colegio de la lista:</span>
-                  </label>
-                  {selectedColegio && (
-                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      Colegio seleccionado
-                    </span>
-                  )}
-                </div>
-
-                <div className="relative">
-                  <select
-                    id="select-colegio-dropdown"
-                    value={selectedColegio?.id || ''}
-                    onChange={(e) => {
-                      const colId = e.target.value;
-                      if (!colId) {
-                        setSelectedColegio(null);
-                        return;
-                      }
-                      const col = colegios.find((c) => c.id === colId);
-                      if (col) {
-                        setSelectedColegio(col);
-                        setCodigoErrorMsg(null);
-                        setCodigoValidadoMsg(`Colegio seleccionado: ${col.nombre}`);
-                      }
-                    }}
-                    className="w-full pl-4 pr-10 py-3 text-xs sm:text-sm font-semibold text-slate-800 bg-slate-50 hover:bg-white border-2 border-slate-300 hover:border-amber-400 focus:border-amber-500 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400/20 transition-all cursor-pointer shadow-2xs appearance-none"
-                  >
-                    <option value="">-- Seleccioná tu colegio de la lista ({colegios.length} disponibles) --</option>
-                    {colegios.map((col) => (
-                      <option key={col.id} value={col.id}>
-                        {col.nombre} {col.localidad ? `(${col.localidad} · ${col.zona})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-500">
-                    <ChevronDown className="w-4 h-4 text-slate-600" />
-                  </div>
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Desplegá la lista para elegir el establecimiento escolar y habilitar la carga de curso, división y alumno.
-                </p>
-              </div>
-
-              {/* Mensaje de guía cuando aún no se eligió colegio */}
-              {!selectedColegio && (
+              {/* Antes acá había un desplegable para elegir el colegio directamente, sin código.
+                  Se sacó: permitía ver fotos reales (con nombre y apellido del alumno) de
+                  cualquier sala/turno de cualquier colegio sin identificarse. Ahora la única
+                  forma de llegar a la galería es con un código válido (de curso, familiar, o
+                  de institución) — recién ahí aparece el formulario de abajo para confirmar
+                  los datos del alumno/a. */}
+              {!(selectedColegio && codigoValidadoMsg) && (
                 <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-5 text-center space-y-1">
                   <p className="text-xs font-bold text-amber-950">
-                    Elegí tu colegio en el desplegable de arriba o ingresá tu código de curso
+                    Ingresá tu código de curso, familiar o de institución arriba para continuar
                   </p>
                   <p className="text-[11px] text-amber-800">
-                    Al seleccionar tu colegio podrás indicar el nombre de tu hijo/a, sala o grado, división y turno para acceder a la galería oficial.
+                    Si no tenés tu código, usá "Solicitar mi Código" más arriba y te lo facilitamos.
                   </p>
                 </div>
               )}
 
               {/* Student details form */}
-              {selectedColegio && (
+              {selectedColegio && codigoValidadoMsg && (
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 text-left shadow-xs animate-in fade-in duration-150">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
