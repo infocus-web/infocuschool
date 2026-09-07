@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checklist de Configuración — InFocus Fotografía y Video</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    h1, h2, h3, .font-heading { font-family: 'Outfit', sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen py-10 px-4 sm:px-6">
+
+  <div class="max-w-3xl mx-auto">
+    <!-- Header -->
+    <div class="bg-slate-900 text-white rounded-3xl p-6 sm:p-8 mb-6 shadow-xl relative overflow-hidden">
+      <div class="absolute -right-10 -bottom-10 w-48 h-48 bg-amber-500/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="flex items-center gap-3 mb-3">
+        <span class="px-3 py-1 bg-amber-500/20 text-amber-300 text-xs font-bold uppercase tracking-wider rounded-full border border-amber-400/30">
+          Formulario de Configuración
+        </span>
+      </div>
+      <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-white mb-2">
+        InFocus Fotografía y Video
+      </h1>
+      <p class="text-slate-300 text-sm leading-relaxed max-w-xl">
+        Completá o ajustá los datos a continuación. Cuando termines, hacé clic en 
+        <strong class="text-amber-400">"Copiar datos para el chat"</strong> y pegalos directamente en la conversación para aplicarlos de inmediato.
+      </p>
+    </div>
+
+    <!-- Formulario interactivo -->
+    <form id="configForm" class="space-y-6" onsubmit="event.preventDefault(); copySummary();">
+
+      <!-- 1. DATOS BANCARIOS -->
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+        <div class="flex items-center gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm">
+            1
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Datos Bancarios</h2>
+            <p class="text-xs text-slate-500">Para transferencias cuando las familias no usan Mercado Pago</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Alias de transferencia</label>
+            <input type="text" id="alias" placeholder="Ej: INFOCUS.FOTO" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">CBU o CVU</label>
+            <input type="text" id="cbu" placeholder="Ej: 0070012300000012345678" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Banco o Billetera</label>
+            <input type="text" id="banco" placeholder="Ej: Mercado Pago / Banco Galicia / Santander" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Titular de la cuenta</label>
+            <input type="text" id="titular" placeholder="Ej: InFocus Fotografía y Video / Nombre y Apellido" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-bold text-slate-700 mb-1">CUIT / CUIL</label>
+            <input type="text" id="cuit" placeholder="Ej: 30-71829341-8" class="w-full sm:w-1/2 px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. REDES SOCIALES Y CONTACTO -->
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+        <div class="flex items-center gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div class="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center font-bold text-sm">
+            2
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Redes Sociales y Enlaces</h2>
+            <p class="text-xs text-slate-500">Aparecerán en el pie de página y cabecera del sitio</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Usuario de Instagram</label>
+            <div class="flex items-center">
+              <span class="px-3 py-2 bg-slate-100 border border-r-0 border-slate-300 rounded-l-xl text-xs text-slate-500 font-semibold">@</span>
+              <input type="text" id="instagram" placeholder="infocus_fotografia" class="w-full px-3 py-2 text-sm rounded-r-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Facebook u otra web (opcional)</label>
+            <input type="text" id="facebook" placeholder="Ej: facebook.com/infocus" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. ZONA DE COBERTURA -->
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+        <div class="flex items-center gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm">
+            3
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Zona de Cobertura y Ubicación</h2>
+            <p class="text-xs text-slate-500">¿Dónde realizan coberturas escolares?</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Zonas de trabajo</label>
+            <input type="text" id="zonas" value="CABA y Gran Buenos Aires (Norte, Sur y Oeste)" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Ciudad / Provincia base</label>
+            <input type="text" id="ciudad" value="Buenos Aires, Argentina" class="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition" />
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. PAQUETES Y PRECIOS -->
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+        <div class="flex items-center gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center font-bold text-sm">
+            4
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Paquetes Escolares y Precios</h2>
+            <p class="text-xs text-slate-500">Modificá los precios o descripción de lo que incluye cada kit</p>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <!-- Kit 1 -->
+          <div class="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex-1">
+              <span class="text-xs font-bold text-slate-800">Kit 1 — Esencial</span>
+              <p class="text-[11px] text-slate-500">1 individual 15x21 + 1 grupal 15x21 + 4 carnet + digital HD</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500 font-semibold">$</span>
+              <input type="text" id="kit1_precio" value="14500" class="w-28 px-2.5 py-1.5 text-sm font-bold text-slate-900 bg-white rounded-lg border border-slate-300 text-right" />
+              <span class="text-xs text-slate-400">ARS</span>
+            </div>
+          </div>
+
+          <!-- Kit 2 -->
+          <div class="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex-1">
+              <span class="text-xs font-bold text-slate-800">Kit 2 — Clásico Escolar (Recomendado)</span>
+              <p class="text-[11px] text-slate-500">1 individual 20x30 + 1 grupal 20x30 + 2 individuales 13x18 + 8 stickers + digital HD</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500 font-semibold">$</span>
+              <input type="text" id="kit2_precio" value="19800" class="w-28 px-2.5 py-1.5 text-sm font-bold text-slate-900 bg-white rounded-lg border border-slate-300 text-right" />
+              <span class="text-xs text-slate-400">ARS</span>
+            </div>
+          </div>
+
+          <!-- Kit 3 -->
+          <div class="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex-1">
+              <span class="text-xs font-bold text-slate-800">Kit 3 — Premium Recuerdo</span>
+              <p class="text-[11px] text-slate-500">Carpeta institucional tríptica personalizada + ampliación 20x30 + stickers + calendario + digital HD</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500 font-semibold">$</span>
+              <input type="text" id="kit3_precio" value="26500" class="w-28 px-2.5 py-1.5 text-sm font-bold text-slate-900 bg-white rounded-lg border border-slate-300 text-right" />
+              <span class="text-xs text-slate-400">ARS</span>
+            </div>
+          </div>
+
+          <!-- Kit 4 -->
+          <div class="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex-1">
+              <span class="text-xs font-bold text-slate-800">Kit 4 — Fotocubo & Egresados</span>
+              <p class="text-[11px] text-slate-500">Base de madera ranurada de diseño + 6 fotos cuadradas 10x10 papel fine-art + digital HD</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500 font-semibold">$</span>
+              <input type="text" id="kit4_precio" value="28900" class="w-28 px-2.5 py-1.5 text-sm font-bold text-slate-900 bg-white rounded-lg border border-slate-300 text-right" />
+              <span class="text-xs text-slate-400">ARS</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. PRODUCTOS ADICIONALES -->
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+        <div class="flex items-center gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div class="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-sm">
+            5
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Productos Adicionales (Upsells)</h2>
+            <p class="text-xs text-slate-500">Opcionales que los padres pueden agregar al carrito</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <p class="text-xs font-bold text-slate-800 mb-1">Stickers (8 unid.)</p>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-slate-500">$</span>
+              <input type="text" id="add_stickers" value="2500" class="w-full px-2 py-1 text-sm font-bold text-slate-800 rounded border border-slate-300 text-right" />
+            </div>
+          </div>
+
+          <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <p class="text-xs font-bold text-slate-800 mb-1">Marco de Madera</p>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-slate-500">$</span>
+              <input type="text" id="add_marco" value="4200" class="w-full px-2 py-1 text-sm font-bold text-slate-800 rounded border border-slate-300 text-right" />
+            </div>
+          </div>
+
+          <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <p class="text-xs font-bold text-slate-800 mb-1">Llavero Acrílico Bifaz</p>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-slate-500">$</span>
+              <input type="text" id="add_llavero" value="2200" class="w-full px-2 py-1 text-sm font-bold text-slate-800 rounded border border-slate-300 text-right" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. PIN DE PANEL DE FOTÓGRAFO -->
+      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+        <div class="flex items-center gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center font-bold text-sm">
+            6
+          </div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">PIN del Panel de Administración</h2>
+            <p class="text-xs text-slate-500">Clave para que solo vos puedas subir fotos y gestionar cursos</p>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">PIN deseado</label>
+          <input type="text" id="admin_pin" value="infocus" class="w-full sm:w-64 px-3 py-2 text-sm rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none" />
+        </div>
+      </div>
+
+      <!-- BOTONES DE ACCIÓN -->
+      <div class="sticky bottom-4 z-20 bg-white/95 backdrop-blur-md rounded-2xl p-4 shadow-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <button
+          type="button"
+          onclick="copySummary()"
+          class="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+          Copiar respuestas para el chat
+        </button>
+
+        <button
+          type="button"
+          onclick="downloadTxt()"
+          class="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+        >
+          <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+          Descargar .txt
+        </button>
+      </div>
+
+      <!-- Alerta de copiado -->
+      <div id="copyToast" class="hidden fixed top-5 right-5 bg-emerald-600 text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 z-50 text-sm font-bold">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        <span>¡Datos copiados al portapapeles! Pegalos en el chat.</span>
+      </div>
+
+      <!-- Vista previa del texto -->
+      <div class="bg-slate-900 text-slate-200 rounded-2xl p-5 border border-slate-800">
+        <p class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 font-mono">
+          Vista previa del texto a enviar:
+        </p>
+        <pre id="previewText" class="text-xs font-mono whitespace-pre-wrap bg-slate-950 p-4 rounded-xl text-emerald-400 overflow-x-auto max-h-60 border border-slate-800/80"></pre>
+      </div>
+
+    </form>
+  </div>
+
+  <script>
+    function generateText() {
+      const alias = document.getElementById('alias').value.trim() || '(No especificado)';
+      const cbu = document.getElementById('cbu').value.trim() || '(No especificado)';
+      const banco = document.getElementById('banco').value.trim() || '(No especificado)';
+      const titular = document.getElementById('titular').value.trim() || '(No especificado)';
+      const cuit = document.getElementById('cuit').value.trim() || '(No especificado)';
+
+      const instagram = document.getElementById('instagram').value.trim() || '(No especificado)';
+      const facebook = document.getElementById('facebook').value.trim() || '(No especificado)';
+
+      const zonas = document.getElementById('zonas').value.trim() || 'CABA y GBA';
+      const ciudad = document.getElementById('ciudad').value.trim() || 'Buenos Aires, Argentina';
+
+      const kit1 = document.getElementById('kit1_precio').value.trim() || '14500';
+      const kit2 = document.getElementById('kit2_precio').value.trim() || '19800';
+      const kit3 = document.getElementById('kit3_precio').value.trim() || '26500';
+      const kit4 = document.getElementById('kit4_precio').value.trim() || '28900';
+
+      const stickers = document.getElementById('add_stickers').value.trim() || '2500';
+      const marco = document.getElementById('add_marco').value.trim() || '4200';
+      const llavero = document.getElementById('add_llavero').value.trim() || '2200';
+
+      const pin = document.getElementById('admin_pin').value.trim() || 'infocus';
+
+      return `DATOS PARA INFOCUS FOTOGRAFÍA Y VIDEO:
+
+1. DATOS BANCARIOS:
+- Alias: ${alias}
+- CBU/CVU: ${cbu}
+- Banco: ${banco}
+- Titular: ${titular}
+- CUIT/CUIL: ${cuit}
+
+2. REDES SOCIALES:
+- Instagram: @${instagram.replace('@', '')}
+- Facebook / Web: ${facebook}
+
+3. ZONAS DE COBERTURA:
+- Zonas: ${zonas}
+- Ciudad/Base: ${ciudad}
+
+4. PRECIOS DE KITS:
+- Kit Esencial: $${kit1} ARS
+- Kit Clásico: $${kit2} ARS
+- Kit Premium Recuerdo: $${kit3} ARS
+- Kit Fotocubo Egresados: $${kit4} ARS
+
+5. PRODUCTOS ADICIONALES:
+- Stickers personalizados: $${stickers} ARS
+- Marco de madera: $${marco} ARS
+- Llavero acrílico bifaz: $${llavero} ARS
+
+6. PIN DE ADMINISTRACIÓN:
+- PIN: ${pin}`;
+    }
+
+    function updatePreview() {
+      document.getElementById('previewText').innerText = generateText();
+    }
+
+    function copySummary() {
+      const text = generateText();
+      navigator.clipboard.writeText(text).then(() => {
+        const toast = document.getElementById('copyToast');
+        toast.classList.remove('hidden');
+        setTimeout(() => toast.classList.add('hidden'), 3500);
+      });
+    }
+
+    function downloadTxt() {
+      const text = generateText();
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'infocus_datos_configuracion.txt';
+      a.click();
+    }
+
+    // Escuchar cambios en cualquier input para refrescar la vista previa en vivo
+    document.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', updatePreview);
+    });
+
+    // Iniciar con la vista previa cargada
+    updatePreview();
+  </script>
+
+</body>
+</html>
