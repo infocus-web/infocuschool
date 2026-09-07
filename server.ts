@@ -623,28 +623,43 @@ app.delete('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respo
   }
 });
 
-// Galería pública: fotos reales de un curso puntual (grado+turno+división) para el portal de familias.
-// Si todavía no hay fotos reales cargadas para ese curso, el frontend usa fotos de muestra.
+// Galería pública: fotos reales de un curso puntual, para el portal de familias.
+// SEGURIDAD: esta ruta es pública (sin sesión), así que la única puerta de entrada es el
+// código secreto de la sección (`codigo_seccion`, ver `codigos_seccion` más arriba). Antes
+// esta ruta aceptaba directamente grado/turno/división —datos públicos, visibles en un
+// combo del sitio— y devolvía las fotos reales sin pedir ningún código: cualquiera podía
+// ver las fotos de cualquier curso con sólo elegir las opciones del desplegable. Ahora el
+// grado/turno/división salen del código validado, nunca de lo que mande el navegador.
 app.get('/api/fotos', async (req: Request, res: Response) => {
   try {
-    const { grado, turno, division } = req.query as Record<string, string | undefined>;
-    if (!grado || !turno) {
-      return res.status(400).json({ success: false, error: 'Faltan grado y turno para buscar la galería' });
+    const { codigo } = req.query as Record<string, string | undefined>;
+    if (!codigo || !codigo.trim()) {
+      return res.status(401).json({ success: false, error: 'Falta el código de acceso para ver esta galería' });
     }
     const supabase = getServerSupabase();
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
 
-    const codigoCurso = determinarCodigoCursoServidor(grado, turno, division || '');
+    const seccion = await buscarSeccionPorCodigoSecreto(supabase, codigo);
+    if (!seccion) {
+      return res.status(401).json({ success: false, error: 'Código de acceso incorrecto o vencido' });
+    }
+
+    const codigoCurso = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
     const { data, error } = await supabase
       .from('fotos')
       .select('*')
+      .eq('colegio_id', seccion.colegioId)
       .eq('codigo_curso', codigoCurso)
       .order('created_at', { ascending: true });
     if (error) throw error;
 
-    return res.json({ success: true, fotos: data || [] });
+    return res.json({
+      success: true,
+      fotos: data || [],
+      seccion: { colegioId: seccion.colegioId, grado: seccion.grado, turno: seccion.turno, division: seccion.division }
+    });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener la galería' });
   }
@@ -925,6 +940,128 @@ function normalizarTelefonoServidor(tel: string): string {
   return (tel || '').replace(/\D/g, '');
 }
 
+// ==============================================================================
+// CÓDIGOS DE SECCIÓN: el código real y secreto que necesita una familia para ver
+// las fotos de un curso puntual (colegio + grado + turno + división).
+//
+// IMPORTANTE — por qué existe esto: `determinarCodigoCursoServidor` de arriba es
+// una FÓRMULA pública y determinística (mismo texto de grado/turno/división →
+// siempre el mismo código). Sirve para ETIQUETAR internamente las fotos en la
+// tabla `fotos`, pero nunca debe tratarse como un secreto: cualquiera que mire
+// el código fuente del sitio (es un repo público) o simplemente elija las
+// opciones del combo de grado/turno/división puede reconstruirlo exacto sin
+// haber recibido nunca un código real. Por eso `/api/fotos` YA NO usa esa
+// fórmula como control de acceso: exige y valida el código guardado acá, en
+// `codigos_seccion`, que es un valor aleatorio generado por el servidor (o
+// elegido a mano por el fotógrafo) y jamás derivable a partir del grado, turno
+// o división. Esta tabla no tiene ninguna policy de lectura pública en Supabase:
+// sólo el servidor (Service Role Key) puede consultarla.
+function generarCodigoSecretoSeccion(): string {
+  // Alfabeto sin 0/O/1/I para que no se confundan al leerlo o dictarlo por WhatsApp.
+  const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let codigo = '';
+  for (let i = 0; i < 8; i++) {
+    codigo += alfabeto[crypto.randomInt(alfabeto.length)];
+  }
+  return `${codigo.slice(0, 4)}-${codigo.slice(4, 8)}`;
+}
+
+function normalizarCodigoSeccion(codigo: string): string {
+  return String(codigo || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * Devuelve el código secreto ya asignado a esta sección (colegio+grado+turno+división)
+ * si ya existe, o crea uno nuevo si es la primera vez. Todas las familias de la misma
+ * sección terminan compartiendo el mismo código (así funciona hoy: un código por curso,
+ * para todo el grupo de WhatsApp de esa sección), pero ese código nunca se puede adivinar
+ * desde afuera. Si se pasa `candidatoPreferido` (por ejemplo, un código que el fotógrafo
+ * escribió a mano, o uno pre-cargado en el padrón), se usa como valor inicial siempre que
+ * no esté ya en uso por otra sección distinta.
+ */
+async function obtenerOCrearCodigoSeccion(
+  supabase: any,
+  colegioId: string,
+  grado: string,
+  turno: string,
+  division: string,
+  candidatoPreferido?: string | null
+): Promise<string> {
+  const cid = String(colegioId || '').trim();
+  const g = String(grado || '').trim();
+  const t = String(turno || '').trim();
+  const d = String(division || '').trim();
+
+  const { data: existente } = await supabase
+    .from('codigos_seccion')
+    .select('codigo_secreto')
+    .eq('colegio_id', cid)
+    .eq('grado', g)
+    .eq('turno', t)
+    .eq('division', d)
+    .maybeSingle();
+  if (existente?.codigo_secreto) {
+    return existente.codigo_secreto;
+  }
+
+  let candidato = String(candidatoPreferido || '').trim().toUpperCase();
+  if (candidato) {
+    const { data: enUso } = await supabase
+      .from('codigos_seccion')
+      .select('id')
+      .eq('codigo_secreto', candidato)
+      .maybeSingle();
+    if (enUso) {
+      // Ese código ya pertenece a otra sección distinta: se descarta y se genera uno nuevo,
+      // en vez de dejar que dos secciones distintas terminen compartiendo el mismo código.
+      candidato = '';
+    }
+  }
+  if (!candidato) {
+    candidato = generarCodigoSecretoSeccion();
+  }
+
+  const { data: creado, error } = await supabase
+    .from('codigos_seccion')
+    .insert({ colegio_id: cid, grado: g, turno: t, division: d, codigo_secreto: candidato })
+    .select('codigo_secreto')
+    .single();
+
+  if (error) {
+    // Posible carrera (dos aprobaciones casi simultáneas para la misma sección): releer
+    // en vez de fallar, ya que probablemente alguien más ya la creó un instante antes.
+    const { data: relectura } = await supabase
+      .from('codigos_seccion')
+      .select('codigo_secreto')
+      .eq('colegio_id', cid)
+      .eq('grado', g)
+      .eq('turno', t)
+      .eq('division', d)
+      .maybeSingle();
+    if (relectura?.codigo_secreto) return relectura.codigo_secreto;
+    throw error;
+  }
+
+  return creado.codigo_secreto;
+}
+
+/** Busca a qué sección (colegio+grado+turno+división) pertenece un código secreto ingresado. */
+async function buscarSeccionPorCodigoSecreto(
+  supabase: any,
+  codigoIngresado: string
+): Promise<{ colegioId: string; grado: string; turno: string; division: string } | null> {
+  const limpio = normalizarCodigoSeccion(codigoIngresado);
+  if (!limpio) return null;
+
+  const { data } = await supabase.from('codigos_seccion').select('colegio_id, grado, turno, division, codigo_secreto');
+  if (!Array.isArray(data)) return null;
+
+  const match = data.find((row: any) => normalizarCodigoSeccion(row.codigo_secreto) === limpio);
+  if (!match) return null;
+
+  return { colegioId: match.colegio_id, grado: match.grado, turno: match.turno, division: match.division };
+}
+
 // Inscripción pública: valida contra el padrón autorizado del colegio y asigna código al instante si coincide.
 // Todo el acceso a `padres_autorizados` e `inscripciones` pasa exclusivamente por acá, del lado del servidor
 // (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
@@ -1022,9 +1159,9 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
 
     if (estado !== 'aceptado' && matchPadre) {
       estado = 'aceptado';
-      codigoAcceso = String(
-        matchPadre.codigo_asignado || determinarCodigoCursoServidor(grado, turno, division)
-      ).trim().toUpperCase();
+      // El código real de la sección es el que la familia va a usar para ver las fotos —
+      // nunca la fórmula pública determinarCodigoCursoServidor (ver codigos_seccion arriba).
+      codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, grado, turno, division, matchPadre.codigo_asignado);
     }
 
     const inscripcionRow: Record<string, any> = {
@@ -1171,9 +1308,20 @@ app.post('/api/admin/inscripciones/:id/aprobar', requireAdminAuth, async (req: R
       return res.status(404).json({ success: false, error: 'Inscripción no encontrada' });
     }
 
-    const codigoFinal = String(
-      codigo || existente.codigo_asignado || determinarCodigoCursoServidor(existente.grado, existente.turno, existente.division)
-    ).trim().toUpperCase();
+    // El código final SIEMPRE es el código real y secreto de esa sección (colegio+grado+turno+
+    // división) guardado en `codigos_seccion` — nunca la fórmula pública. Si la sección ya
+    // tenía un código asignado (por ejemplo, otra familia del mismo curso ya fue aprobada antes),
+    // se reutiliza ese mismo código para todos; si es la primera vez, se usa lo que haya escrito
+    // el fotógrafo (o el código previo de esta inscripción) como sugerencia, y si no, se genera
+    // uno nuevo al azar.
+    const codigoFinal = await obtenerOCrearCodigoSeccion(
+      supabase,
+      existente.colegio_id,
+      existente.grado,
+      existente.turno,
+      existente.division,
+      codigo || existente.codigo_asignado
+    );
 
     const now = new Date();
     const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
