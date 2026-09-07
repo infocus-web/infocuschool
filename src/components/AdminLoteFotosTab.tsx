@@ -137,6 +137,19 @@ export default function AdminLoteFotosTab() {
     }
   };
 
+  // Convierte un nombre de archivo cualquiera (con espacios, tildes, "ñ", paréntesis, etc.)
+  // en una clave segura para Supabase Storage. Sin esto, un archivo como "con la seño (1).png"
+  // hace fallar la subida con "Invalid key" — le pasó a las fotos con la docente porque son las
+  // únicas que traían "ñ" en el nombre; "foto_grupal_grado" e "individual" nunca lo tuvieron.
+  const sanitizarNombreParaStorage = (nombre: string): string => {
+    return nombre
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // saca tildes/diacríticos (é→e, ñ→n, etc.)
+      .replace(/[^a-zA-Z0-9._-]/g, '_') // espacios, paréntesis y cualquier otro símbolo → "_"
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'foto';
+  };
+
   // Convierte el dataURL del canvas (siempre JPEG) en un Blob real para subirlo a Supabase Storage
   const dataUrlABlob = (dataUrl: string): Blob => {
     const [header, base64] = dataUrl.split(',');
@@ -301,10 +314,15 @@ export default function AdminLoteFotosTab() {
         item.estado = 'subiendo';
         setFotosLote([...colaActualizada]);
 
-        const pathHD = `2026/${cursoSeleccionado}/originales/${item.nombreOriginal}`;
-        const nombreBaseWeb = item.nombreOriginal.replace(/\.[^./]+$/, '');
-        const pathWeb = `2026/${cursoSeleccionado}/muestras/${nombreBaseWeb}.jpg`;
-        const pathThumb = `2026/${cursoSeleccionado}/miniaturas/${nombreBaseWeb}.jpg`;
+        // Nombre saneado para la clave de Storage (ver sanitizarNombreParaStorage más arriba)
+        // — el nombre original (con espacios, "ñ", etc.) se sigue mostrando tal cual en el
+        // panel, sólo la clave del archivo en Storage usa la versión saneada.
+        const extensionOriginal = (item.nombreOriginal.match(/\.[^./]+$/)?.[0] || '.jpg');
+        const nombreBaseOriginal = item.nombreOriginal.replace(/\.[^./]+$/, '');
+        const nombreBaseSaneado = sanitizarNombreParaStorage(nombreBaseOriginal);
+        const pathHD = `2026/${cursoSeleccionado}/originales/${nombreBaseSaneado}${extensionOriginal}`;
+        const pathWeb = `2026/${cursoSeleccionado}/muestras/${nombreBaseSaneado}.jpg`;
+        const pathThumb = `2026/${cursoSeleccionado}/miniaturas/${nombreBaseSaneado}.jpg`;
 
         // 1. Upload HD (el archivo original, sin tocar) al bucket privado
         const resHD = await uploadFotoHD(item.file, pathHD);
