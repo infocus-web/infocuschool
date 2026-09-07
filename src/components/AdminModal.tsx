@@ -39,11 +39,12 @@ import {
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
 import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
-import { 
-  loginAdminConServidor, 
-  verificarSesionAdmin, 
-  cerrarSesionAdmin, 
-  actualizarEstadoPedidoAdmin 
+import {
+  loginAdminConServidor,
+  verificarSesionAdmin,
+  cerrarSesionAdmin,
+  actualizarEstadoPedidoAdmin,
+  eliminarPedidoAdmin
 } from '../services/adminAuthService';
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminPadronTab from './AdminPadronTab';
@@ -81,6 +82,31 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
+  // Id del pedido que se está eliminando (para deshabilitar el botón mientras se procesa)
+  const [eliminandoPedidoId, setEliminandoPedidoId] = useState<string | null>(null);
+
+  const handleEliminarPedido = async (pedido: PedidoEscolarCompleto) => {
+    const confirmado = window.confirm(
+      `¿Eliminar el pedido ${pedido.id} de ${pedido.alumnoNombre}?\n\nEsta acción no se puede deshacer.`
+    );
+    if (!confirmado) return;
+
+    setEliminandoPedidoId(pedido.id);
+    try {
+      const resultado = await eliminarPedidoAdmin(pedido.supabaseId || pedido.id);
+      if (!resultado.success) {
+        window.alert(resultado.error || 'No se pudo eliminar el pedido.');
+        return;
+      }
+      const actualizados = pedidosCompletos.filter((item) => item.id !== pedido.id);
+      setPedidosCompletos(actualizados);
+      guardarPedidosEnStorage(actualizados);
+    } catch (e: any) {
+      window.alert(e?.message || 'Error de red al eliminar el pedido.');
+    } finally {
+      setEliminandoPedidoId(null);
+    }
+  };
 
   // Pending inscriptions count
   const [pendientesInscripcionCount, setPendientesInscripcionCount] = useState<number>(0);
@@ -854,12 +880,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         <th className="py-3 px-4">Total</th>
                         <th className="py-3 px-4">Pago</th>
                         <th className="py-3 px-4">Acción</th>
+                        <th className="py-3 px-4"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {pedidosCompletos.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-8 text-center text-slate-400 text-xs">
+                          <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
                             Aún no se han registrado pedidos de familias en el sistema.
                           </td>
                         </tr>
@@ -954,6 +981,17 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                 Ver en Laboratorio
                               </button>
                             )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <button
+                              type="button"
+                              onClick={() => handleEliminarPedido(p)}
+                              disabled={eliminandoPedidoId === p.id}
+                              title="Eliminar pedido"
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-[10px] transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {eliminandoPedidoId === p.id ? 'Eliminando...' : 'Eliminar'}
+                            </button>
                           </td>
                         </tr>
                       )))}
