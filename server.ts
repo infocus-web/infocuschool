@@ -1834,9 +1834,13 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
   const nombreDestinatario = tutorNombre?.trim() || 'Familia';
   const nombreAlumnoStr = alumnoNombre?.trim() || 'el alumno/a';
   const colegioStr = colegioNombre?.trim() || 'la institución';
-  const enlaceHD =
-    linkDescargaHD ||
-    `https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/${cursoCodigo || '2026'}/${pedidoId || 'pedido'}.zip`;
+  // IMPORTANTE: ya no se inventa un link cuando no se pasa uno explícito. Antes se armaba acá
+  // mismo una URL con el patrón "/object/public/fotos-hd/..." que apuntaba a un archivo que
+  // nunca existe (el bucket es privado y, además, hoy no hay ningún proceso que genere un .zip
+  // por pedido) — el botón de descarga se mostraba siempre, aunque no hubiera nada real para
+  // descargar. Ahora, sin un link real, el correo se manda igual (con el comprobante) pero sin
+  // ese botón, en vez de mandar uno que siempre da error.
+  const enlaceHD = linkDescargaHD && linkDescargaHD.trim() ? linkDescargaHD.trim() : null;
 
   const htmlContent = `
 <!DOCTYPE html>
@@ -1870,6 +1874,7 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
         A continuación tienes acceso directo a tus archivos digitales en calidad original de imprenta (300 DPI, Ultra HD y sin marcas de agua).
       </p>
 
+      ${enlaceHD ? `
       <div style="margin: 28px 0; text-align: center;">
         <a href="${enlaceHD}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #d97706; color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.35);">
           ⬇️ Descargar Fotos en Alta Resolución (HD)
@@ -1878,6 +1883,11 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
           Formato original (.ZIP / JPEG 300 DPI) listo para imprimir o guardar
         </div>
       </div>
+      ` : `
+      <div style="margin: 24px 0; padding: 14px 16px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center; font-size: 13px; color: #475569;">
+        En breve te enviaremos por este mismo medio el enlace para descargar tus fotos en alta resolución.
+      </div>
+      `}
 
       <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin: 24px 0;">
         <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-bottom: 12px;">
@@ -2066,7 +2076,10 @@ app.get(['/api/resend/status', '/resend/status'], (req, res) => {
   });
 });
 
-app.post(['/api/enviar-fotos-hd', '/enviar-fotos-hd'], async (req, res) => {
+// SEGURIDAD: antes esta ruta no pedía ningún tipo de sesión — cualquiera podía hacer que el
+// dominio verificado de Resend mandara un correo con el texto y el link que quisiera a
+// cualquier casilla. Ahora exige la misma sesión de administrador que el resto del panel.
+app.post(['/api/enviar-fotos-hd', '/enviar-fotos-hd'], requireAdminAuth, async (req, res) => {
   try {
     const resultado = await enviarCorreoFotosHD(req.body);
     if (!resultado.success && resultado.error) {
@@ -2082,7 +2095,9 @@ app.post(['/api/enviar-fotos-hd', '/enviar-fotos-hd'], async (req, res) => {
   }
 });
 
-app.post(['/api/resend/test', '/resend/test'], async (req, res) => {
+// SEGURIDAD: es una herramienta de diagnóstico para el fotógrafo (probar que el dominio de
+// Resend funciona), no algo que deba poder disparar cualquier visitante sin sesión.
+app.post(['/api/resend/test', '/resend/test'], requireAdminAuth, async (req, res) => {
   try {
     const { to } = req.body;
     if (!to || !to.includes('@')) {
@@ -2275,17 +2290,23 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
           let orderData: any = null;
 
           if (supabase) {
-            // Actualizar el pedido en Supabase
+            // Actualizar el pedido en Supabase.
+            // OJO: la tabla "pedidos" solo tiene las columnas id, familia_id, evento_id,
+            // alumno_id, tipo_kit, estado, total, mp_preference_id, mp_payment_id,
+            // created_at, updated_at, carpetas_impresas, metodo_pago. Antes este update()
+            // escribía en "estado_pago" y "mercadopago_payment_id", que NO existen en la
+            // tabla real — Postgres rechazaba el update completo (columna inexistente) y el
+            // pedido JAMÁS se marcaba como pagado en Supabase, aunque Mercado Pago sí hubiera
+            // aprobado el cobro. Se corrige a los nombres reales de columna.
             const { data, error } = await supabase
               .from('pedidos')
               .update({
-                estado_pago: 'aprobado',
                 estado: 'pagado',
-                mercadopago_payment_id: String(paymentId),
+                mp_payment_id: String(paymentId),
                 updated_at: new Date().toISOString(),
               })
               .eq('id', pedidoId)
-              .select();
+              .select('*, familias(nombre, whatsapp)');
 
             if (error) {
               console.error('[Mercado Pago Webhook] Error al actualizar pedido en Supabase:', error);
@@ -2294,21 +2315,28 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             }
           }
 
-          // Disparar email automático con fotos HD y comprobante
-          const emailDestino = paymentInfo.payer?.email || orderData?.tutor_email;
+          // Disparar email automático con el comprobante.
+          // NOTA IMPORTANTE (dejar registrado para no repetir el mismo bug): la tabla "pedidos"
+          // no guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre, así que estos
+          // datos no se pueden recuperar acá — solo tenemos el nombre/whatsapp de la familia
+          // vía el join de arriba. Igual de importante: NO existe hoy ningún proceso que genere
+          // y suba un .zip por pedido a "fotos-hd" (se confirmó revisando el storage: ahí solo
+          // hay las fotos originales sueltas por curso, nunca un .zip por alumno/pedido), así
+          // que cualquier link que se arme acá para "descargar el HD" apuntaría a un archivo
+          // que no existe. Hasta que ese proceso de generación del ZIP exista, se omite el link
+          // de descarga en este correo automático en vez de mandar uno roto — el envío manual
+          // de las fotos HD se sigue haciendo como hasta ahora desde el panel.
+          const emailDestino = paymentInfo.payer?.email;
           if (emailDestino && emailDestino.includes('@')) {
-            console.log(`[Mercado Pago Webhook] Enviando fotos HD para pedido ${pedidoId} a ${emailDestino}`);
+            console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${pedidoId} a ${emailDestino}`);
             await enviarCorreoFotosHD({
               to: emailDestino,
-              tutorNombre: orderData?.tutor_nombre || paymentInfo.payer?.first_name || 'Familia',
-              alumnoNombre: orderData?.alumno_nombre || 'Alumno/a',
-              colegioNombre: orderData?.colegio_nombre || 'Colegio',
-              cursoCodigo: orderData?.curso_codigo || 'Curso',
+              tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
+              alumnoNombre: 'tu hijo/a',
+              colegioNombre: 'tu colegio',
               pedidoId: pedidoId,
-              kitNombre: orderData?.kit_nombre || 'Kit Digital Escolar',
               total: paymentInfo.transaction_amount || 0,
-              linkDescargaHD: `https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/${orderData?.curso_codigo || '2026'}/${pedidoId}.zip`,
-              whatsappContacto: orderData?.tutor_telefono || '',
+              whatsappContacto: orderData?.familias?.whatsapp || '',
             });
           }
         }
@@ -2318,9 +2346,8 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
           await supabase
             .from('pedidos')
             .update({
-              estado_pago: 'rechazado',
               estado: 'cancelado',
-              mercadopago_payment_id: String(paymentId),
+              mp_payment_id: String(paymentId),
               updated_at: new Date().toISOString(),
             })
             .eq('id', pedidoId);
