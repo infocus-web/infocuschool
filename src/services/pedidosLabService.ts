@@ -29,14 +29,14 @@ export interface PedidoEscolarCompleto {
   fecha: string;
   colegioId: string;
   colegioNombre: string;
-  cursoCodigo: string; // Ej: SALA3TM
+  cursoCodigo: string; // Ej: SALA-3TM
   grado: string;
   division: string;
   turno: string;
   alumnoId?: string;
   alumnoNumeroLista: number;
   alumnoNombre: string;
-  codigoAlumno: string; // Ej: SALA3TM_01_ABBA_FAZIO_AGUSTIN
+  codigoAlumno: string; // Ej: SALA-3TM_01_ABBA_FAZIO_AGUSTIN
   tutorNombre: string;
   tutorTelefono: string;
   tutorEmail: string;
@@ -196,9 +196,9 @@ export function registrarPedidoDesdePortal(params: {
   const numLista = params.alumnoNumeroLista || currentPedidos.length + 1;
   const codigoAlumno = `${sanitizarParaMinilab(params.cursoCodigo)}_${String(numLista).padStart(2, '0')}_${sanitizarParaMinilab(params.alumnoNombre)}`;
 
-  const individualFoto = FOTOS_MUESTRA.find(f => f.id === params.fotosSeleccionadas.individualId) || FOTOS_MUESTRA[0];
-  const grupalFoto = FOTOS_MUESTRA.find(f => f.id === params.fotosSeleccionadas.grupalId) || FOTOS_MUESTRA[3];
-  const docenteFoto = params.fotosSeleccionadas.docenteId ? (FOTOS_MUESTRA.find(f => f.id === params.fotosSeleccionadas.docenteId) || FOTOS_MUESTRA[5]) : undefined;
+  const individualFoto = FOTOS_MUESTRA.find(f => f.id === params.fotosSeleccionadas.individualId) || FOTOS_MUESTRA.find(f => f.categoria === 'individual') || FOTOS_MUESTRA[0];
+  const grupalFoto = FOTOS_MUESTRA.find(f => f.id === params.fotosSeleccionadas.grupalId) || FOTOS_MUESTRA.find(f => f.categoria === 'grupal') || FOTOS_MUESTRA[0];
+  const docenteFoto = params.fotosSeleccionadas.docenteId ? (FOTOS_MUESTRA.find(f => f.id === params.fotosSeleccionadas.docenteId) || FOTOS_MUESTRA.find(f => f.categoria === 'docente')) : undefined;
 
   const archivosLab: ArchivoFotoLab[] = [
     {
@@ -387,7 +387,7 @@ export function registrarPedidoDesdePortal(params: {
 
   // Generación automática de archivos para el laboratorio (Copia Extra 15x21 Otras Fotos)
   if (params.copiasExtras?.otras15x21 && params.copiasExtras.otras15x21 > 0) {
-    const patioFoto = FOTOS_MUESTRA.find(f => f.categoria === 'patio') || FOTOS_MUESTRA[5];
+    const patioFoto = FOTOS_MUESTRA.find(f => f.categoria === 'patio') || FOTOS_MUESTRA[0];
     for (let c = 1; c <= params.copiasExtras.otras15x21; c++) {
       const numCopia = c;
       archivosLab.push({

@@ -65,24 +65,24 @@ export function determinarCodigoParaInscripcion(datos: { grado: string; turno: s
   const d = (datos.division || '').toLowerCase();
 
   if (g.includes('3')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA3JE';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA3TT';
-    return 'SALA3TM';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-3JE';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
+    return 'SALA-3TM';
   }
   if (g.includes('4')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA4JE';
-    if (d.includes('c')) return 'SALA4C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA4TT';
-    return 'SALA4A';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-4JE';
+    if (d.includes('c')) return 'SALA-4C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
+    return 'SALA-4A';
   }
   if (g.includes('5')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA5JE';
-    if (d.includes('c')) return 'SALA5C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA5B';
-    return 'SALA5A';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-5JE';
+    if (d.includes('c')) return 'SALA-5C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
+    return 'SALA-5A';
   }
 
-  return 'SALA3TM';
+  return 'SALA-3TM';
 }
 
 /** Convierte una fila snake_case de Supabase (tabla `inscripciones`) al tipo usado en el frontend */
