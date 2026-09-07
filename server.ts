@@ -852,29 +852,73 @@ app.post('/api/admin/colegios/:id/regenerar-padron', requireAdminAuth, async (re
 // ==============================================================================
 
 // Determina el código de curso sugerido según sala/turno/división (mismo criterio usado en el frontend)
+// IMPORTANTE: mantener esta función en sincro con `determinarCodigoParaInscripcion` en
+// src/services/inscripcionesService.ts (misma lógica, una para el servidor y otra para
+// mostrarle al instante un código sugerido a la familia en el navegador).
 function determinarCodigoCursoServidor(grado: string, turno: string, division: string): string {
   const g = (grado || '').toLowerCase();
   const t = (turno || '').toLowerCase();
   const d = (division || '').toLowerCase();
+  const esJornadaExtendida = t.includes('jornada') || t.includes('extendida') || d.includes('jornada') || d.includes('extendida');
 
-  if (g.includes('3')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-3JE';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
-    return 'SALA-3TM';
+  // Nivel inicial (jardín): "Sala 3/4/5 años" — se mantienen los mismos códigos de
+  // siempre (SALA-3TM, SALA-4A, etc.) para no romper los cursos de nivel inicial que
+  // ya tienen fotos cargadas con ellos.
+  if (g.includes('sala')) {
+    if (g.includes('3')) {
+      if (esJornadaExtendida) return 'SALA-3JE';
+      if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
+      return 'SALA-3TM';
+    }
+    if (g.includes('4')) {
+      if (esJornadaExtendida) return 'SALA-4JE';
+      if (d.includes('c')) return 'SALA-4C';
+      if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
+      return 'SALA-4A';
+    }
+    if (g.includes('5')) {
+      if (esJornadaExtendida) return 'SALA-5JE';
+      if (d.includes('c')) return 'SALA-5C';
+      if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
+      return 'SALA-5A';
+    }
   }
-  if (g.includes('4')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-4JE';
-    if (d.includes('c')) return 'SALA-4C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
-    return 'SALA-4A';
+
+  const turnoAbrev = esJornadaExtendida ? 'JE' : (t.includes('tarde') ? 'TT' : 'TM');
+
+  // Abreviatura de la división (ej: "División C" -> "C", "Jornada Extendida" -> "JO"),
+  // para diferenciar divisiones dentro del mismo grado y turno.
+  const divisionAbrev = d
+    .replace(/divisi[oó]n/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 2) || 'X';
+
+  // Primaria: "1° grado" a "7° grado" (o variantes equivalentes que digan "grado").
+  const matchGrado = g.match(/(\d+)\s*°?\s*grado/);
+  if (matchGrado) {
+    return `GRADO${matchGrado[1]}-${divisionAbrev}${turnoAbrev}`;
   }
-  if (g.includes('5')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-5JE';
-    if (d.includes('c')) return 'SALA-5C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
-    return 'SALA-5A';
+
+  // Secundaria: "1° año" a "6° año".
+  const matchAnio = g.match(/(\d+)\s*°?\s*a[ñn]o/);
+  if (matchAnio) {
+    return `ANIO${matchAnio[1]}-${divisionAbrev}${turnoAbrev}`;
   }
-  return 'SALA-3TM';
+
+  // Cualquier otro texto de grado no contemplado arriba (colegio con nomenclatura propia):
+  // se arma un código determinístico a partir del texto real, para que nunca choque por
+  // accidente con el curso de otra sala/grado/año. Antes, cualquier grado no reconocido
+  // devolvía siempre 'SALA-3TM' de memoria, y por eso terminaba mostrando las mismas
+  // fotos que "Sala 3 años, Turno Mañana" sin importar qué grado/turno/división se eligiera.
+  const gradoSlug = g
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toUpperCase()
+    .slice(0, 12) || 'CURSO';
+  return `${gradoSlug}-${divisionAbrev}${turnoAbrev}`;
 }
 
 function normalizarTelefonoServidor(tel: string): string {
