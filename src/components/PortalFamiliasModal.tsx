@@ -161,6 +161,45 @@ export default function PortalFamiliasModal({
   const [pagoError, setPagoError] = useState<string | null>(null);
   const [verificandoPago, setVerificandoPago] = useState(false);
   const [mensajeEstadoPago, setMensajeEstadoPago] = useState<string | null>(null);
+  const [generandoLinkPago, setGenerandoLinkPago] = useState(false);
+
+  /**
+   * Genera (o regenera) el link de Checkout Pro de Mercado Pago para un pedido ya registrado.
+   * Hace falta porque el link original (mpRedirectUrl) vive solo en memoria del navegador:
+   * si la familia recarga la página, vuelve más tarde, o Mercado Pago la devuelve con el pago
+   * pendiente/rechazado, ese link se pierde y sin esto no había forma de volver a pagar.
+   */
+  const generarLinkDePago = async (pedido: PedidoEscolarCompleto, autoRedirigir = false) => {
+    if (generandoLinkPago) return;
+    setGenerandoLinkPago(true);
+    setPagoError(null);
+    try {
+      const res = await crearPreferenciaMercadoPago({
+        pedidoId: pedido.supabaseId || pedido.id,
+        kitId: pedido.kitId,
+        kitNombre: pedido.kitNombre,
+        alumnoNombre: pedido.alumnoNombre || 'Alumno',
+        colegioNombre: pedido.colegioNombre || 'Colegio',
+        cursoCodigo: pedido.cursoCodigo,
+        total: pedido.total,
+        tutorNombre: pedido.tutorNombre || 'Tutor',
+        tutorEmail: pedido.tutorEmail,
+        tutorTelefono: pedido.tutorTelefono || undefined,
+      });
+      if (res.initPoint) {
+        setMpRedirectUrl(res.initPoint);
+        if (autoRedirigir) {
+          window.location.href = res.initPoint;
+        }
+      } else {
+        setPagoError(res.error || 'No se pudo generar el link de pago de Mercado Pago.');
+      }
+    } catch (err: any) {
+      setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
+    } finally {
+      setGenerandoLinkPago(false);
+    }
+  };
 
   // Consulta en tiempo real el estado del pedido en la base de datos (Supabase / Backend)
   const verificarEstadoRealPedido = async (idParaConsultar?: string) => {
@@ -201,6 +240,23 @@ export default function PortalFamiliasModal({
     }, 4000);
     return () => clearInterval(interval);
   }, [step, pedidoGenerado?.estadoPago, pedidoGenerado?.id, pedidoGenerado?.supabaseId]);
+
+  // Si se llega al paso 5 con un pedido de Mercado Pago pendiente pero sin link de pago a mano
+  // (por ejemplo, al volver de Mercado Pago con el pago rechazado/pendiente, o tras recargar la
+  // página), se genera un link nuevo automáticamente para que siempre haya forma de reintentar.
+  useEffect(() => {
+    if (
+      step !== 5 ||
+      !pedidoGenerado ||
+      pedidoGenerado.metodoPago !== 'mercadopago' ||
+      pedidoGenerado.estadoPago === 'aprobado' ||
+      mpRedirectUrl ||
+      generandoLinkPago
+    ) {
+      return;
+    }
+    generarLinkDePago(pedidoGenerado, false);
+  }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, mpRedirectUrl]);
 
   // Detección automática al retornar de Mercado Pago (?mp_status=approved&pedido_id=...)
   useEffect(() => {
@@ -1986,9 +2042,38 @@ export default function PortalFamiliasModal({
                       className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
                     >
                       <CreditCard className="w-3.5 h-3.5" />
-                      <span>Ir a Pagar ${total.toLocaleString('es-AR')} en Mercado Pago</span>
+                      <span>Ir a Pagar ${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} en Mercado Pago</span>
                       <ArrowRight className="w-3.5 h-3.5" />
                     </a>
+                  </div>
+                )}
+
+                {/* Sin link de pago a mano (recién llegado, recargó la página, o Mercado Pago
+                    lo devolvió sin completar el pago): siempre hay forma de generar uno nuevo. */}
+                {pedidoGenerado?.metodoPago === 'mercadopago' && !mpRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-4 rounded-xl bg-sky-50 border border-sky-300 text-sky-950 space-y-2">
+                    <p className="font-bold text-xs flex items-center gap-1.5 text-sky-900">
+                      <CreditCard className="w-4 h-4 text-sky-600" />
+                      Checkout Pro de Mercado Pago
+                    </p>
+                    <p className="text-xs text-sky-800">
+                      {generandoLinkPago
+                        ? 'Generando un link de pago seguro con Mercado Pago...'
+                        : 'Todavía no completaste el pago de este pedido. Generá el link para pagarlo ahora:'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => pedidoGenerado && generarLinkDePago(pedidoGenerado, false)}
+                      disabled={generandoLinkPago}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      {generandoLinkPago ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <CreditCard className="w-3.5 h-3.5" />
+                      )}
+                      <span>{generandoLinkPago ? 'Generando...' : `Generar Link de Pago de $${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')}`}</span>
+                    </button>
                   </div>
                 )}
 
