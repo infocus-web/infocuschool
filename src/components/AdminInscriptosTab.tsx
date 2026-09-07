@@ -247,49 +247,45 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
         </div>
       )}
 
-      {/* Summary Metrics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-2xs text-left">
-          <div className="flex items-center justify-between text-slate-500 mb-1">
-            <span className="text-xs font-semibold">Total Inscriptos</span>
-            <UserCheck className="w-4 h-4 text-slate-400" />
+      {/* Summary Metrics Cards: compactas, del mismo tamaño y estilo que el resto de tarjetas del panel */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div
+          className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 flex items-center justify-between gap-2"
+          title="Registrados en la plataforma"
+        >
+          <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">
+            <UserCheck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            Total Inscriptos
+          </span>
+          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            {totalInscriptos} <span className="text-[10px] font-normal text-slate-500">familias</span>
           </div>
-          <div className="text-2xl font-black text-slate-900 font-['Outfit']">
-            {totalInscriptos}{' '}
-            <span className="text-xs font-normal text-slate-500">familias</span>
-          </div>
-          <p className="text-[11px] text-slate-500 mt-1">Registrados en la plataforma</p>
         </div>
 
-        <div className="p-4 rounded-2xl bg-amber-50/70 border-2 border-amber-300 shadow-2xs text-left">
-          <div className="flex items-center justify-between text-amber-800 mb-1">
-            <span className="text-xs font-extrabold flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              Pendientes de Aceptación
-            </span>
-            <Clock className="w-4 h-4 text-amber-600" />
+        <div
+          className="px-3.5 py-2 rounded-xl bg-amber-50/70 border border-amber-300 flex items-center justify-between gap-2"
+          title="No coincidieron automáticamente con el padrón: revisalas y aceptalas o rechazalas"
+        >
+          <span className="text-[11px] font-extrabold text-amber-800 flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />
+            Pendientes de Aceptación
+          </span>
+          <div className="text-sm font-black text-amber-950 font-['Outfit'] whitespace-nowrap">
+            {pendientes.length} <span className="text-[10px] font-normal text-amber-700">esperando</span>
           </div>
-          <div className="text-2xl font-black text-amber-950 font-['Outfit']">
-            {pendientes.length}{' '}
-            <span className="text-xs font-normal text-amber-700">esperando código</span>
-          </div>
-          <p className="text-[11px] text-amber-800 mt-1">
-            No coincidieron automáticamente con el padrón: revisalas y aceptalas o rechazalas
-          </p>
         </div>
 
-        <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200 shadow-2xs text-left">
-          <div className="flex items-center justify-between text-emerald-800 mb-1">
-            <span className="text-xs font-bold">Aprobados & Enviados</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+        <div
+          className="px-3.5 py-2 rounded-xl bg-emerald-50/70 border border-emerald-200 flex items-center justify-between gap-2"
+          title="Automáticos por padrón o aprobados manualmente"
+        >
+          <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            Aprobados & Enviados
+          </span>
+          <div className="text-sm font-black text-emerald-950 font-['Outfit'] whitespace-nowrap">
+            {aceptados.length} <span className="text-[10px] font-normal text-emerald-700">activos</span>
           </div>
-          <div className="text-2xl font-black text-emerald-950 font-['Outfit']">
-            {aceptados.length}{' '}
-            <span className="text-xs font-normal text-emerald-700">con código activo</span>
-          </div>
-          <p className="text-[11px] text-emerald-700 mt-1">
-            Automáticos por padrón o aprobados manualmente
-          </p>
         </div>
       </div>
 
