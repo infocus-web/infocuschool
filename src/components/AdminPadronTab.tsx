@@ -102,11 +102,13 @@ export default function AdminPadronTab() {
         <div className="text-xs text-sky-950 leading-relaxed">
           <p className="font-bold">Padrón de Padres Autorizados</p>
           <p className="mt-1 text-sky-900/90">
-            Compartí el link de abajo con cada institución: ellos mismos pegan ahí la lista de teléfonos y/o
-            emails de los padres/madres/tutores reales, sin tener que completar, guardar y enviarte ningún
-            Excel. Cuando una familia se inscriba desde el portal, el sistema le asigna automáticamente su
-            Código de Acceso <strong>sólo si</strong> su teléfono o email coincide con esta lista; si no
-            coincide, la inscripción queda pendiente para que la revises manualmente en la pestaña "Inscriptos".
+            Compartí el link de abajo con la institución para que se lo reenvíe a cada padre, madre o
+            tutor/a (por el grupo de WhatsApp del curso, por ejemplo). Al abrirlo, cada uno completa un
+            formulario cortito con su propio nombre, email y teléfono — no hace falta que nadie arme ni
+            pegue ninguna lista ni Excel. Cuando una familia se inscriba desde el portal, el sistema le
+            asigna automáticamente su Código de Acceso <strong>sólo si</strong> su teléfono o email
+            coincide con algún dato cargado así; si no coincide, la inscripción queda pendiente para que
+            la revises manualmente en la pestaña "Inscriptos".
           </p>
         </div>
       </div>
@@ -115,7 +117,7 @@ export default function AdminPadronTab() {
       <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-3">
         <h4 className="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
           <Link2 className="w-4 h-4 text-slate-500" />
-          <span>Link para que cada institución cargue su padrón</span>
+          <span>Link para reenviar a cada padre, madre o tutor/a</span>
         </h4>
 
         {errorTokens && (
@@ -185,7 +187,8 @@ export default function AdminPadronTab() {
           </div>
         )}
         <p className="text-[10px] text-slate-400">
-          Compartí cada link solo con esa institución — es lo único que necesitan para cargar los datos de contacto de las familias.
+          Es un solo link por institución: se lo pasás a esa institución y ellos se lo reenvían a todas
+          las familias — cada una carga ahí sus propios datos de contacto.
         </p>
       </div>
 
