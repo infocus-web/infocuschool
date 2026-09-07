@@ -493,6 +493,11 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                         <p className="text-xs text-slate-600 font-medium">
                           {item.grado} · Div. {item.division} · Turno {item.turno}
                         </p>
+                        {item.alumnoDni && (
+                          <p className="text-[10px] text-slate-500 font-mono">
+                            DNI: {item.alumnoDni}
+                          </p>
+                        )}
 
                         {/* Listado de hermanos vinculados */}
                         {item.hermanos && item.hermanos.length > 0 && (
@@ -505,6 +510,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                                 <span className="font-bold text-slate-900">• {h.alumnoNombre} {h.alumnoApellido}</span>
                                 <span className="text-slate-500 block text-[10px]">
                                   {h.grado} · Div. {h.division} · Turno {h.turno}
+                                  {h.alumnoDni ? ` · DNI: ${h.alumnoDni}` : ''}
                                 </span>
                               </div>
                             ))}

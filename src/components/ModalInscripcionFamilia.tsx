@@ -35,6 +35,14 @@ import {
 import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 
+// Deja sólo los dígitos del DNI (acepta que la familia lo escriba con puntos, ej: "38.456.789")
+// y valida que tenga un largo razonable (los DNI argentinos tienen 7 u 8 dígitos).
+const limpiarDni = (valor: string): string => valor.replace(/\D/g, '');
+const dniEsValido = (valor: string): boolean => {
+  const limpio = limpiarDni(valor);
+  return limpio.length >= 6 && limpio.length <= 9;
+};
+
 interface ModalInscripcionFamiliaProps {
   isOpen: boolean;
   onClose: () => void;
@@ -57,6 +65,7 @@ export default function ModalInscripcionFamilia({
   const [email, setEmail] = useState('');
   const [alumnoNombre, setAlumnoNombre] = useState('');
   const [alumnoApellido, setAlumnoApellido] = useState('');
+  const [alumnoDni, setAlumnoDni] = useState('');
   const [turno, setTurno] = useState('Tarde');
   const [grado, setGrado] = useState('Sala 5 años');
   const [division, setDivision] = useState('A');
@@ -70,6 +79,7 @@ export default function ModalInscripcionFamilia({
       id: string;
       alumnoNombre: string;
       alumnoApellido: string;
+      alumnoDni: string;
       turno: string;
       grado: string;
       division: string;
@@ -84,6 +94,7 @@ export default function ModalInscripcionFamilia({
         id: `hermano-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         alumnoNombre: '',
         alumnoApellido: alumnoApellido.trim() || '',
+        alumnoDni: '',
         turno: turno || turnosDisponibles[0] || 'Mañana',
         grado: gradosDisponibles[0] || 'Sala 4 años',
         division: divisionesDisponibles[0] || 'A'
@@ -93,7 +104,7 @@ export default function ModalInscripcionFamilia({
 
   const handleActualizarHermano = (
     id: string,
-    campo: 'alumnoNombre' | 'alumnoApellido' | 'turno' | 'grado' | 'division',
+    campo: 'alumnoNombre' | 'alumnoApellido' | 'alumnoDni' | 'turno' | 'grado' | 'division',
     valor: string
   ) => {
     setHermanos((prev) =>
@@ -186,6 +197,7 @@ export default function ModalInscripcionFamilia({
     setEmail(activa.email || '');
     setAlumnoNombre(activa.alumnoNombre || '');
     setAlumnoApellido(activa.alumnoApellido || '');
+    setAlumnoDni(activa.alumnoDni || '');
     setTurno(activa.turno || 'Tarde');
     setGrado(activa.grado || 'Sala 5 años');
     setDivision(activa.division || 'A');
@@ -195,6 +207,7 @@ export default function ModalInscripcionFamilia({
         id: h.id || `hermano-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         alumnoNombre: h.alumnoNombre,
         alumnoApellido: h.alumnoApellido,
+        alumnoDni: h.alumnoDni || '',
         turno: h.turno,
         grado: h.grado,
         division: h.division
@@ -236,6 +249,15 @@ export default function ModalInscripcionFamilia({
       setFormError('Por favor ingresá el apellido del alumno/a.');
       return;
     }
+    if (!dniEsValido(alumnoDni)) {
+      setFormError('Por favor ingresá un número de DNI válido del alumno/a (sin puntos).');
+      return;
+    }
+    const hermanoConDniInvalido = hermanos.find((h) => h.alumnoNombre.trim() && !dniEsValido(h.alumnoDni));
+    if (hermanoConDniInvalido) {
+      setFormError(`Por favor ingresá un DNI válido para ${hermanoConDniInvalido.alumnoNombre || 'el/la hermano/a agregado/a'}.`);
+      return;
+    }
 
     const hermanosValidados: AlumnoHermano[] = hermanos
       .filter((h) => h.alumnoNombre.trim())
@@ -243,6 +265,7 @@ export default function ModalInscripcionFamilia({
         id: h.id,
         alumnoNombre: h.alumnoNombre.trim(),
         alumnoApellido: h.alumnoApellido.trim() || alumnoApellido.trim(),
+        alumnoDni: limpiarDni(h.alumnoDni),
         grado: h.grado,
         division: h.division,
         turno: h.turno,
@@ -259,6 +282,7 @@ export default function ModalInscripcionFamilia({
       email: email.trim(),
       alumnoNombre: alumnoNombre.trim(),
       alumnoApellido: alumnoApellido.trim(),
+      alumnoDni: limpiarDni(alumnoDni),
       turno,
       grado,
       division,
@@ -752,6 +776,25 @@ export default function ModalInscripcionFamilia({
                     </div>
                   </div>
 
+                  {/* DNI del alumno/a */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      DNI del alumno/a <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      required
+                      value={alumnoDni}
+                      onChange={(e) => setAlumnoDni(e.target.value)}
+                      placeholder="Ej: 45123456 (sin puntos)"
+                      className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      Lo pedimos para identificar con seguridad al alumno/a, ya que puede haber más de un/a chico/a con el mismo nombre y apellido en el colegio. Así evitamos confundir a tu hijo/a con otro/a y que reciba fotos que no le corresponden.
+                    </p>
+                  </div>
+
                   {/* Colegio */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
@@ -921,6 +964,26 @@ export default function ModalInscripcionFamilia({
                               className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                             />
                           </div>
+                        </div>
+
+                        {/* DNI Hermano */}
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">
+                            DNI <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={hermano.alumnoDni}
+                            onChange={(e) =>
+                              handleActualizarHermano(hermano.id, 'alumnoDni', e.target.value)
+                            }
+                            placeholder="Ej: 45123456 (sin puntos)"
+                            className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                          />
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            Para identificarlo/a sin confundirlo/a con otro/a alumno/a que tenga el mismo nombre.
+                          </p>
                         </div>
 
                         {/* Turno, Grado, División Hermano */}
