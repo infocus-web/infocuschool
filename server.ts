@@ -858,23 +858,23 @@ function determinarCodigoCursoServidor(grado: string, turno: string, division: s
   const d = (division || '').toLowerCase();
 
   if (g.includes('3')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA3JE';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA3TT';
-    return 'SALA3TM';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-3JE';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
+    return 'SALA-3TM';
   }
   if (g.includes('4')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA4JE';
-    if (d.includes('c')) return 'SALA4C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA4TT';
-    return 'SALA4A';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-4JE';
+    if (d.includes('c')) return 'SALA-4C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
+    return 'SALA-4A';
   }
   if (g.includes('5')) {
-    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA5JE';
-    if (d.includes('c')) return 'SALA5C';
-    if (t.includes('tarde') || d.includes('b')) return 'SALA5B';
-    return 'SALA5A';
+    if (t.includes('jornada') || t.includes('extendida') || d.includes('extendida')) return 'SALA-5JE';
+    if (d.includes('c')) return 'SALA-5C';
+    if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
+    return 'SALA-5A';
   }
-  return 'SALA3TM';
+  return 'SALA-3TM';
 }
 
 function normalizarTelefonoServidor(tel: string): string {
@@ -1418,6 +1418,108 @@ app.post('/api/padron/institucion/:colegioId', async (req: Request, res: Respons
   } catch (err: any) {
     console.error('Error al cargar padrón desde la institución:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al guardar los datos' });
+  }
+});
+
+// ==============================================================================
+// 4D. SOLICITUDES DE CÓDIGO DE CURSO (reemplaza el botón "Solicitar por WhatsApp")
+// Una familia que no encuentra su código deja sus datos acá en vez de escribirle
+// directo al fotógrafo por WhatsApp; queda listado en el panel admin para que lo
+// atienda cuando pueda, sin flood de mensajes individuales.
+// ==============================================================================
+
+// Envío público: cualquier familia puede dejar su solicitud, sin login
+app.post('/api/solicitudes-codigo', async (req: Request, res: Response) => {
+  try {
+    const { nombreSolicitante, contacto, alumnoNombre, colegioId, colegioNombre, grado, division, turno, mensaje } = req.body || {};
+
+    const nombre = String(nombreSolicitante || '').trim();
+    const contactoLimpio = String(contacto || '').trim();
+    if (!nombre || !contactoLimpio) {
+      return res.status(400).json({ success: false, error: 'Faltan tu nombre y un WhatsApp o email de contacto' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const { data, error } = await supabase
+      .from('solicitudes_codigo')
+      .insert({
+        nombre_solicitante: nombre,
+        contacto: contactoLimpio,
+        alumno_nombre: alumnoNombre ? String(alumnoNombre).trim() : null,
+        colegio_id: colegioId || null,
+        colegio_nombre: colegioNombre || null,
+        grado: grado || null,
+        division: division || null,
+        turno: turno || null,
+        mensaje: mensaje ? String(mensaje).trim().slice(0, 500) : null,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    return res.json({ success: true, solicitud: data });
+  } catch (err: any) {
+    console.error('Error al guardar solicitud de código:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al enviar la solicitud' });
+  }
+});
+
+// Listado para el panel admin (por defecto solo las pendientes, o todas con ?estado=todas)
+app.get('/api/admin/solicitudes-codigo', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const estado = req.query.estado as string | undefined;
+    let builder = supabase.from('solicitudes_codigo').select('*').order('created_at', { ascending: false });
+    if (estado && estado !== 'todas') {
+      builder = builder.eq('estado', estado);
+    }
+    const { data, error } = await builder;
+    if (error) throw error;
+    return res.json({ success: true, solicitudes: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener las solicitudes' });
+  }
+});
+
+// Marca una solicitud como atendida (ya se le envió el código por fuera del panel)
+app.post('/api/admin/solicitudes-codigo/:id/atender', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase
+      .from('solicitudes_codigo')
+      .update({ estado: 'atendido', updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select();
+    if (error) throw error;
+    return res.json({ success: true, solicitud: data?.[0] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al actualizar la solicitud' });
+  }
+});
+
+app.delete('/api/admin/solicitudes-codigo/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { error } = await supabase.from('solicitudes_codigo').delete().eq('id', id);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar la solicitud' });
   }
 });
 
