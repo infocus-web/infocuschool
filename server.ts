@@ -427,19 +427,31 @@ const FUENTE_MARCA_AGUA_BASE64 =
 // Incrusta la tipografía en el propio SVG (ver comentario arriba) para que se dibuje igual
 // sin importar si el servidor tiene fuentes instaladas.
 function generarSvgMarcaDeAgua(ancho: number, alto: number): string {
-  const texto = 'MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR';
-  const fontSize = Math.max(14, Math.round(ancho * 0.036));
-  const stepX = ancho * 0.58;
-  const stepY = alto * 0.28;
-  const anchoVirtual = ancho * 2;
-  const altoVirtual = alto * 2;
+  // El texto anterior ("MUESTRA RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR") medía más ancho que
+  // el espacio entre repeticiones (stepX), así que cada copia se superponía con la
+  // siguiente y el resultado se veía como si hubiera dos marcas de agua pisándose. Ahora el
+  // texto es más corto y stepX se calcula a partir de su ancho real en esta tipografía
+  // (medido una sola vez con fontTools contra el subset embebido: 17.2407... em), con un
+  // margen — así nunca se pisan entre sí. Además, las filas se alternan medio paso para
+  // rellenar mejor el espacio, como una marca de agua de banco de fotos.
+  const texto = 'MUESTRA · RETRATO ESCOLAR';
+  const ANCHO_TEXTO_EM = 17.24072265625;
+  const fontSize = Math.max(14, Math.round(ancho * 0.032));
+  const anchoTexto = ANCHO_TEXTO_EM * fontSize;
+  const stepX = anchoTexto * 1.25;
+  const stepY = alto * 0.26;
+  const anchoVirtual = ancho * 2.2;
+  const altoVirtual = alto * 2.2;
   const textos: string[] = [];
+  let fila = 0;
   for (let y = -altoVirtual / 2; y < altoVirtual / 2; y += stepY) {
-    for (let x = -anchoVirtual / 2; x < anchoVirtual / 2; x += stepX) {
+    const offsetFila = fila % 2 === 0 ? 0 : stepX / 2;
+    for (let x = -anchoVirtual / 2 + offsetFila; x < anchoVirtual / 2; x += stepX) {
       textos.push(
         `<text x="${x}" y="${y}" font-family="MarcaAguaRE" font-weight="bold" font-size="${fontSize}" fill="white" fill-opacity="0.6" stroke="black" stroke-opacity="0.5" stroke-width="1.2" text-anchor="middle">${texto}</text>`
       );
     }
+    fila++;
   }
   return `<svg width="${ancho}" height="${alto}" xmlns="http://www.w3.org/2000/svg">
     <defs>
