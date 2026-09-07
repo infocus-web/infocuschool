@@ -6,6 +6,7 @@ export interface AlumnoHermano {
   id: string;
   alumnoNombre: string;
   alumnoApellido: string;
+  alumnoDni: string;
   grado: string;
   division: string;
   turno: string;
@@ -21,6 +22,7 @@ export interface InscripcionFamilia {
   email: string;             // Correo electrónico
   alumnoNombre: string;      // Nombre del primer alumno/hijo
   alumnoApellido: string;    // Apellido del primer alumno/hijo
+  alumnoDni: string;         // DNI del primer alumno/hijo (para distinguir homónimos)
   turno: string;             // Turno (Mañana, Tarde, Jornada Completa)
   grado: string;             // Grado o Sala
   division: string;          // División
@@ -132,6 +134,7 @@ function mapearFilaSupabaseAInscripcion(row: any): InscripcionFamilia {
     email: row.email || '',
     alumnoNombre: row.alumno_nombre || '',
     alumnoApellido: row.alumno_apellido || '',
+    alumnoDni: row.alumno_dni || '',
     turno: row.turno || '',
     grado: row.grado || '',
     division: row.division || '',
@@ -189,6 +192,7 @@ export async function validarEInscribirFamilia(datos: {
   email: string;
   alumnoNombre: string;
   alumnoApellido: string;
+  alumnoDni: string;
   grado: string;
   division: string;
   turno: string;
