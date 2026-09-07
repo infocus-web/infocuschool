@@ -1,6 +1,7 @@
 /**
  * Servicio de envío automático de correos con enlaces HD y comprobantes vía Resend
  */
+import { fetchAdminAutenticado } from './adminAuthService';
 
 export interface DatosEnvioFotosHD {
   to: string;
@@ -64,7 +65,9 @@ export async function enviarFotosPorEmail(datos: DatosEnvioFotosHD): Promise<Res
       return { success: false, error: 'Email inválido o vacío' };
     }
 
-    const res = await fetch('/api/enviar-fotos-hd', {
+    // Requiere sesión de administrador desde este momento (ver server.ts): esta ruta solo la
+    // usa el panel admin para reenviar el correo de fotos HD manualmente.
+    const res = await fetchAdminAutenticado('/api/enviar-fotos-hd', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -88,7 +91,9 @@ export async function enviarFotosPorEmail(datos: DatosEnvioFotosHD): Promise<Res
  */
 export async function enviarEmailPruebaResend(emailDestino: string): Promise<RespuestaEnvioEmail> {
   try {
-    const res = await fetch('/api/resend/test', {
+    // Requiere sesión de administrador desde este momento (ver server.ts): es una herramienta
+    // de diagnóstico del panel, no algo que deba poder disparar cualquier visitante.
+    const res = await fetchAdminAutenticado('/api/resend/test', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
