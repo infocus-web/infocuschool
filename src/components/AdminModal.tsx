@@ -697,7 +697,64 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
         ) : (
           /* Authenticated Admin Dashboard */
           <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6">
-            
+
+            {/* Navigation tabs: al inicio del panel, botones azul oscuro con letras
+                amarillas. Antes era una fila con scroll horizontal que escondía la
+                mayoría de las herramientas fuera de la vista. Ahora es una grilla que se
+                acomoda sola (flex-wrap) y muestra todas las pestañas de una sola vez. */}
+            <div className="flex flex-wrap gap-2 p-2 bg-slate-100/70 rounded-2xl">
+              {[
+                {
+                  id: 'inscriptos',
+                  label:
+                    pendientesInscripcionCount > 0
+                      ? `Inscriptos (${pendientesInscripcionCount} pendientes)`
+                      : 'Inscriptos & Envío Códigos',
+                  icon: UserCheck,
+                  badge: pendientesInscripcionCount > 0 ? pendientesInscripcionCount : undefined
+                },
+                { id: 'padron', label: 'Padrón Autorizado', icon: Link2 },
+                {
+                  id: 'solicitudes',
+                  label:
+                    pendientesSolicitudesCodigoCount > 0
+                      ? `Solicitudes de Código (${pendientesSolicitudesCodigoCount})`
+                      : 'Solicitudes de Código',
+                  icon: MessageSquare,
+                  badge: pendientesSolicitudesCodigoCount > 0 ? pendientesSolicitudesCodigoCount : undefined,
+                },
+                { id: 'laboratorio', label: 'Laboratorio & Ensobrado (ZIP)', icon: Printer },
+                { id: 'pedidos', label: `Pedidos Familias (${pedidosCompletos.length})`, icon: Package },
+                { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
+                { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
+                { id: 'alumnos', label: `Nómina 2026 (${ALUMNOS_NOMINA_2026.length})`, icon: Users },
+                { id: 'colegios', label: 'Colegios y Códigos', icon: School },
+                { id: 'whatsapp', label: 'WhatsApp & Widget Flotante', icon: MessageSquare },
+              ].map(t => {
+                const Icon = t.icon;
+                const active = activeTab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id as any)}
+                    className={`px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer bg-blue-950 text-amber-400 border ${
+                      active
+                        ? 'border-amber-400 shadow-md shadow-blue-950/30 ring-2 ring-amber-400/40 text-amber-300'
+                        : 'border-blue-900 hover:bg-blue-900 hover:text-amber-300'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span>{t.label}</span>
+                    {t.badge && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-amber-500 text-slate-950">
+                        {t.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
             {/* Top metrics */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
@@ -797,62 +854,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
             {/* SECCIÓN RESUMEN DE KITS SELECCIONADOS POR FAMILIAS (SUPABASE DB) */}
             <AdminResumenKitsSection />
-
-            {/* Navigation tabs: antes era una fila con scroll horizontal que escondía la
-                mayoría de las herramientas fuera de la vista. Ahora es una grilla que se
-                acomoda sola (flex-wrap) y muestra todas las pestañas de una sola vez. */}
-            <div className="flex flex-wrap gap-2 p-2 bg-slate-100/70 rounded-2xl">
-              {[
-                {
-                  id: 'inscriptos',
-                  label:
-                    pendientesInscripcionCount > 0
-                      ? `Inscriptos (${pendientesInscripcionCount} pendientes)`
-                      : 'Inscriptos & Envío Códigos',
-                  icon: UserCheck,
-                  badge: pendientesInscripcionCount > 0 ? pendientesInscripcionCount : undefined
-                },
-                { id: 'padron', label: 'Padrón Autorizado', icon: Link2 },
-                {
-                  id: 'solicitudes',
-                  label:
-                    pendientesSolicitudesCodigoCount > 0
-                      ? `Solicitudes de Código (${pendientesSolicitudesCodigoCount})`
-                      : 'Solicitudes de Código',
-                  icon: MessageSquare,
-                  badge: pendientesSolicitudesCodigoCount > 0 ? pendientesSolicitudesCodigoCount : undefined,
-                },
-                { id: 'laboratorio', label: 'Laboratorio & Ensobrado (ZIP)', icon: Printer },
-                { id: 'pedidos', label: `Pedidos Familias (${pedidosCompletos.length})`, icon: Package },
-                { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
-                { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
-                { id: 'alumnos', label: `Nómina 2026 (${ALUMNOS_NOMINA_2026.length})`, icon: Users },
-                { id: 'colegios', label: 'Colegios y Códigos', icon: School },
-                { id: 'whatsapp', label: 'WhatsApp & Widget Flotante', icon: MessageSquare },
-              ].map(t => {
-                const Icon = t.icon;
-                const active = activeTab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setActiveTab(t.id as any)}
-                    className={`px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                      active
-                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                        : 'text-slate-600 hover:bg-white/70 hover:text-slate-900 border border-transparent'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span>{t.label}</span>
-                    {t.badge && (
-                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-amber-500 text-slate-950">
-                        {t.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
 
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
