@@ -62,6 +62,115 @@ interface AdminModalProps {
   onProbarCodigo?: (codigo: string) => void;
 }
 
+const OPCIONES_GRADOS_COLEGIO = [
+  'Sala 3 años', 'Sala 4 años', 'Sala 5 años',
+  '1° grado', '2° grado', '3° grado', '4° grado', '5° grado', '6° grado', '7° grado',
+  '1° año', '2° año', '3° año', '4° año', '5° año', '6° año',
+];
+const OPCIONES_DIVISIONES_COLEGIO = ['A', 'B', 'C', 'D', 'Jornada Extendida'];
+const OPCIONES_TURNOS_COLEGIO = ['Mañana', 'Tarde', 'Jornada Extendida', 'Jornada Completa'];
+
+interface SelectorMultipleProps {
+  value: string;
+  onChange: (nuevoValor: string) => void;
+  opciones: string[];
+  placeholderOtro?: string;
+}
+
+// Checkboxes para las opciones habituales + campo "Agregar otro" para valores personalizados.
+// Mantiene el mismo formato de string separado por comas que usaba el textarea/input original,
+// así que no requiere tocar el resto de la lógica de guardado/edición de colegios.
+function SelectorMultiple({ value, onChange, opciones, placeholderOtro }: SelectorMultipleProps) {
+  const [otroTexto, setOtroTexto] = useState('');
+  const seleccionados = value.split(',').map((v) => v.trim()).filter(Boolean);
+  const extras = seleccionados.filter((v) => !opciones.includes(v));
+
+  const toggle = (op: string) => {
+    if (seleccionados.includes(op)) {
+      onChange(seleccionados.filter((v) => v !== op).join(', '));
+    } else {
+      onChange([...seleccionados, op].join(', '));
+    }
+  };
+
+  const quitarExtra = (op: string) => {
+    onChange(seleccionados.filter((v) => v !== op).join(', '));
+  };
+
+  const agregarOtro = () => {
+    const limpio = otroTexto.trim();
+    setOtroTexto('');
+    if (!limpio || seleccionados.includes(limpio)) return;
+    onChange([...seleccionados, limpio].join(', '));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {opciones.map((op) => {
+          const activo = seleccionados.includes(op);
+          return (
+            <label
+              key={op}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold cursor-pointer select-none transition-colors ${
+                activo
+                  ? 'bg-amber-100 border-amber-400 text-amber-800'
+                  : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={activo}
+                onChange={() => toggle(op)}
+                className="w-3.5 h-3.5 accent-amber-500 cursor-pointer"
+              />
+              {op}
+            </label>
+          );
+        })}
+        {extras.map((op) => (
+          <span
+            key={op}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-300 bg-blue-50 text-blue-800 text-[11px] font-semibold"
+          >
+            {op}
+            <button
+              type="button"
+              onClick={() => quitarExtra(op)}
+              className="text-blue-400 hover:text-blue-700 cursor-pointer leading-none"
+              title="Quitar"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-1.5">
+        <input
+          type="text"
+          value={otroTexto}
+          onChange={(e) => setOtroTexto(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              agregarOtro();
+            }
+          }}
+          placeholder={placeholderOtro || 'Agregar otro...'}
+          className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs bg-white"
+        />
+        <button
+          type="button"
+          onClick={agregarOtro}
+          className="px-3 py-1.5 rounded-lg border border-slate-300 bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 cursor-pointer"
+        >
+          + Agregar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminModalProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminPin, setAdminPin] = useState('');
@@ -1487,39 +1596,36 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                       Grados, Divisiones y Turnos de este Colegio
                     </p>
                     <p className="text-[10px] text-slate-500 -mt-2">
-                      Separá cada valor con una coma. Si dejás alguno vacío, se usa una lista genérica por defecto.
+                      Tildá los que apliquen. Si no encontrás alguno, agregalo con "+ Agregar". Si no tildás nada, se usa una lista genérica por defecto.
                     </p>
 
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-slate-700">Grados / Salas</label>
-                      <textarea
+                      <SelectorMultiple
                         value={nuevosGrados}
-                        onChange={e => setNuevosGrados(e.target.value)}
-                        placeholder="Ej: Sala 3 años, Sala 4 años, Sala 5 años, 1° grado, 2° grado..."
-                        rows={2}
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white resize-none"
+                        onChange={setNuevosGrados}
+                        opciones={OPCIONES_GRADOS_COLEGIO}
+                        placeholderOtro="Ej: Nivelación, Plurigrado..."
                       />
                     </div>
 
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-slate-700">Divisiones</label>
-                      <input
-                        type="text"
+                      <SelectorMultiple
                         value={nuevasDivisiones}
-                        onChange={e => setNuevasDivisiones(e.target.value)}
-                        placeholder="Ej: A, B, C, Jornada Extendida"
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
+                        onChange={setNuevasDivisiones}
+                        opciones={OPCIONES_DIVISIONES_COLEGIO}
+                        placeholderOtro="Ej: E, Única..."
                       />
                     </div>
 
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-slate-700">Turnos</label>
-                      <input
-                        type="text"
+                      <SelectorMultiple
                         value={nuevosTurnos}
-                        onChange={e => setNuevosTurnos(e.target.value)}
-                        placeholder="Ej: Mañana, Tarde, Jornada Extendida / Completa"
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
+                        onChange={setNuevosTurnos}
+                        opciones={OPCIONES_TURNOS_COLEGIO}
+                        placeholderOtro="Ej: Nocturno..."
                       />
                     </div>
                   </div>
