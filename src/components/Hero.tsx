@@ -244,7 +244,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
                   <span className="px-3 py-1.5 rounded-full bg-slate-900/85 backdrop-blur-md text-white text-xs font-semibold flex items-center gap-1.5 shadow-md">
                     <School className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Retrato Escolar Oficial</span>
+                    <span>Retrato de tu Hijo/a</span>
                   </span>
                   <span className="px-2.5 py-1 rounded-md bg-amber-400 text-slate-950 text-[10px] font-bold tracking-wider uppercase shadow-xs">
                     Ciclo 2026
@@ -256,9 +256,9 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                   <div className="bg-slate-950/80 backdrop-blur-md rounded-xl px-3.5 py-2.5 text-white flex items-center justify-between shadow-lg border border-white/10">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span className="text-xs font-medium text-slate-100">Iluminación de estudio</span>
+                      <span className="text-xs font-medium text-slate-100">Iluminación profesional</span>
                     </div>
-                    <span className="text-[11px] text-amber-300 font-semibold">Toma oficial nítida</span>
+                    <span className="text-[11px] text-amber-300 font-semibold">Un Recuerdo para Siempre</span>
                   </div>
                 </div>
               </div>
