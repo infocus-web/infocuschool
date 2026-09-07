@@ -571,7 +571,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const construirLinkPadron = (colegioId: string): string => {
     const token = padronTokens[colegioId];
     if (!token) return '';
-    return `${window.location.origin}/padron.html?colegio=${encodeURIComponent(colegioId)}&codigo=${encodeURIComponent(token)}`;
+    // Link corto: el código de padrón ya es único de por sí, no hace falta el UUID del colegio.
+    return `${window.location.origin}/padron.html?c=${encodeURIComponent(token)}`;
   };
 
   const handleCopiarLinkPadron = async (colegioId: string) => {

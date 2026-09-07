@@ -57,7 +57,8 @@ export default function AdminPadronTab() {
   const construirLinkPadron = (id: string): string => {
     const token = padronTokens[id];
     if (!token) return '';
-    return `${window.location.origin}/padron.html?colegio=${encodeURIComponent(id)}&codigo=${encodeURIComponent(token)}`;
+    // Link corto: el código de padrón ya es único de por sí, no hace falta el UUID del colegio.
+    return `${window.location.origin}/padron.html?c=${encodeURIComponent(token)}`;
   };
 
   const handleCopiarLink = async (id: string) => {
