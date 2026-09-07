@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { 
-  Printer, Download, Mail, CheckCircle2, FolderDown, FileCode, 
+import {
+  Printer, Download, Mail, CheckCircle2, FolderDown, FileCode,
   Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, FileSpreadsheet,
-  Globe, ShieldCheck, Send, ExternalLink
+  Globe, ShieldCheck, Send, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { 
   PedidoEscolarCompleto, 
@@ -44,6 +44,9 @@ export default function AdminLaboratorioTab({
   const [testEmailInput, setTestEmailInput] = useState<string>('alderpol@gmail.com');
   const [isEnviandoPrueba, setIsEnviandoPrueba] = useState<boolean>(false);
   const [feedbackPrueba, setFeedbackPrueba] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
+  // Tarjeta de dominio de correo: es información de referencia que casi no cambia, así que
+  // arranca colapsada (solo el resumen de una línea) para no ocupar espacio de entrada.
+  const [dominioExpandido, setDominioExpandido] = useState(false);
 
   useEffect(() => {
     consultarEstadoResend().then(setResendEstado).catch(() => {});
@@ -347,90 +350,111 @@ export default function AdminLaboratorioTab({
         </div>
       )}
 
-      {/* TARJETA DE DOMINIO VERIFICADO (retratoescolar.com.ar) */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-emerald-950/90 via-slate-900 to-slate-900 border border-emerald-500/30 text-white shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+      {/* TARJETA DE DOMINIO VERIFICADO (retratoescolar.com.ar) — colapsada por defecto:
+          es información de referencia que casi nunca cambia, así que solo se muestra un
+          resumen de una línea hasta que se hace clic para expandirla. */}
+      <div className="rounded-2xl bg-gradient-to-br from-emerald-950/90 via-slate-900 to-slate-900 border border-emerald-500/30 text-white shadow-sm overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setDominioExpandido(!dominioExpandido)}
+          className="w-full p-4 sm:p-5 flex items-center justify-between gap-3 cursor-pointer text-left"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4.5 h-4.5 text-emerald-400" />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs uppercase tracking-wider font-bold text-slate-400">Dominio de Correo Transaccional</span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
                   <Check className="w-3 h-3 text-emerald-400" />
-                  Verificado en Resend
+                  Verificado
                 </span>
+              </div>
+              <p className="text-xs text-slate-300 truncate">retratoescolar.com.ar · listo para enviar emails</p>
+            </div>
+          </div>
+          {dominioExpandido ? (
+            <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+          )}
+        </button>
+
+        {dominioExpandido && (
+          <div className="px-4 sm:px-5 pb-4 sm:pb-5 space-y-4 animate-in fade-in duration-150">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-800/80">
+              <div className="pt-3">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-300 bg-slate-800 border border-slate-700">
                   <Globe className="w-3 h-3 text-sky-400" />
                   Vercel · sa-east-1
                 </span>
+                <h4 className="text-base sm:text-lg font-black text-white font-['Outfit'] mt-1.5">
+                  retratoescolar.com.ar
+                </h4>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Los enlaces de fotos Ultra HD y los comprobantes se envían a los padres desde <code className="text-emerald-300 font-bold bg-slate-950/60 px-1.5 py-0.5 rounded">fotos@retratoescolar.com.ar</code> con firmas SPF, DKIM y DMARC autorizadas.
+                </p>
               </div>
-              <h4 className="text-base sm:text-lg font-black text-white font-['Outfit'] mt-0.5">
-                retratoescolar.com.ar
-              </h4>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Los enlaces de fotos Ultra HD y los comprobantes se envían a los padres desde <code className="text-emerald-300 font-bold bg-slate-950/60 px-1.5 py-0.5 rounded">fotos@retratoescolar.com.ar</code> con firmas SPF, DKIM y DMARC autorizadas.
-              </p>
+
+              <div className="flex items-center gap-2 self-end sm:self-center pt-3 sm:pt-0">
+                <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1.5 bg-emerald-950/60 px-3 py-1.5 rounded-xl border border-emerald-800/60">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  Listo para enviar emails
+                </span>
+              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2 self-end sm:self-center">
-            <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1.5 bg-emerald-950/60 px-3 py-1.5 rounded-xl border border-emerald-800/60">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Listo para enviar emails
-            </span>
-          </div>
-        </div>
+            {/* Mini formulario de prueba de envío */}
+            <div className="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="text-xs text-slate-400 flex items-center gap-2">
+                <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Probar entrega en bandeja de entrada:</span>
+              </div>
 
-        {/* Mini formulario de prueba de envío */}
-        <div className="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-          <div className="text-xs text-slate-400 flex items-center gap-2">
-            <Mail className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Probar entrega en bandeja de entrada:</span>
-          </div>
+              <div className="flex items-center gap-2 flex-1 max-w-md">
+                <input
+                  type="email"
+                  value={testEmailInput}
+                  onChange={(e) => setTestEmailInput(e.target.value)}
+                  placeholder="tu-email@gmail.com"
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleEnviarPruebaEmail}
+                  disabled={isEnviandoPrueba}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm shrink-0 cursor-pointer active:scale-95"
+                >
+                  {isEnviandoPrueba ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Enviando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Enviar Prueba</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
 
-          <div className="flex items-center gap-2 flex-1 max-w-md">
-            <input
-              type="email"
-              value={testEmailInput}
-              onChange={(e) => setTestEmailInput(e.target.value)}
-              placeholder="tu-email@gmail.com"
-              className="flex-1 px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
-            />
-            <button
-              type="button"
-              onClick={handleEnviarPruebaEmail}
-              disabled={isEnviandoPrueba}
-              className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm shrink-0 cursor-pointer active:scale-95"
-            >
-              {isEnviandoPrueba ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Enviando...</span>
-                </>
-              ) : (
-                <>
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Enviar Prueba</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {feedbackPrueba && (
-          <div className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in ${
-            feedbackPrueba.tipo === 'ok' 
-              ? 'bg-emerald-900/40 border border-emerald-600/50 text-emerald-200' 
-              : 'bg-rose-950/40 border border-rose-700/50 text-rose-200'
-          }`}>
-            {feedbackPrueba.tipo === 'ok' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            {feedbackPrueba && (
+              <div className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 animate-in fade-in ${
+                feedbackPrueba.tipo === 'ok'
+                  ? 'bg-emerald-900/40 border border-emerald-600/50 text-emerald-200'
+                  : 'bg-rose-950/40 border border-rose-700/50 text-rose-200'
+              }`}>
+                {feedbackPrueba.tipo === 'ok' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                )}
+                <span>{feedbackPrueba.texto}</span>
+              </div>
             )}
-            <span>{feedbackPrueba.texto}</span>
           </div>
         )}
       </div>
@@ -605,8 +629,11 @@ export default function AdminLaboratorioTab({
       </div>
 
       {/* Filters & Search Toolbar */}
-      <div className="flex flex-col sm:flex-row gap-3 items-center justify-between pt-2">
-        <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto pb-1">
+      {/* min-w-0 en la fila de pills es lo que evita que la lista de cursos se
+          desborde y quede tapada por/tapando el buscador cuando ambos comparten la fila
+          (sin min-w-0, un flex item con overflow-x-auto ignora el ancho del contenedor). */}
+      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between pt-2">
+        <div className="flex items-center gap-2 w-full sm:min-w-0 sm:flex-1 overflow-x-auto pb-1">
           <button
             onClick={() => setCursoFiltro('todos')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${

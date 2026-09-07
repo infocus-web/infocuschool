@@ -170,39 +170,42 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
               </div>
             )}
 
-            {/* School Search Box */}
-            <div className="bg-white p-2.5 sm:p-3 rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200/90 max-w-2xl">
-              <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2">
-                <div className="relative flex-1 flex items-center">
-                  <Search className="absolute left-3.5 w-5 h-5 text-slate-400" />
-                  <input
-                    id="input-buscar-colegio-hero"
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Ingresá tu Código Familiar (ej: FAM-4821) o código de curso..."
-                    className="w-full pl-11 pr-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent border-0 focus:outline-hidden focus:ring-0"
-                  />
-                  {searchTerm && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchTerm('')}
-                      className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1"
-                    >
-                      Borrar
-                    </button>
-                  )}
-                </div>
-                <button
-                  id="btn-buscar-colegio-hero"
-                  type="submit"
-                  className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-sm rounded-xl transition-all shadow-sm shadow-amber-400/40 flex items-center justify-center gap-2 cursor-pointer active:scale-98 shrink-0"
-                >
-                  <span>Ver mis fotos</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
+            {/* School Search Box — solo para visitantes sin sesión de familia activa;
+                si ya hay una familia logueada, "Ver fotos de la familia" ya cubre esto */}
+            {!familiaActiva && (
+              <div className="bg-white p-2.5 sm:p-3 rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200/90 max-w-2xl">
+                <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1 flex items-center">
+                    <Search className="absolute left-3.5 w-5 h-5 text-slate-400" />
+                    <input
+                      id="input-buscar-colegio-hero"
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder="Ingresá tu Código Familiar (ej: FAM-4821) o código de curso..."
+                      className="w-full pl-11 pr-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent border-0 focus:outline-hidden focus:ring-0"
+                    />
+                    {searchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchTerm('')}
+                        className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1"
+                      >
+                        Borrar
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    id="btn-buscar-colegio-hero"
+                    type="submit"
+                    className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-sm rounded-xl transition-all shadow-sm shadow-amber-400/40 flex items-center justify-center gap-2 cursor-pointer active:scale-98 shrink-0"
+                  >
+                    <span>Ver mis fotos</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </form>
+              </div>
+            )}
 
             {/* Micro value props */}
             <div className="pt-2 flex flex-wrap items-center gap-y-2 gap-x-6 text-xs text-slate-600">

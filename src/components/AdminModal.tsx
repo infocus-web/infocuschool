@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { 
+import {
   X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package,
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
   FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe,
-  Pencil, Loader2
+  Pencil, Loader2, Link2
 } from 'lucide-react';
 import { getSupabase } from '../services/supabaseClient';
 import {
@@ -48,6 +48,8 @@ import {
 } from '../services/adminAuthService';
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminPadronTab from './AdminPadronTab';
+import AdminSolicitudesCodigoTab from './AdminSolicitudesCodigoTab';
+import { obtenerSolicitudesCodigoAdmin } from '../services/solicitudesCodigoService';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
 import AdminResumenKitsSection from './AdminResumenKitsSection';
 import { CircularImprimibleModal } from './CircularImprimibleModal';
@@ -78,7 +80,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp' | 'solicitudes'>('inscriptos');
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -110,6 +112,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   // Pending inscriptions count
   const [pendientesInscripcionCount, setPendientesInscripcionCount] = useState<number>(0);
+  // Pending "no encuentro mi código" requests count
+  const [pendientesSolicitudesCodigoCount, setPendientesSolicitudesCodigoCount] = useState<number>(0);
 
   // Schools list state from dynamic persistent service (Supabase, compartido para todo el sitio)
   const { colegios: colegiosList, agregarColegio, editarColegio, borrarColegio } = useColegiosLista();
@@ -119,6 +123,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
       setPedidosCompletos(obtenerPedidosGuardados());
       obtenerInscripcionesAdmin().then((inscriptos) => {
         setPendientesInscripcionCount(inscriptos.filter((i) => i.estado === 'pendiente').length);
+      });
+      obtenerSolicitudesCodigoAdmin('pendiente').then((solicitudes) => {
+        setPendientesSolicitudesCodigoCount(solicitudes.length);
       });
     }
   }, [isOpen, isAuthenticated, activeTab]);
@@ -791,8 +798,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* SECCIÓN RESUMEN DE KITS SELECCIONADOS POR FAMILIAS (SUPABASE DB) */}
             <AdminResumenKitsSection />
 
-            {/* Navigation tabs */}
-            <div className="flex border-b border-slate-200 gap-3 overflow-x-auto pb-0.5">
+            {/* Navigation tabs: antes era una fila con scroll horizontal que escondía la
+                mayoría de las herramientas fuera de la vista. Ahora es una grilla que se
+                acomoda sola (flex-wrap) y muestra todas las pestañas de una sola vez. */}
+            <div className="flex flex-wrap gap-2 p-2 bg-slate-100/70 rounded-2xl">
               {[
                 {
                   id: 'inscriptos',
@@ -803,7 +812,16 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   icon: UserCheck,
                   badge: pendientesInscripcionCount > 0 ? pendientesInscripcionCount : undefined
                 },
-                { id: 'padron', label: 'Padrón Autorizado (Excel/CSV)', icon: FileSpreadsheet },
+                { id: 'padron', label: 'Padrón Autorizado', icon: Link2 },
+                {
+                  id: 'solicitudes',
+                  label:
+                    pendientesSolicitudesCodigoCount > 0
+                      ? `Solicitudes de Código (${pendientesSolicitudesCodigoCount})`
+                      : 'Solicitudes de Código',
+                  icon: MessageSquare,
+                  badge: pendientesSolicitudesCodigoCount > 0 ? pendientesSolicitudesCodigoCount : undefined,
+                },
                 { id: 'laboratorio', label: 'Laboratorio & Ensobrado (ZIP)', icon: Printer },
                 { id: 'pedidos', label: `Pedidos Familias (${pedidosCompletos.length})`, icon: Package },
                 { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
@@ -818,11 +836,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   <button
                     key={t.id}
                     onClick={() => setActiveTab(t.id as any)}
-                    className={`pb-3 text-xs sm:text-sm font-bold flex items-center gap-2 border-b-2 transition-all whitespace-nowrap cursor-pointer ${
-                      active ? 'border-amber-500 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'
+                    className={`px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                      active
+                        ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                        : 'text-slate-600 hover:bg-white/70 hover:text-slate-900 border border-transparent'
                     }`}
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon className="w-4 h-4 shrink-0" />
                     <span>{t.label}</span>
                     {t.badge && (
                       <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-amber-500 text-slate-950">
@@ -842,6 +862,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* TAB: PADRÓN AUTORIZADO (Excel/CSV) */}
             {activeTab === 'padron' && (
               <AdminPadronTab />
+            )}
+
+            {/* TAB: SOLICITUDES DE CÓDIGO (reemplaza el botón que abría WhatsApp por cada familia) */}
+            {activeTab === 'solicitudes' && (
+              <AdminSolicitudesCodigoTab />
             )}
 
             {/* TAB: LABORATORIO & ENSOBRADO */}
@@ -1082,9 +1107,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         type="button"
                         onClick={() => handleRegenerarCodigos('nemotecnico')}
                         className="px-2.5 py-1.5 bg-amber-200/80 hover:bg-amber-300 text-amber-950 font-bold text-[11px] rounded-lg transition-colors cursor-pointer"
-                        title="Códigos nemotécnicos como SALA3TM"
+                        title="Códigos nemotécnicos como SALA-3TM"
                       >
-                        Nemotécnicos (SALA3TM)
+                        Nemotécnicos (SALA-3TM)
                       </button>
                       <button
                         type="button"

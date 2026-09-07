@@ -23,7 +23,9 @@ export default function AdminResumenKitsSection({ className = '' }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [ultimaActualizacion, setUltimaActualizacion] = useState<string>('');
   const [kitExpandido, setKitExpandido] = useState<string | null>(null);
-  const [seccionPlegada, setSeccionPlegada] = useState(false);
+  // Arranca plegada: el detalle por kit ocupa mucho espacio y no hace falta verlo
+  // apenas se abre el panel; las 3 métricas clave siguen visibles igual.
+  const [seccionPlegada, setSeccionPlegada] = useState(true);
   const [isPending, startTransition] = useTransition();
 
   const cargarDatos = async () => {

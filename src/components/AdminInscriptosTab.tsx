@@ -637,7 +637,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             <a
                               href={generarEnlaceWhatsAppAprobacion(
                                 item,
-                                item.codigoAsignado || 'SALA3TM'
+                                item.codigoAsignado || 'SALA-3TM'
                               )}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -651,7 +651,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             <button
                               type="button"
                               onClick={() => {
-                                const codigo = item.codigoAsignado || 'SALA3TM';
+                                const codigo = item.codigoAsignado || 'SALA-3TM';
                                 setEnvioEmail({ enviando: false, enviado: Boolean(item.notificacionEmailEnviada), error: null });
                                 setDetalleEnvioModal({
                                   familia: item,

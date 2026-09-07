@@ -39,6 +39,7 @@ import {
   ChevronDown,
   Users,
   RefreshCw,
+  Send,
 } from 'lucide-react';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
@@ -53,6 +54,7 @@ import {
   buscarMiInscripcion,
   guardarFamiliaActiva
 } from '../services/inscripcionesService';
+import { enviarSolicitudCodigo } from '../services/solicitudesCodigoService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
 import { Colegio, KitProducto, Foto } from '../types';
 
@@ -104,6 +106,15 @@ export default function PortalFamiliasModal({
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
   const [codigoErrorMsg, setCodigoErrorMsg] = useState<string | null>(null);
   const [familiaActiva, setFamiliaActiva] = useState<InscripcionFamilia | null>(null);
+
+  // "No encuentro mi código de curso": en vez de abrir WhatsApp, la solicitud queda
+  // guardada para que el fotógrafo la vea en el panel admin sin recibir un WhatsApp por cada una
+  const [mostrarFormSolicitudCodigo, setMostrarFormSolicitudCodigo] = useState(false);
+  const [solicitudNombre, setSolicitudNombre] = useState('');
+  const [solicitudContacto, setSolicitudContacto] = useState('');
+  const [enviandoSolicitudCodigo, setEnviandoSolicitudCodigo] = useState(false);
+  const [solicitudCodigoEnviada, setSolicitudCodigoEnviada] = useState(false);
+  const [solicitudCodigoError, setSolicitudCodigoError] = useState<string | null>(null);
 
   // Step 2: Gallery
   const [categoriaActiva, setCategoriaActiva] = useState<'individual' | 'grupal' | 'docente' | 'patio'>('individual');
@@ -489,13 +500,41 @@ export default function PortalFamiliasModal({
     }
   };
 
+  const handleEnviarSolicitudCodigo = async () => {
+    if (!solicitudNombre.trim() || !solicitudContacto.trim()) {
+      setSolicitudCodigoError('Completá tu nombre y un WhatsApp o email para poder responderte.');
+      return;
+    }
+    setEnviandoSolicitudCodigo(true);
+    setSolicitudCodigoError(null);
+    try {
+      const resultado = await enviarSolicitudCodigo({
+        nombreSolicitante: solicitudNombre.trim(),
+        contacto: solicitudContacto.trim(),
+        alumnoNombre: nombreAlumno.trim() || undefined,
+        colegioId: selectedColegio?.id,
+        colegioNombre: selectedColegio?.nombre,
+        grado: grado || undefined,
+        division: division || undefined,
+        turno: turno || undefined,
+      });
+      if (resultado.success) {
+        setSolicitudCodigoEnviada(true);
+      } else {
+        setSolicitudCodigoError(resultado.error || 'No se pudo enviar la solicitud.');
+      }
+    } finally {
+      setEnviandoSolicitudCodigo(false);
+    }
+  };
+
   const handleCompletarPago = async () => {
     setIsProcessingPayment(true);
     setPagoError(null);
     setMpRedirectUrl(null);
 
     const numLista = Math.floor(1 + Math.random() * 25);
-    const codCurso = codigoAcceso.trim() || seccionDetectada?.nemotecnico || 'SALA3TM';
+    const codCurso = codigoAcceso.trim() || seccionDetectada?.nemotecnico || 'SALA-3TM';
 
     const nuevoPedido = registrarPedidoDesdePortal({
       colegioId: selectedColegio?.id || 'col-general',
@@ -896,7 +935,7 @@ export default function PortalFamiliasModal({
                           handleIngresarCodigo();
                         }
                       }}
-                      placeholder="Ej: SALA3TM"
+                      placeholder="Ej: SALA-3TM"
                       className="px-3.5 py-2.5 text-xs sm:text-sm uppercase font-mono font-bold tracking-wider bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full sm:w-48 shadow-xs"
                     />
                     <button
@@ -943,30 +982,86 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
 
-                {/* WhatsApp Course Code Request Action */}
-                <div className="pt-3 border-t border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left">
-                  <div className="text-slate-700 text-xs space-y-0.5">
-                    <p className="font-bold text-slate-900 flex items-center gap-1.5">
-                      <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>¿Aún no tenés tu Código de Curso?</span>
-                    </p>
-                    <p className="text-[11px] text-slate-600 leading-relaxed">
-                      Al momento de inscribirte, contactate por WhatsApp con la institución educativa para solicitar el código con el que podrás acceder a ver las fotos.
-                    </p>
-                  </div>
-                  <a
-                    href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
-                      nombreAlumno.trim()
-                        ? `Hola, me inscribí en el portal para las fotos de ${nombreAlumno.trim()} (${grado} "${division}", Turno ${turno}, ${selectedColegio?.nombre || 'Colegio'}). ¿Me podrían facilitar el código de curso para poder acceder a ver las fotos? ¡Muchas gracias!`
-                        : `Hola, me inscribí en el portal de fotos escolares para ${selectedColegio?.nombre || 'mi colegio'}. ¿Me podrían facilitar el código de curso con el que podré acceder a ver las fotos? ¡Muchas gracias!`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-4 py-2.5 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 active:scale-98"
-                  >
-                    <MessageCircle className="w-4 h-4 fill-white" />
-                    <span>Solicitar Código por WhatsApp</span>
-                  </a>
+                {/* Course Code Request Action: queda guardado para el panel admin, no abre WhatsApp */}
+                <div className="pt-3 border-t border-amber-200/80 text-left">
+                  {solicitudCodigoEnviada ? (
+                    <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-start gap-2.5">
+                      <CheckCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-bold text-emerald-950">¡Listo, recibimos tu consulta!</p>
+                        <p className="text-[11px] text-emerald-800 mt-0.5">
+                          Te vamos a contactar a la brevedad con tu código de curso.
+                        </p>
+                      </div>
+                    </div>
+                  ) : !mostrarFormSolicitudCodigo ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="text-slate-700 text-xs space-y-0.5">
+                        <p className="font-bold text-slate-900 flex items-center gap-1.5">
+                          <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>¿Aún no tenés tu Código de Curso?</span>
+                        </p>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Dejanos tus datos y te facilitamos el código con el que podrás acceder a ver las fotos.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarFormSolicitudCodigo(true)}
+                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 active:scale-98"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Solicitar mi Código</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Dejanos tus datos y te contactamos con el código</span>
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={solicitudNombre}
+                          onChange={(e) => setSolicitudNombre(e.target.value)}
+                          placeholder="Tu nombre y apellido"
+                          className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
+                        />
+                        <input
+                          type="text"
+                          value={solicitudContacto}
+                          onChange={(e) => setSolicitudContacto(e.target.value)}
+                          placeholder="Tu WhatsApp o email"
+                          className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
+                        />
+                      </div>
+                      {solicitudCodigoError && (
+                        <p className="text-[11px] text-rose-700 font-bold flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          {solicitudCodigoError}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={enviandoSolicitudCodigo}
+                          onClick={handleEnviarSolicitudCodigo}
+                          className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>{enviandoSolicitudCodigo ? 'Enviando...' : 'Enviar solicitud'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMostrarFormSolicitudCodigo(false)}
+                          className="px-3 py-2.5 text-slate-500 hover:text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1280,7 +1375,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'docente')?.thumbnail || FOTOS_MUESTRA[5].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'docente')?.thumbnail || FOTOS_MUESTRA.find(f => f.categoria === 'docente')?.thumbnail || FOTOS_MUESTRA[0].thumbnail}
                         alt="Con docente"
                         className="w-full h-full object-cover"
                       />
@@ -1301,35 +1396,36 @@ export default function PortalFamiliasModal({
                 </div>
               </div>
 
-              {/* Category tabs */}
+              {/* Debajo del panel de arriba: título de la categoría que se está mostrando +
+                  acceso a "Otras Fotos" (única categoría que no tiene su propio slot arriba, porque
+                  no forma parte de las 3 fotos incluidas en el paquete). Antes acá había 4 botones
+                  que repetían las mismas 3 categorías de arriba; se simplificó para evitar la confusión. */}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: 'individual', label: 'Retratos Individuales (3 tomas)' },
-                    { id: 'grupal', label: 'Foto Grupal de Grado' },
-                    { id: 'docente', label: 'Con la Seño / Docente' },
-                    { id: 'patio', label: 'Otras Fotos' },
-                  ].map((cat) => (
-                    <button
-                      key={cat.id}
-                      onClick={() => setCategoriaActiva(cat.id as any)}
-                      className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        categoriaActiva === cat.id
-                          ? 'bg-slate-900 text-white shadow-xs'
-                          : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                      }`}
-                    >
-                      {cat.label}
-                    </button>
-                  ))}
-                </div>
+                <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  {categoriaActiva === 'patio'
+                    ? 'Otras Fotos (no incluidas en el paquete)'
+                    : 'Elegí tu toma tocando una foto'}
+                </h5>
 
-                {extraCarpetas > 0 && (
-                  <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-1.5 shadow-2xs">
-                    <Copy className="w-3.5 h-3.5 text-amber-700" />
-                    <span>{extraCarpetas} carpeta(s) extra(s) agregada(s)</span>
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {extraCarpetas > 0 && (
+                    <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-1.5 shadow-2xs">
+                      <Copy className="w-3.5 h-3.5 text-amber-700" />
+                      <span>{extraCarpetas} carpeta(s) extra(s) agregada(s)</span>
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setCategoriaActiva(categoriaActiva === 'patio' ? 'individual' : 'patio')}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      categoriaActiva === 'patio'
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                    }`}
+                  >
+                    {categoriaActiva === 'patio' ? '← Volver a las 3 fotos del paquete' : 'Otras Fotos'}
+                  </button>
+                </div>
               </div>
 
               {/* Photo Cards Grid */}

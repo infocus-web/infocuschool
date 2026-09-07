@@ -44,7 +44,7 @@ interface FotoLoteItem {
 
 export default function AdminLoteFotosTab() {
   const { colegios } = useColegiosLista();
-  const [cursoSeleccionado, setCursoSeleccionado] = useState<string>('SALA3TM');
+  const [cursoSeleccionado, setCursoSeleccionado] = useState<string>('SALA-3TM');
   const [colegioSeleccionado, setColegioSeleccionado] = useState<string>(() => colegios[0]?.id || 'col-isba-2026');
   const [tipoFotoLote, setTipoFotoLote] = useState<'individual' | 'grupal' | 'docente'>('individual');
   const [alumnoSeleccionadoId, setAlumnoSeleccionadoId] = useState<string>('');
