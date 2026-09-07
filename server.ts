@@ -389,10 +389,13 @@ app.post('/api/admin/fotos/regenerar-miniaturas', requireAdminAuth, async (req: 
         if (errorSubida) throw errorSubida;
 
         const { data: urlData } = supabase.storage.from('fotos-web').getPublicUrl(pathThumb);
+        // "?v=..." para evitar que el navegador siga mostrando la miniatura vieja cacheada
+        // de esta misma URL (el archivo se sube con upsert:true, pisando el anterior).
+        const urlConVersion = `${urlData.publicUrl}?v=${Date.now()}`;
 
         const { error: errorUpdate } = await supabase
           .from('fotos')
-          .update({ thumb_path: urlData.publicUrl })
+          .update({ thumb_path: urlConVersion })
           .eq('id', fila.id);
         if (errorUpdate) throw errorUpdate;
 
@@ -531,10 +534,14 @@ app.post('/api/admin/fotos/regenerar-marca-agua', requireAdminAuth, async (req: 
         if (errorSubida) throw errorSubida;
 
         const { data: urlData } = supabase.storage.from('fotos-web').getPublicUrl(pathAmpliada);
+        // "?v=..." para evitar que el navegador siga mostrando la versión vieja cacheada de
+        // esta misma URL (el archivo se sube con upsert:true, pisando el anterior) — esto fue
+        // justamente lo que hizo pensar que el arreglo de la marca de agua no se aplicaba.
+        const urlConVersion = `${urlData.publicUrl}?v=${Date.now()}`;
 
         const { error: errorUpdate } = await supabase
           .from('fotos')
-          .update({ preview_path: urlData.publicUrl })
+          .update({ preview_path: urlConVersion })
           .eq('id', fila.id);
         if (errorUpdate) throw errorUpdate;
 
