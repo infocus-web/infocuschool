@@ -938,6 +938,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       email,
       alumnoNombre,
       alumnoApellido,
+      alumnoDni,
       grado,
       division,
       turno,
@@ -947,6 +948,10 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
 
     if (!padreNombre || !alumnoNombre || !colegioId || !telefonoWhatsApp || !email) {
       return res.status(400).json({ success: false, error: 'Faltan datos obligatorios para la inscripción' });
+    }
+    const alumnoDniLimpio = String(alumnoDni || '').replace(/\D/g, '');
+    if (alumnoDniLimpio.length < 6 || alumnoDniLimpio.length > 9) {
+      return res.status(400).json({ success: false, error: 'El DNI del alumno/a no es válido' });
     }
 
     const supabase = getServerSupabase();
@@ -1028,6 +1033,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       email: cleanEmail,
       alumno_nombre: String(alumnoNombre).trim(),
       alumno_apellido: String(alumnoApellido || '').trim(),
+      alumno_dni: alumnoDniLimpio,
       turno: String(turno || 'Mañana').trim(),
       grado: String(grado || 'Sala 3 años').trim(),
       division: String(division || 'A').trim(),
