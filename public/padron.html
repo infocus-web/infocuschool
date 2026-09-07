@@ -139,6 +139,10 @@
     const params = new URLSearchParams(window.location.search);
     const colegioId = params.get('colegio') || '';
     const codigo = params.get('codigo') || '';
+    // Link corto: /padron.html?c=CODIGO (sin el UUID del colegio en la URL). Si viene "c",
+    // se usan las rutas /api/padron/link/... en vez de /api/padron/institucion/<colegio>/...
+    const codigoCorto = params.get('c') || '';
+    const esLinkCorto = !colegioId && !!codigoCorto;
 
     const el = (id) => document.getElementById(id);
 
@@ -149,13 +153,16 @@
     }
 
     async function verificarLink() {
-      if (!colegioId || !codigo) {
+      if (!esLinkCorto && (!colegioId || !codigo)) {
         el('mensajeError').textContent = 'Falta el colegio o el código en el link.';
         mostrarSoloEstado('estadoError');
         return;
       }
       try {
-        const res = await fetch(`/api/padron/institucion/${encodeURIComponent(colegioId)}?codigo=${encodeURIComponent(codigo)}`);
+        const url = esLinkCorto
+          ? `/api/padron/link/${encodeURIComponent(codigoCorto)}`
+          : `/api/padron/institucion/${encodeURIComponent(colegioId)}?codigo=${encodeURIComponent(codigo)}`;
+        const res = await fetch(url);
         const data = await res.json();
         if (!res.ok || !data.success) {
           el('mensajeError').textContent = data.error || 'Link no válido.';
@@ -190,7 +197,10 @@
       boton.textContent = 'Guardando...';
 
       try {
-        const res = await fetch(`/api/padron/institucion/${encodeURIComponent(colegioId)}`, {
+        const url = esLinkCorto
+          ? `/api/padron/link/${encodeURIComponent(codigoCorto)}`
+          : `/api/padron/institucion/${encodeURIComponent(colegioId)}`;
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ codigo, filas: [{ nombre, email, telefono }] }),
