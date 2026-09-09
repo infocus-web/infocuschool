@@ -294,6 +294,31 @@ app.post('/api/admin/configuracion', requireAdminAuth, async (req, res) => {
   }
 });
 
+// Auditoría 2026-09 (bug reportado por Pablo): la pestaña "Nómina 2026" mostraba "(1000)"
+// aunque el colegio ya tenía 1314 alumnos cargados. Causa: Supabase/PostgREST limita cada
+// consulta a un máximo de filas por respuesta (1000 por defecto) aunque no se pida un
+// `.limit()` explícito — una sola consulta nunca devuelve más filas que ese tope, sin importar
+// cuántas haya en la tabla. Este helper pagina la consulta pidiendo de a 1000 filas hasta
+// traerlas todas, para que ningún endpoint dependa de la configuración de "Max Rows" del
+// proyecto en Supabase. `construirConsulta` arma la consulta base (columnas, filtros, orden)
+// y recibe el rango de filas a pedir en cada vuelta.
+async function traerTodasLasFilas<T>(
+  construirConsulta: (desde: number, hasta: number) => any
+): Promise<T[]> {
+  const TAMANO_PAGINA = 1000;
+  const filas: T[] = [];
+  let desde = 0;
+  while (true) {
+    const { data, error } = await construirConsulta(desde, desde + TAMANO_PAGINA - 1);
+    if (error) throw error;
+    const pagina: T[] = data || [];
+    filas.push(...pagina);
+    if (pagina.length < TAMANO_PAGINA) break;
+    desde += TAMANO_PAGINA;
+  }
+  return filas;
+}
+
 // Nómina real de alumnos (tabla 'alumnos', cargada por el importador de padrón). Antes la
 // pestaña "Nómina 2026" del panel mostraba una lista vieja, escrita a mano en el código
 // (src/data/alumnosData.ts, 211 alumnos de una sola sala de nivel inicial) que no tenía nada
@@ -306,18 +331,22 @@ app.get('/api/admin/alumnos', requireAdminAuth, async (req: Request, res: Respon
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
     const { colegioId } = req.query;
-    let builder = supabase
-      .from('alumnos')
-      .select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni, origen')
-      .order('grado', { ascending: true })
-      .order('division', { ascending: true })
-      .order('numero_lista', { ascending: true, nullsFirst: false });
-    if (typeof colegioId === 'string' && colegioId) {
-      builder = builder.eq('colegio_id', colegioId);
-    }
-    const { data, error } = await builder;
-    if (error) throw error;
-    return res.json({ success: true, alumnos: data || [] });
+
+    const alumnos = await traerTodasLasFilas((desde, hasta) => {
+      let builder = supabase
+        .from('alumnos')
+        .select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni, origen')
+        .order('grado', { ascending: true })
+        .order('division', { ascending: true })
+        .order('numero_lista', { ascending: true, nullsFirst: false })
+        .range(desde, hasta);
+      if (typeof colegioId === 'string' && colegioId) {
+        builder = builder.eq('colegio_id', colegioId);
+      }
+      return builder;
+    });
+
+    return res.json({ success: true, alumnos });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener la nómina de alumnos' });
   }
@@ -366,25 +395,27 @@ app.get('/api/admin/colegios/:colegioId/estado-pagos', requireAdminAuth, async (
       return res.status(400).json({ success: false, error: 'Falta el colegioId' });
     }
 
-    const [alumnosRes, pedidosRes] = await Promise.all([
-      supabase
-        .from('alumnos')
-        .select('id, nombre, grado, division, turno, numero_lista')
-        .eq('colegio_id', colegioId)
-        .order('grado', { ascending: true })
-        .order('division', { ascending: true })
-        .order('numero_lista', { ascending: true, nullsFirst: false }),
-      supabase
-        .from('pedidos')
-        .select('id, alumno_nombre, alumno_numero_lista, estado, total, kit_nombre, metodo_pago, created_at')
-        .eq('colegio_id', colegioId),
+    // Mismo bug que en "Nómina 2026": sin paginar, Supabase/PostgREST corta cada consulta en
+    // 1000 filas aunque el colegio tenga más alumnos o pedidos cargados (ver `traerTodasLasFilas`).
+    const [alumnos, pedidos] = await Promise.all([
+      traerTodasLasFilas<any>((desde, hasta) =>
+        supabase
+          .from('alumnos')
+          .select('id, nombre, grado, division, turno, numero_lista')
+          .eq('colegio_id', colegioId)
+          .order('grado', { ascending: true })
+          .order('division', { ascending: true })
+          .order('numero_lista', { ascending: true, nullsFirst: false })
+          .range(desde, hasta)
+      ),
+      traerTodasLasFilas<any>((desde, hasta) =>
+        supabase
+          .from('pedidos')
+          .select('id, alumno_nombre, alumno_numero_lista, estado, total, kit_nombre, metodo_pago, created_at')
+          .eq('colegio_id', colegioId)
+          .range(desde, hasta)
+      ),
     ]);
-
-    if (alumnosRes.error) throw alumnosRes.error;
-    if (pedidosRes.error) throw pedidosRes.error;
-
-    const alumnos = alumnosRes.data || [];
-    const pedidos = pedidosRes.data || [];
 
     // Un pedido cuenta como "pagado" a los fines de este listado si Mercado Pago (o el admin
     // a mano) ya lo confirmó, o si ya se entregó (lo cual implica que se cobró antes).
