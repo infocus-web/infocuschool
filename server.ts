@@ -1532,6 +1532,14 @@ function normalizarTelefonoServidor(tel: string): string {
   return (tel || '').replace(/\D/g, '');
 }
 
+/** Enmascara un email para mostrarlo en una respuesta pública sin revelarlo completo (ej: "ju***@gmail.com") */
+function enmascararEmailServidor(email: string): string {
+  const [usuario, dominio] = String(email || '').split('@');
+  if (!usuario || !dominio) return '';
+  const visible = usuario.slice(0, Math.min(2, usuario.length));
+  return `${visible}${'*'.repeat(Math.max(3, usuario.length - visible.length))}@${dominio}`;
+}
+
 // ==============================================================================
 // CÓDIGOS DE SECCIÓN: el código real y secreto que necesita una familia para ver
 // las fotos de un curso puntual (colegio + grado + turno + división).
@@ -1938,17 +1946,101 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     const turnoAprobado = (matchPadre?.turno && String(matchPadre.turno).trim()) || turno;
     const divisionAprobada = (matchPadre?.division && String(matchPadre.division).trim()) || division;
 
+    // Auditoría 2026-09-09 (revisión a fondo, hallazgo reportado por Pablo): hasta acá, con sólo
+    // escribir el número de WhatsApp (o el email) de CUALQUIER fila del padrón oficial en este
+    // formulario público — un dato que de ninguna manera es secreto, lo puede tener cualquier
+    // compañero de curso, un grupo de WhatsApp del colegio, etc. — se aprobaba la inscripción al
+    // instante y el código de acceso real se devolvía directo en la respuesta de esta misma
+    // petición, visible para quien la hizo, sin importar si esa persona era realmente el padre o
+    // no. Es decir: el número de teléfono de un padre funcionaba como si fuera su contraseña.
+    // Ahora, para aprobar automáticamente, además de encontrar la coincidencia en el padrón hace
+    // falta un email cargado en esa fila (el que subió el colegio, nunca el que haya tipeado
+    // quien completa el formulario) — el código se manda SOLO por correo a esa dirección, y
+    // nunca viaja en la respuesta de esta petición. Así, aunque alguien conozca o adivine el
+    // teléfono de un padre, no puede ver el código: sólo quien tiene acceso a esa casilla de
+    // correo puede. Si la fila del padrón no tiene email cargado, no se puede entregar el código
+    // de forma segura por acá — la inscripción queda "pendiente" para que el fotógrafo la revise
+    // y envíe el código a mano desde el panel, en vez de exponerlo.
+    let emailEnviado = false;
+    let emailDestinoNotificacion: string | null = null;
     if (estado !== 'aceptado' && matchPadre) {
-      estado = 'aceptado';
-      // El código real de la sección es el que la familia va a usar para ver las fotos —
-      // nunca la fórmula pública determinarCodigoCursoServidor (ver codigos_seccion arriba).
-      codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, gradoAprobado, turnoAprobado, divisionAprobada, matchPadre.codigo_asignado);
+      const emailOficialPadron = matchPadre.email ? String(matchPadre.email).trim().toLowerCase() : '';
+      if (emailOficialPadron && emailOficialPadron.includes('@')) {
+        estado = 'aceptado';
+        // El código real de la sección es el que la familia va a usar para ver las fotos —
+        // nunca la fórmula pública determinarCodigoCursoServidor (ver codigos_seccion arriba).
+        codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, gradoAprobado, turnoAprobado, divisionAprobada, matchPadre.codigo_asignado);
+        emailDestinoNotificacion = emailOficialPadron;
+        try {
+          const resultadoEnvio = await enviarCorreoCodigoAcceso({
+            to: emailOficialPadron,
+            padreNombre: (matchPadre.nombre && String(matchPadre.nombre).trim()) || String(padreNombre).trim(),
+            colegioNombre: String(colegioNombre || 'Colegio').trim(),
+            codigo: codigoAcceso,
+            alumnos: [{
+              nombre: String(alumnoNombre).trim(),
+              apellido: String(alumnoApellido || '').trim(),
+              grado: gradoAprobado,
+              division: divisionAprobada,
+              turno: turnoAprobado,
+            }],
+            solicitaFotoHermanos: Boolean(solicitaFotoHermanos || (hermanos && hermanos.length > 0)),
+          });
+          emailEnviado = Boolean(resultadoEnvio.success);
+        } catch (e) {
+          console.warn('No se pudo enviar el email de código de acceso automático:', e);
+        }
+      }
+      // Si la fila del padrón no tiene email cargado, la inscripción queda "pendiente" (no se
+      // aprueba automáticamente) — ver comentario de auditoría arriba.
+    } else if (estado === 'aceptado' && inscripcionExistente?.email && codigoAcceso) {
+      // Reenvío: la familia ya estaba aprobada y volvió a completar el formulario (por ejemplo,
+      // porque no encontró el correo original). Se reenvía SIEMPRE al email que ya estaba
+      // guardado en la inscripción (el que se validó en su momento contra el padrón) — nunca al
+      // que haya tipeado ahora, por la misma razón de seguridad de arriba.
+      try {
+        const resultadoReenvio = await enviarCorreoCodigoAcceso({
+          to: String(inscripcionExistente.email).trim().toLowerCase(),
+          padreNombre: String(inscripcionExistente.padre_nombre || padreNombre).trim(),
+          colegioNombre: String(colegioNombre || 'Colegio').trim(),
+          codigo: codigoAcceso,
+          alumnos: [{
+            nombre: String(alumnoNombre).trim(),
+            apellido: String(alumnoApellido || '').trim(),
+            grado: gradoAprobado,
+            division: divisionAprobada,
+            turno: turnoAprobado,
+          }],
+          solicitaFotoHermanos: Boolean(solicitaFotoHermanos || (hermanos && hermanos.length > 0)),
+        });
+        emailEnviado = Boolean(resultadoReenvio.success);
+        if (emailEnviado) emailDestinoNotificacion = String(inscripcionExistente.email).trim().toLowerCase();
+      } catch (e) {
+        console.warn('No se pudo reenviar el email de código de acceso:', e);
+      }
     }
+
+    // El contacto que queda guardado para una inscripción APROBADA es siempre uno ya validado —
+    // el del padrón oficial (matchPadre) si se acaba de aprobar recién, o el que ya estaba
+    // guardado de una aprobación anterior — NUNCA lo que haya tipeado quien completó el
+    // formulario esta vez. Es "pegajoso" a propósito: si no, alguien podría volver a mandar el
+    // mismo formulario con el teléfono real de una familia YA aprobada (así matchea contra su
+    // inscripción existente) pero con SU PROPIO email, y ese email reemplazaría al real —
+    // dejando el reenvío manual futuro desde el panel apuntando a la casilla del atacante. Para
+    // una inscripción que sigue "pendiente" sí se guarda el contacto tal como lo escribió la
+    // persona, porque ahí no se aprueba ni se entrega ningún código automáticamente — el
+    // fotógrafo revisa a mano antes de aprobar.
+    const emailGuardado = estado === 'aceptado'
+      ? (matchPadre?.email ? String(matchPadre.email).trim().toLowerCase() : (inscripcionExistente?.email || cleanEmail))
+      : cleanEmail;
+    const telefonoGuardado = estado === 'aceptado'
+      ? (matchPadre?.telefono ? String(matchPadre.telefono).trim() : (inscripcionExistente?.telefono_whatsapp || String(telefonoWhatsApp).trim()))
+      : String(telefonoWhatsApp).trim();
 
     const inscripcionRow: Record<string, any> = {
       padre_nombre: String(padreNombre).trim(),
-      telefono_whatsapp: String(telefonoWhatsApp).trim(),
-      email: cleanEmail,
+      telefono_whatsapp: telefonoGuardado,
+      email: emailGuardado,
       alumno_nombre: String(alumnoNombre).trim(),
       alumno_apellido: String(alumnoApellido || '').trim(),
       alumno_dni: alumnoDniLimpio,
@@ -1965,7 +2057,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       fecha_inscripcion: inscripcionExistente?.fecha_inscripcion || fechaStr,
       fecha_aprobacion: estado === 'aceptado' ? (inscripcionExistente?.fecha_aprobacion || fechaStr) : null,
       notificacion_whatsapp_enviada: inscripcionExistente ? Boolean(inscripcionExistente.notificacion_whatsapp_enviada) : false,
-      notificacion_email_enviada: inscripcionExistente ? Boolean(inscripcionExistente.notificacion_email_enviada) : false,
+      notificacion_email_enviada: emailEnviado || (inscripcionExistente ? Boolean(inscripcionExistente.notificacion_email_enviada) : false),
     };
 
     let resultadoFila: any = null;
@@ -1992,18 +2084,28 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
 
     if (errGuardar) throw errGuardar;
 
-    if (matchPadre && matchPadre.id) {
+    if (matchPadre && matchPadre.id && estado === 'aceptado') {
       await supabase
         .from('padres_autorizados')
         .update({ usado: true, updated_at: new Date().toISOString() })
         .eq('id', matchPadre.id);
     }
 
+    // Auditoría 2026-09-09 (revisión a fondo): el código de acceso real YA NO viaja en esta
+    // respuesta — ver comentario de auditoría más arriba. El frontend debe indicarle a la
+    // familia que revise su correo (o que espere la revisión manual del fotógrafo), nunca
+    // mostrar un código en pantalla en este flujo automático. Ojo: no alcanza con sacar
+    // `codigoAcceso` del nivel superior de la respuesta — `resultadoFila` es la fila cruda de
+    // Supabase e incluye igual las columnas `codigo_asignado`/`codigo_familiar`, así que hay
+    // que sacarlas explícitamente antes de devolverla, si no el mismo código se sigue filtrando
+    // por esta otra puerta.
+    const { codigo_asignado: _codigoAsignadoOculto, codigo_familiar: _codigoFamiliarOculto, ...inscripcionSinCodigo } = resultadoFila || {};
     return res.json({
       success: true,
       estado,
-      codigoAcceso,
-      inscripcion: resultadoFila,
+      emailEnviado,
+      emailDestino: emailEnviado ? emailDestinoNotificacion : null,
+      inscripcion: inscripcionSinCodigo,
     });
   } catch (err: any) {
     console.error('Error al validar inscripción:', err);
@@ -2011,9 +2113,24 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
   }
 });
 
-// Recuperar mi inscripción por teléfono, email o código (público). Devuelve como máximo UN registro
-// propio — nunca la tabla completa — y usa siempre comparaciones exactas/parametrizadas (nada de
-// interpolar el texto del usuario en un filtro .or() crudo, que sería explotable).
+// Recuperar mi inscripción por código, teléfono o email (público). Devuelve como máximo UN
+// registro propio — nunca la tabla completa — y usa siempre comparaciones exactas/parametrizadas
+// (nada de interpolar el texto del usuario en un filtro .or() crudo, que sería explotable).
+//
+// Auditoría 2026-09-09 (revisión a fondo, hallazgo reportado por Pablo): "cualquier persona,
+// poniendo el número de teléfono de alguno de los empadronados, puede acceder al código". Esta
+// era exactamente la puerta: esta ruta (usada tanto por la pestaña "Ya me inscribí" como por el
+// cuadro de "ingresar código" para ver las fotos) buscaba por teléfono O email y, si encontraba
+// una familia YA aprobada, devolvía la fila completa —con `codigo_asignado` incluido— a quien
+// sea que haya escrito ese teléfono, sin ninguna prueba de que esa persona fuera realmente el
+// padre/madre. El teléfono de un padre empadronado no es un secreto: lo puede tener cualquier
+// compañero de curso. Ahora: si lo que se escribió ES el código real (coincide exacto contra
+// `codigo_asignado`/`codigo_familiar`), quien lo escribió ya demostró tenerlo — se devuelve la
+// familia completa. Si lo que se escribió es un teléfono o un email y esa familia todavía está
+// "pendiente" (no tiene código asignado), no hay ningún secreto que proteger todavía, así que se
+// puede informar el estado igual. Pero si esa familia YA tiene un código asignado, esta ruta
+// nunca lo devuelve por acá: como mucho reenvía el código al correo de confianza YA guardado
+// (nunca a uno nuevo) y responde sin datos de la familia.
 app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 15, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { query } = req.body || {};
@@ -2031,37 +2148,82 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
     const qEmail = q.toLowerCase();
     const qTel = normalizarTelefonoServidor(q);
 
+    // Paso 1: ¿lo que se escribió ES el código real? Coincidencia exacta = prueba de posesión.
     let encontrada: any = null;
-
-    const tryEq = async (column: string, value: string) => {
+    const tryEqCodigo = async (column: string, value: string) => {
       if (encontrada || !value) return;
       const { data } = await supabase.from('inscripciones').select('*').eq(column, value).limit(1);
       if (data && data.length > 0) encontrada = data[0];
     };
+    await tryEqCodigo('codigo_asignado', qUpper);
+    await tryEqCodigo('codigo_familiar', qUpper);
 
-    await tryEq('codigo_asignado', qUpper);
-    await tryEq('codigo_familiar', qUpper);
-    await tryEq('email', qEmail);
+    if (encontrada) {
+      return res.json({ success: true, inscripcion: encontrada });
+    }
 
+    // Paso 2: no era el código. Buscar por contacto (teléfono o email) — ver auditoría arriba,
+    // el resultado de esta búsqueda NUNCA puede filtrar un código ya asignado.
+    let porContacto: any = null;
+    if (qEmail.includes('@')) {
+      const { data } = await supabase.from('inscripciones').select('*').eq('email', qEmail).limit(1);
+      if (data && data.length > 0) porContacto = data[0];
+    }
     // Auditoría 2026-09-09: antes esto buscaba con ilike '%qTel%' aceptando desde 6 dígitos
     // sueltos en cualquier parte del teléfono guardado — eso es fuerza-bruteable (basta con
-    // probar secuencias de 6 dígitos) y devuelve datos + código de acceso de OTRA familia si
-    // hay coincidencia parcial casual. Ahora exige el teléfono completo (mínimo 8 dígitos) y
-    // sólo lo compara, ya normalizado, contra el final exacto del teléfono guardado — no
-    // contra cualquier subcadena.
-    if (!encontrada && qTel.length >= 8) {
+    // probar secuencias de 6 dígitos) y podía traer coincidencias parciales casuales de OTRA
+    // familia. Ahora exige el teléfono completo (mínimo 8 dígitos) y sólo lo compara, ya
+    // normalizado, contra el final exacto del teléfono guardado — no contra cualquier subcadena.
+    if (!porContacto && qTel.length >= 8) {
       const sufijo = qTel.slice(-8);
       const { data } = await supabase.from('inscripciones').select('*').ilike('telefono_whatsapp', `%${sufijo}`).limit(5);
       if (data && data.length > 0) {
-        encontrada = data.find((i: any) => normalizarTelefonoServidor(i.telefono_whatsapp || '').endsWith(qTel.length >= 10 ? qTel : sufijo)) || null;
+        porContacto = data.find((i: any) => normalizarTelefonoServidor(i.telefono_whatsapp || '').endsWith(qTel.length >= 10 ? qTel : sufijo)) || null;
       }
     }
 
-    if (!encontrada) {
+    if (!porContacto) {
       return res.json({ success: false });
     }
 
-    return res.json({ success: true, inscripcion: encontrada });
+    if (porContacto.estado !== 'aceptado' || !porContacto.codigo_asignado) {
+      // Todavía no tiene código asignado: no hay nada que proteger, se informa el estado tal cual.
+      return res.json({ success: true, inscripcion: porContacto });
+    }
+
+    // Ya tiene código asignado: por acá nunca se devuelve. Se reenvía al correo de confianza que
+    // ya estaba guardado (el validado en su momento contra el padrón, nunca uno nuevo) y se
+    // responde sin ningún dato de la familia — sólo si se pudo reenviar y a qué correo (parcial).
+    let emailReenviado = false;
+    const emailConfianza = porContacto.email ? String(porContacto.email).trim().toLowerCase() : '';
+    if (emailConfianza && emailConfianza.includes('@')) {
+      try {
+        const resultadoReenvio = await enviarCorreoCodigoAcceso({
+          to: emailConfianza,
+          padreNombre: String(porContacto.padre_nombre || '').trim() || 'Familia',
+          colegioNombre: String(porContacto.colegio_nombre || 'Colegio').trim(),
+          codigo: porContacto.codigo_asignado,
+          alumnos: [{
+            nombre: String(porContacto.alumno_nombre || '').trim(),
+            apellido: String(porContacto.alumno_apellido || '').trim(),
+            grado: porContacto.grado,
+            division: porContacto.division,
+            turno: porContacto.turno,
+          }],
+          solicitaFotoHermanos: Boolean(porContacto.solicita_foto_hermanos),
+        });
+        emailReenviado = Boolean(resultadoReenvio.success);
+      } catch (e) {
+        console.warn('No se pudo reenviar el código de acceso desde /api/inscripciones/buscar:', e);
+      }
+    }
+
+    return res.json({
+      success: false,
+      yaRegistrado: true,
+      emailReenviado,
+      emailDestino: emailReenviado ? enmascararEmailServidor(emailConfianza) : null,
+    });
   } catch (err: any) {
     console.error('Error al buscar inscripción:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al buscar la inscripción' });
