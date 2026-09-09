@@ -617,8 +617,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const seccionIdDeAlumno = (a: AlumnoNominaReal): string =>
     `${a.grado || '-'}__${a.turno || '-'}__${a.division || '-'}`;
 
+  // Distingue Primaria/Inicial de Secundaria por el texto del grado: "1° año".."6° año" es
+  // secundaria; "1° grado".."7° grado" y "Sala X años" son primaria/inicial. Se usa \b para que
+  // "años" (plural, de "Sala 3 años") no matchee "año" (singular, de secundaria) por error.
+  const esGradoDeSecundaria = (grado: string | null | undefined): boolean => /\baño\b/i.test(grado || '');
+
   const seccionesReales = useMemo(() => {
-    const mapa = new Map<string, { id: string; nombreCompleto: string; totalAlumnos: number }>();
+    const mapa = new Map<string, { id: string; nombreCompleto: string; totalAlumnos: number; esSecundaria: boolean }>();
     alumnosNominaReal.forEach((a) => {
       const id = seccionIdDeAlumno(a);
       const existente = mapa.get(id);
@@ -629,11 +634,28 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
           id,
           nombreCompleto: `${a.grado || 'Sin grado'} "${a.division || '-'}" (${a.turno || 'Turno sin definir'})`,
           totalAlumnos: 1,
+          esSecundaria: esGradoDeSecundaria(a.grado),
         });
       }
     });
     return Array.from(mapa.values()).sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, 'es'));
   }, [alumnosNominaReal]);
+
+  // Auditoría 2026-09 (pedido de Pablo): la nómina de Instituto Madre del Divino Pastor ya
+  // junta Primaria/Inicial y Secundaria en una sola lista de 33 secciones — se separan acá para
+  // poder mostrar dos desplegables independientes en vez de uno solo con todo mezclado.
+  const seccionesPrimaria = useMemo(() => seccionesReales.filter((s) => !s.esSecundaria), [seccionesReales]);
+  const seccionesSecundaria = useMemo(() => seccionesReales.filter((s) => s.esSecundaria), [seccionesReales]);
+  const totalAlumnosPrimaria = useMemo(
+    () => seccionesPrimaria.reduce((acc, s) => acc + s.totalAlumnos, 0),
+    [seccionesPrimaria]
+  );
+  const totalAlumnosSecundaria = useMemo(
+    () => seccionesSecundaria.reduce((acc, s) => acc + s.totalAlumnos, 0),
+    [seccionesSecundaria]
+  );
+  const idsSeccionesPrimaria = useMemo(() => new Set(seccionesPrimaria.map((s) => s.id)), [seccionesPrimaria]);
+  const idsSeccionesSecundaria = useMemo(() => new Set(seccionesSecundaria.map((s) => s.id)), [seccionesSecundaria]);
 
   const toggleCheckAlumno = (id: string) => {
     setCheckedAlumnos(prev => ({ ...prev, [id]: !prev[id] }));
@@ -650,7 +672,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   const alumnosFiltradosAdmin = useMemo(() => {
     return alumnosNominaReal.filter((alu) => {
-      const matchSeccion = filtroSeccionAlumnos === 'todas' || seccionIdDeAlumno(alu) === filtroSeccionAlumnos;
+      const matchSeccion =
+        filtroSeccionAlumnos === 'todas' ||
+        (filtroSeccionAlumnos === 'todas-primaria' && !esGradoDeSecundaria(alu.grado)) ||
+        (filtroSeccionAlumnos === 'todas-secundaria' && esGradoDeSecundaria(alu.grado)) ||
+        seccionIdDeAlumno(alu) === filtroSeccionAlumnos;
       const q = busquedaAlumnos.toLowerCase().trim();
       const matchSearch = !q ||
         alu.nombre.toLowerCase().includes(q) ||
@@ -1704,14 +1730,28 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                       />
                     </div>
-                    <div className="sm:w-72">
+                    <div className="sm:w-64">
                       <select
-                        value={filtroSeccionAlumnos}
+                        value={idsSeccionesPrimaria.has(filtroSeccionAlumnos) || filtroSeccionAlumnos === 'todas-primaria' ? filtroSeccionAlumnos : 'todas-primaria'}
                         onChange={(e) => setFiltroSeccionAlumnos(e.target.value)}
                         className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-700"
                       >
-                        <option value="todas">Todas las secciones ({alumnosNominaReal.length} alumnos)</option>
-                        {seccionesReales.map((sec) => (
+                        <option value="todas-primaria">Primaria/Inicial: todas ({totalAlumnosPrimaria} alumnos)</option>
+                        {seccionesPrimaria.map((sec) => (
+                          <option key={sec.id} value={sec.id}>
+                            {sec.nombreCompleto} ({sec.totalAlumnos} alumnos)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="sm:w-64">
+                      <select
+                        value={idsSeccionesSecundaria.has(filtroSeccionAlumnos) || filtroSeccionAlumnos === 'todas-secundaria' ? filtroSeccionAlumnos : 'todas-secundaria'}
+                        onChange={(e) => setFiltroSeccionAlumnos(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-700"
+                      >
+                        <option value="todas-secundaria">Secundaria: todas ({totalAlumnosSecundaria} alumnos)</option>
+                        {seccionesSecundaria.map((sec) => (
                           <option key={sec.id} value={sec.id}>
                             {sec.nombreCompleto} ({sec.totalAlumnos} alumnos)
                           </option>
@@ -1720,31 +1760,55 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     </div>
                   </div>
 
-                  {/* Section badges pills */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                    <button
-                      onClick={() => setFiltroSeccionAlumnos('todas')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                        filtroSeccionAlumnos === 'todas'
-                          ? 'bg-amber-400 text-slate-950'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      Todas ({alumnosNominaReal.length})
-                    </button>
-                    {seccionesReales.map((sec) => (
+                  {/* Section badges pills: agrupadas por nivel para que no queden las 33 secciones
+                      de primaria y secundaria mezcladas en una sola fila */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
                       <button
-                        key={sec.id}
-                        onClick={() => setFiltroSeccionAlumnos(sec.id)}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                          filtroSeccionAlumnos === sec.id
-                            ? 'bg-amber-400 text-slate-950 font-bold shadow-xs'
+                        onClick={() => setFiltroSeccionAlumnos('todas')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                          filtroSeccionAlumnos === 'todas'
+                            ? 'bg-amber-400 text-slate-950'
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}
                       >
-                        {sec.nombreCompleto} ({sec.totalAlumnos})
+                        Todas ({alumnosNominaReal.length})
                       </button>
-                    ))}
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 px-1">
+                        Primaria/Inicial:
+                      </span>
+                      {seccionesPrimaria.map((sec) => (
+                        <button
+                          key={sec.id}
+                          onClick={() => setFiltroSeccionAlumnos(sec.id)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                            filtroSeccionAlumnos === sec.id
+                              ? 'bg-amber-400 text-slate-950 font-bold shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {sec.nombreCompleto} ({sec.totalAlumnos})
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 px-1">
+                        Secundaria:
+                      </span>
+                      {seccionesSecundaria.map((sec) => (
+                        <button
+                          key={sec.id}
+                          onClick={() => setFiltroSeccionAlumnos(sec.id)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                            filtroSeccionAlumnos === sec.id
+                              ? 'bg-amber-400 text-slate-950 font-bold shadow-xs'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {sec.nombreCompleto} ({sec.totalAlumnos})
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
