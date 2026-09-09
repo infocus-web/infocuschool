@@ -545,7 +545,7 @@ export default function PortalFamiliasModal({
       codigoAcceso.trim() ||
       determinarCodigoParaInscripcion({ grado, turno, division });
 
-    const nuevoPedido = registrarPedidoDesdePortal({
+    const { pedido: nuevoPedido, sincronizado, errorSincronizacion } = await registrarPedidoDesdePortal({
       colegioId: selectedColegio?.id || 'col-general',
       colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
       cursoCodigo: codCurso,
@@ -577,6 +577,20 @@ export default function PortalFamiliasModal({
 
     setNumeroPedido(nuevoPedido.id);
     setPedidoGenerado(nuevoPedido);
+
+    // Auditoría 2026-09-09 (revisión a fondo): si el pedido no se pudo confirmar en el
+    // servidor (Supabase), se corta acá y NUNCA se avanza a Mercado Pago — de lo contrario
+    // la familia podría llegar a pagar un pedido que no quedó registrado en ningún lado.
+    if (!sincronizado) {
+      setPagoError(
+        errorSincronizacion
+          ? `No pudimos registrar tu pedido antes de continuar con el pago (${errorSincronizacion}). Por favor, intentá nuevamente en unos segundos. Si el problema persiste, contactanos antes de pagar.`
+          : 'No pudimos registrar tu pedido antes de continuar con el pago. Por favor, intentá nuevamente en unos segundos. Si el problema persiste, contactanos antes de pagar.'
+      );
+      setIsProcessingPayment(false);
+      setStep(5);
+      return;
+    }
 
     if (metodoPago === 'mercadopago') {
       try {
