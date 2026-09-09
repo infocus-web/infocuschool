@@ -106,6 +106,22 @@ export default function AdminLoteFotosTab() {
     [colegios, colegioSeleccionado]
   );
 
+    // BUG CORREGIDO (2026-09-09): "colegioSeleccionado" se inicializaba con colegios[0]?.id en el
+    // primer render, pero useColegiosLista() arranca con [COLEGIO_POR_DEFECTO] (un colegio de
+    // relleno con id de mentira, ej. "col-divino-pastor-2026") mientras todavía no llegó la lista
+    // real desde Supabase — y como useState solo lee ese valor inicial UNA vez, "colegioSeleccionado"
+    // se quedaba pegado en ese id de mentira para siempre, aunque un instante después llegara la
+    // lista real con el id verdadero del colegio. El desplegable de arriba mostraba igual el nombre
+    // correcto (porque coincide por casualidad), asi que no se notaba a simple vista — pero todas
+    // las fotos que se subian quedaban guardadas con ese colegio_id de mentira en la base, y por eso
+    // el portal de familias nunca las encontraba (buscaba por el id real) y mostraba las fotos
+    // genericas de muestra en su lugar. Este efecto corrige la seleccion apenas llega la lista real.
+    useEffect(() => {
+          if (colegios.length > 0 && !colegios.some(c => c.id === colegioSeleccionado)) {
+                  setColegioSeleccionado(colegios[0].id);
+          }
+    }, [colegios, colegioSeleccionado]);
+
   // Si el colegio todavía no configuró sus propios grados/turnos/divisiones, se usa una lista
   // genérica (la misma que ofrece el alta de colegios) para que esta pestaña nunca quede vacía.
   const gradosDisponibles = colegioActualObj?.grados?.length ? colegioActualObj.grados : COLEGIO_POR_DEFECTO.grados;
