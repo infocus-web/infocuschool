@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { SeccionEscolar, ALUMNOS_NOMINA_2026 } from '../data/alumnosData';
+import { SeccionEscolar } from '../data/alumnosData';
 import { descargarLibroExcel, descargarBlobSeguro } from './excelDownloadHelper';
 
 export interface MensajeCursoInfo {
@@ -75,7 +75,7 @@ Solo deben COPIAR y PEGAR el texto en el grupo de WhatsApp de las familias de es
 `;
 
   const body = secciones.map((sec, idx) => {
-    const code = codigosMap[sec.id] || sec.id;
+    const code = codigosMap[sec.id] || '(SIN CÓDIGO ASIGNADO)';
     const msg = generarMensajeWhatsApp(sec, code, colegioNombre, urlWeb);
 
     return `${subline}
@@ -112,23 +112,36 @@ export function descargarGuiaWhatsAppTxt(
   URL.revokeObjectURL(url);
 }
 
+/** Alumno real (tabla `alumnos` de Supabase) tal como lo necesita la hoja de nómina del Excel. */
+export interface AlumnoParaDifusion {
+  nombre: string;
+  grado: string;
+  turno: string | null;
+  division: string;
+}
+
 /**
  * Descarga una planilla Microsoft Excel (.XLSX) nativa con SheetJS, con múltiples pestañas:
  * 1. "Códigos y WhatsApp": Códigos por curso y mensajes de WhatsApp listos para copiar.
- * 2. "Nómina Alumnos y Códigos": Listado completo de los 211 alumnos con su código correspondiente.
+ * 2. "Nómina Alumnos y Códigos": Listado de los alumnos reales de cada sección con su código.
  * 3. "Instrucciones para el Colegio": Pasos para la Dirección y maestras.
+ *
+ * `alumnosReales`: la nómina real del colegio (tabla `alumnos` de Supabase) — antes esta hoja
+ * usaba siempre ALUMNOS_NOMINA_2026, una lista fija de 211 alumnos de una sola sala de nivel
+ * inicial, sin importar qué colegio se estuviera exportando.
  */
 export function descargarExcelLegibleColegio(
   secciones: SeccionEscolar[],
   codigosMap: Record<string, string>,
   colegioNombre: string = 'Instituto Madre del Divino Pastor',
-  urlWeb: string = DEFAULT_WEB_URL
+  urlWeb: string = DEFAULT_WEB_URL,
+  alumnosReales: AlumnoParaDifusion[] = []
 ) {
   const wb = XLSX.utils.book_new();
 
   // 1. Hoja Códigos y WhatsApp
   const dataCursos = secciones.map((sec, idx) => {
-    const code = codigosMap[sec.id] || sec.id;
+    const code = codigosMap[sec.id] || '(SIN CÓDIGO ASIGNADO)';
     const msg = generarMensajeWhatsApp(sec, code, colegioNombre, urlWeb);
     return {
       'N°': idx + 1,
@@ -157,17 +170,16 @@ export function descargarExcelLegibleColegio(
   ];
   XLSX.utils.book_append_sheet(wb, wsCursos, 'Códigos y WhatsApp');
 
-  // 2. Hoja Nómina de Alumnos
-  const dataAlumnos = ALUMNOS_NOMINA_2026.map((alu, idx) => {
-    const sec = secciones.find(s => s.id === alu.seccionId);
-    const code = sec ? (codigosMap[sec.id] || sec.id) : '';
+  // 2. Hoja Nómina de Alumnos (nómina real — ver AlumnoParaDifusion arriba)
+  const dataAlumnos = alumnosReales.map((alu, idx) => {
+    const sec = secciones.find(s => s.sala === alu.grado && s.turno === (alu.turno || '') && s.division === alu.division);
+    const code = sec ? (codigosMap[sec.id] || '') : '';
     return {
       'N°': idx + 1,
-      'Apellido': alu.apellido,
-      'Nombre': alu.nombre,
+      'Apellido y Nombre': alu.nombre,
       'Curso / Sala': sec ? sec.nombreCompleto : alu.grado,
-      'Turno': sec ? sec.turno : '',
-      'División': sec ? sec.division : '',
+      'Turno': alu.turno || '',
+      'División': alu.division,
       'Código de Acceso': code,
       'Fotos Incluidas': '3 tomas (Retrato, Grupo, Docente)',
       'Acceso Web': urlWeb
@@ -177,8 +189,7 @@ export function descargarExcelLegibleColegio(
   const wsAlumnos = XLSX.utils.json_to_sheet(dataAlumnos);
   wsAlumnos['!cols'] = [
     { wch: 5 },
-    { wch: 22 },
-    { wch: 22 },
+    { wch: 30 },
     { wch: 26 },
     { wch: 12 },
     { wch: 10 },
@@ -241,7 +252,7 @@ export function descargarCSVEspañolCompatible(
   ];
 
   const filas = secciones.map(sec => {
-    const code = codigosMap[sec.id] || sec.id;
+    const code = codigosMap[sec.id] || '(SIN CÓDIGO ASIGNADO)';
     return [
       `"${sec.nombreCompleto}"`,
       `"${sec.sala}"`,
