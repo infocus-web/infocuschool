@@ -1566,7 +1566,12 @@ export default function PortalFamiliasModal({
                 })}
               </div>
 
-              {/* Dedicated Extra Copies Section in Step 2: Copia Extra de la Carpeta */}
+              {/* Dedicated Extra Copies Section in Step 2: Copia Extra de la Carpeta.
+                  Auditoría 2026-09-09: sólo tiene sentido si el kit elegido YA incluye una carpeta
+                  de base ("Kit Impreso + Digital") — ver comentario junto a setSelectedKit más
+                  abajo. Para los demás kits no se muestra: agregarla ahí bajaba el precio de la
+                  carpeta completa por debajo del kit que realmente la incluye. */}
+              {selectedKit.id === 'kit-clasico' && (
               <div className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/50 rounded-2xl p-4 sm:p-5 border-2 border-amber-300 shadow-xs text-left">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex items-start sm:items-center gap-3.5">
@@ -1650,6 +1655,7 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
               </div>
+              )}
 
               {/* Bottom Next Step Bar */}
               <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -1707,7 +1713,18 @@ export default function PortalFamiliasModal({
                   return (
                     <div
                       key={kit.id}
-                      onClick={() => setSelectedKit(kit)}
+                      onClick={() => {
+                        setSelectedKit(kit);
+                        // Auditoría 2026-09-09 (hallazgo reportado por Pablo): la "Carpeta Escolar
+                        // Extra Completa" (+$15.000) es una DUPLICADA de la carpeta que ya viene
+                        // incluida en "Kit Impreso + Digital" ($30.000) — no tiene sentido en un kit
+                        // que no trae carpeta de base ("Solo Digital HD", $15.000, o "Fotos Sueltas
+                        // de Eventos", $5.000), porque ahí terminaba siendo una forma más barata de
+                        // armar la misma carpeta completa (ej: $5.000 + $15.000 = $20.000 en vez de
+                        // los $30.000 del kit que realmente la incluye). Si se cambia a un kit que no
+                        // la incluye, se resetea la cantidad para no arrastrar ese precio de menos.
+                        if (kit.id !== 'kit-clasico') setExtraCarpetas(0);
+                      }}
                       className={`relative bg-white rounded-2xl p-5 border text-left cursor-pointer transition-all flex flex-col justify-between ${
                         isSelected
                           ? 'border-2 border-amber-500 shadow-xl shadow-amber-500/10 ring-2 ring-amber-400/30'
@@ -1770,7 +1787,11 @@ export default function PortalFamiliasModal({
                 })}
               </div>
 
-              {/* Copia Extra de Carpeta Escolar Completa (Para Abuelos / Familiares) */}
+              {/* Copia Extra de Carpeta Escolar Completa (Para Abuelos / Familiares).
+                  Auditoría 2026-09-09: sólo disponible con "Kit Impreso + Digital" — ver comentario
+                  junto a setSelectedKit más arriba. Con los otros kits, un cartel explica por qué
+                  no está y a qué kit cambiar para conseguirla. */}
+              {selectedKit.id === 'kit-clasico' ? (
               <div className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/50 rounded-2xl p-5 border-2 border-amber-300 text-left space-y-4 shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200/80">
                   <div className="flex items-center gap-3">
@@ -1866,6 +1887,14 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
               </div>
+              ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left flex items-start gap-3">
+                  <FolderCheck className="w-5 h-5 text-slate-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-slate-600">
+                    La copia extra de carpeta para abuelos o familiares está disponible eligiendo el <strong>Kit Impreso + Digital</strong>, que ya incluye la carpeta original.
+                  </p>
+                </div>
+              )}
 
               {/* Subtotal & Navigation */}
               <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
