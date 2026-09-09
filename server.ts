@@ -1185,9 +1185,16 @@ app.get('/api/fotos', async (req: Request, res: Response) => {
     }
 
     const codigoCurso = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
+    // Auditoría 2026-09-09 (revisión a fondo): antes esto era select('*'), que además de las
+    // columnas que la galería pública necesita (categoria, alumno_nombre, grado, division,
+    // preview_path, thumb_path) devolvía también storage_path — la ruta interna dentro del
+    // bucket privado 'fotos-hd' (las fotos originales, el producto pago). Ese path por sí solo
+    // no alcanza para descargar el archivo (el bucket es privado, hace falta una URL firmada
+    // que este endpoint nunca genera), pero no hay ningún motivo para exponerlo en una
+    // respuesta pública: se acota a las columnas que la vista previa realmente usa.
     const { data, error } = await supabase
       .from('fotos')
-      .select('*')
+      .select('id, categoria, alumno_nombre, grado, division, preview_path, thumb_path, created_at')
       .eq('colegio_id', seccion.colegioId)
       .eq('codigo_curso', codigoCurso)
       .order('created_at', { ascending: true });
@@ -1869,11 +1876,26 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       ? (inscripcionExistente.codigo_asignado || null)
       : null;
 
+    // Curso que efectivamente se aprueba: si hay una fila autorizada en `padres_autorizados`
+    // que ya trae su propio grado/turno/división cargados (por ejemplo, subidos junto con el
+    // padrón oficial del colegio), ese es el curso que manda — nunca lo que haya tipeado quien
+    // completa el formulario. Auditoría 2026-09-09 (revisión a fondo): antes se usaba siempre
+    // grado/turno/división del body de la petición pública para generar el código real de
+    // sección, incluso cuando la aprobación automática venía por `matchPadre` — es decir que
+    // alguien con acceso al link de padrón de una familia (colegio_id + código) podía
+    // autoinscribirse con su propio contacto y pedir el código real de CUALQUIER grado/turno/
+    // división que quisiera, no sólo el que le corresponde, y así ver las fotos de cursos
+    // ajenos. Si la fila autorizada no tiene su propio grado/turno/división cargados (padrones
+    // viejos, sin esos datos), se sigue aceptando lo que mande el formulario como antes.
+    const gradoAprobado = (matchPadre?.grado && String(matchPadre.grado).trim()) || grado;
+    const turnoAprobado = (matchPadre?.turno && String(matchPadre.turno).trim()) || turno;
+    const divisionAprobada = (matchPadre?.division && String(matchPadre.division).trim()) || division;
+
     if (estado !== 'aceptado' && matchPadre) {
       estado = 'aceptado';
       // El código real de la sección es el que la familia va a usar para ver las fotos —
       // nunca la fórmula pública determinarCodigoCursoServidor (ver codigos_seccion arriba).
-      codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, grado, turno, division, matchPadre.codigo_asignado);
+      codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, gradoAprobado, turnoAprobado, divisionAprobada, matchPadre.codigo_asignado);
     }
 
     const inscripcionRow: Record<string, any> = {
@@ -1883,9 +1905,9 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       alumno_nombre: String(alumnoNombre).trim(),
       alumno_apellido: String(alumnoApellido || '').trim(),
       alumno_dni: alumnoDniLimpio,
-      turno: String(turno || 'Mañana').trim(),
-      grado: String(grado || 'Sala 3 años').trim(),
-      division: String(division || 'A').trim(),
+      turno: String((estado === 'aceptado' ? turnoAprobado : turno) || 'Mañana').trim(),
+      grado: String((estado === 'aceptado' ? gradoAprobado : grado) || 'Sala 3 años').trim(),
+      division: String((estado === 'aceptado' ? divisionAprobada : division) || 'A').trim(),
       colegio_id: colegioId,
       colegio_nombre: String(colegioNombre || 'Colegio').trim(),
       estado,
@@ -2508,6 +2530,23 @@ app.delete('/api/admin/solicitudes-codigo/:id', requireAdminAuth, async (req: Re
 // ==============================================================================
 // 5. HELPER PARA ENVÍO DE EMAIL CON RESEND
 // ==============================================================================
+
+// Auditoría 2026-09-09 (revisión a fondo): los dos correos de abajo arman el HTML pegando
+// directo strings que vienen de un formulario público (nombre del padre/tutor, nombre del
+// alumno, del colegio, del kit, etc.), sin sacarles los caracteres especiales de HTML. Alguien
+// podía escribir en su nombre algo como `<a href="...">` y ese link (o cualquier otro HTML)
+// terminaba insertado tal cual dentro de un correo real, con la marca de Retrato Escolar, que
+// se le manda a una familia — la puerta de entrada clásica para un correo de phishing con
+// apariencia legítima. Se escapan todos los valores que vienen de afuera antes de insertarlos.
+function escapeHtml(valor: unknown): string {
+  return String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 interface DatosCorreoFotosHD {
   to: string;
   tutorNombre?: string;
@@ -2552,9 +2591,15 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
   }
 
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
-  const nombreDestinatario = tutorNombre?.trim() || 'Familia';
-  const nombreAlumnoStr = alumnoNombre?.trim() || 'el alumno/a';
-  const colegioStr = colegioNombre?.trim() || 'la institución';
+  // Escapados porque van directo dentro del HTML del correo (ver escapeHtml arriba) — el
+  // asunto del correo (más abajo) usa las variables sin escapar, que ahí no hace falta.
+  const nombreDestinatario = escapeHtml(tutorNombre?.trim() || 'Familia');
+  const nombreAlumnoStr = escapeHtml(alumnoNombre?.trim() || 'el alumno/a');
+  const colegioStr = escapeHtml(colegioNombre?.trim() || 'la institución');
+  const kitNombreStr = escapeHtml(kitNombre?.trim() || 'Kit Escolar');
+  const pedidoIdStr = escapeHtml(pedidoId?.trim() || 'IFS-2026');
+  const cursoCodigoStr = escapeHtml(cursoCodigo?.trim() || '2026');
+  const whatsappContactoStr = whatsappContacto ? escapeHtml(whatsappContacto) : '';
   // IMPORTANTE: ya no se inventa un link cuando no se pasa uno explícito. Antes se armaba acá
   // mismo una URL con el patrón "/object/public/fotos-hd/..." que apuntaba a un archivo que
   // nunca existe (el bucket es privado y, además, hoy no hay ningún proceso que genere un .zip
@@ -2582,7 +2627,7 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
         ¡Tus Fotografías en Alta Resolución ya están listas!
       </h1>
       <p style="color: #94a3b8; font-size: 13px; margin: 6px 0 0 0;">
-        ${colegioStr} • Curso: ${cursoCodigo || '2026'}
+        ${colegioStr} • Curso: ${cursoCodigoStr}
       </p>
     </div>
 
@@ -2617,7 +2662,7 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
         <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <tr>
             <td style="padding: 6px 0; color: #64748b;">N° de Pedido:</td>
-            <td style="padding: 6px 0; font-weight: 700; text-align: right; font-family: monospace; color: #0f172a;">${pedidoId || 'IFS-2026'}</td>
+            <td style="padding: 6px 0; font-weight: 700; text-align: right; font-family: monospace; color: #0f172a;">${pedidoIdStr}</td>
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #64748b;">Alumno/a:</td>
@@ -2625,7 +2670,7 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #64748b;">Kit Seleccionado:</td>
-            <td style="padding: 6px 0; font-weight: 700; text-align: right; color: #0f172a;">${kitNombre || 'Kit Escolar'}</td>
+            <td style="padding: 6px 0; font-weight: 700; text-align: right; color: #0f172a;">${kitNombreStr}</td>
           </tr>
           ${total ? `
           <tr style="border-top: 1px dashed #cbd5e1;">
@@ -2651,9 +2696,9 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
         <p style="margin: 0 0 8px 0;">
           💡 <strong>Recomendación:</strong> Guarda una copia de las fotos en tu Google Drive o en tu computadora para conservarlas siempre con su máxima calidad.
         </p>
-        ${whatsappContacto ? `
+        ${whatsappContactoStr ? `
         <p style="margin: 0;">
-          ¿Tienes alguna duda con la descarga? Puedes contactar directamente a nuestro equipo por WhatsApp al <strong>+${whatsappContacto}</strong>.
+          ¿Tienes alguna duda con la descarga? Puedes contactar directamente a nuestro equipo por WhatsApp al <strong>+${whatsappContactoStr}</strong>.
         </p>
         ` : ''}
       </div>
@@ -2706,13 +2751,15 @@ async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
   }
 
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
-  const nombreDestinatario = padreNombre?.trim() || 'Familia';
-  const colegioStr = colegioNombre?.trim() || 'la institución';
+  // Escapados porque van directo dentro del HTML del correo (ver escapeHtml arriba) — vienen
+  // del formulario público de inscripción, así que no se puede confiar en que no traigan HTML.
+  const nombreDestinatario = escapeHtml(padreNombre?.trim() || 'Familia');
+  const colegioStr = escapeHtml(colegioNombre?.trim() || 'la institución');
 
   const listaHijosHtml = alumnos
     .map(
       (a) =>
-        `<li style="margin-bottom:4px;">${a.nombre} ${a.apellido} — ${a.grado} "${a.division}", Turno ${a.turno}</li>`
+        `<li style="margin-bottom:4px;">${escapeHtml(a.nombre)} ${escapeHtml(a.apellido)} — ${escapeHtml(a.grado)} "${escapeHtml(a.division)}", Turno ${escapeHtml(a.turno)}</li>`
     )
     .join('');
 
@@ -2784,7 +2831,11 @@ async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
 // 6. RUTAS RESEND (ESTADO, ENVÍO DIRECTO Y TEST)
 // ==============================================================================
 
-app.get(['/api/resend/status', '/resend/status'], (req, res) => {
+// Auditoría 2026-09-09 (revisión a fondo): esta ruta no pedía sesión y devolvía un fragmento
+// real de la RESEND_API_KEY (primeros 6 + últimos 4 caracteres) a cualquier visitante. Enmascarado
+// o no, no hay ningún motivo para exponer parte de una clave de servidor a todo internet — pasa
+// a exigir sesión de administrador, igual que el resto de los diagnósticos del panel.
+app.get(['/api/resend/status', '/resend/status'], requireAdminAuth, (req, res) => {
   const apiKey = process.env.RESEND_API_KEY;
   const isConfigured = Boolean(apiKey && apiKey.trim().length > 0);
   const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
