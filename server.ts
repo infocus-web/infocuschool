@@ -1600,6 +1600,180 @@ async function buscarSeccionPorCodigoSecreto(
   return { colegioId: match.colegio_id, grado: match.grado, turno: match.turno, division: match.division };
 }
 
+// ==============================================================================
+// 4D. ADMINISTRACIÓN DE CÓDIGOS REALES DE SECCIÓN — 2026-09-09
+// ==============================================================================
+// La pestaña "Códigos & Difusión WhatsApp" del panel usaba códigos INVENTADOS, guardados
+// solo en el navegador (localStorage) y editables a mano — nunca tenían nada que ver con el
+// código secreto real de `codigos_seccion` (el que de verdad valida `/api/fotos` para dejar
+// entrar a una familia). Es decir que un colegio o una familia podían recibir por WhatsApp un
+// código que no funcionaba en el sitio. Estas rutas permiten al panel leer y gestionar los
+// códigos REALES para poder armar la difusión con el código que de verdad funciona.
+
+// Lista los códigos reales ya asignados a las secciones de un colegio (para mostrarlos en el panel).
+app.get('/api/admin/codigos-seccion', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId } = req.query as Record<string, string | undefined>;
+    if (!colegioId) {
+      return res.status(400).json({ success: false, error: 'Falta colegioId' });
+    }
+    const { data, error } = await supabase
+      .from('codigos_seccion')
+      .select('grado, turno, division, codigo_secreto')
+      .eq('colegio_id', colegioId);
+    if (error) throw error;
+    return res.json({ success: true, codigos: data || [] });
+  } catch (err: any) {
+    console.error('Error al listar códigos de sección:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al listar los códigos' });
+  }
+});
+
+// Se asegura de que una sección tenga un código real asignado — si ya tiene uno, lo devuelve
+// tal cual (no lo pisa); si no tiene, crea uno nuevo aleatorio. Así el panel puede mostrar
+// (o generar por primera vez) el código real de cada curso sin esperar a que una familia lo
+// dispare sola al inscribirse.
+app.post('/api/admin/codigos-seccion/asegurar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId, grado, turno, division } = req.body || {};
+    if (!colegioId || !grado || !turno) {
+      return res.status(400).json({ success: false, error: 'Faltan colegioId, grado o turno' });
+    }
+    const codigo = await obtenerOCrearCodigoSeccion(supabase, colegioId, grado, turno, division || '');
+    return res.json({ success: true, codigo });
+  } catch (err: any) {
+    console.error('Error al asegurar código de sección:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al asegurar el código' });
+  }
+});
+
+// Genera un código nuevo (aleatorio) para una sección, reemplazando el anterior si existía —
+// el código viejo deja de funcionar. Igual que `obtenerOCrearCodigoSeccion` pero forzando
+// siempre un valor nuevo, con reintentos por si el azar generara uno ya usado (prácticamente
+// imposible con el alfabeto de 8 caracteres, pero más vale prevenir).
+app.post('/api/admin/codigos-seccion/regenerar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId, grado, turno, division } = req.body || {};
+    if (!colegioId || !grado || !turno) {
+      return res.status(400).json({ success: false, error: 'Faltan colegioId, grado o turno' });
+    }
+    const cid = String(colegioId).trim();
+    const g = String(grado).trim();
+    const t = String(turno).trim();
+    const d = String(division || '').trim();
+
+    let nuevoCodigo = '';
+    for (let intento = 0; intento < 5; intento++) {
+      const candidato = generarCodigoSecretoSeccion();
+      const { data: enUso } = await supabase
+        .from('codigos_seccion')
+        .select('id')
+        .eq('codigo_secreto', candidato)
+        .maybeSingle();
+      if (!enUso) {
+        nuevoCodigo = candidato;
+        break;
+      }
+    }
+    if (!nuevoCodigo) {
+      return res.status(500).json({ success: false, error: 'No se pudo generar un código único, probá de nuevo.' });
+    }
+
+    const { data: existente } = await supabase
+      .from('codigos_seccion')
+      .select('id')
+      .eq('colegio_id', cid)
+      .eq('grado', g)
+      .eq('turno', t)
+      .eq('division', d)
+      .maybeSingle();
+
+    if (existente?.id) {
+      const { error } = await supabase.from('codigos_seccion').update({ codigo_secreto: nuevoCodigo }).eq('id', existente.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from('codigos_seccion')
+        .insert({ colegio_id: cid, grado: g, turno: t, division: d, codigo_secreto: nuevoCodigo });
+      if (error) throw error;
+    }
+
+    return res.json({ success: true, codigo: nuevoCodigo });
+  } catch (err: any) {
+    console.error('Error al regenerar código de sección:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al regenerar el código' });
+  }
+});
+
+// Fija a mano el código real de una sección (por ejemplo, uno más fácil de leer para una
+// escuela puntual). Rechaza el pedido si ese código ya pertenece a otra sección distinta,
+// para nunca dejar dos secciones compartiendo sin querer el mismo código de acceso.
+app.post('/api/admin/codigos-seccion/actualizar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId, grado, turno, division, nuevoCodigo } = req.body || {};
+    if (!colegioId || !grado || !turno || !nuevoCodigo) {
+      return res.status(400).json({ success: false, error: 'Faltan colegioId, grado, turno o el nuevo código' });
+    }
+    const cid = String(colegioId).trim();
+    const g = String(grado).trim();
+    const t = String(turno).trim();
+    const d = String(division || '').trim();
+    const codigoNormalizado = normalizarCodigoSeccion(nuevoCodigo);
+    if (codigoNormalizado.length < 4) {
+      return res.status(400).json({ success: false, error: 'El código tiene que tener al menos 4 caracteres.' });
+    }
+
+    const { data: existente } = await supabase
+      .from('codigos_seccion')
+      .select('id')
+      .eq('colegio_id', cid)
+      .eq('grado', g)
+      .eq('turno', t)
+      .eq('division', d)
+      .maybeSingle();
+
+    const { data: enUsoPorOtra } = await supabase
+      .from('codigos_seccion')
+      .select('id')
+      .eq('codigo_secreto', codigoNormalizado)
+      .maybeSingle();
+    if (enUsoPorOtra?.id && enUsoPorOtra.id !== existente?.id) {
+      return res.status(409).json({ success: false, error: 'Ese código ya lo está usando otra sección. Elegí uno distinto.' });
+    }
+
+    if (existente?.id) {
+      const { error } = await supabase.from('codigos_seccion').update({ codigo_secreto: codigoNormalizado }).eq('id', existente.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from('codigos_seccion')
+        .insert({ colegio_id: cid, grado: g, turno: t, division: d, codigo_secreto: codigoNormalizado });
+      if (error) throw error;
+    }
+
+    return res.json({ success: true, codigo: codigoNormalizado });
+  } catch (err: any) {
+    console.error('Error al actualizar código de sección:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al actualizar el código' });
+  }
+});
+
 // Inscripción pública: valida contra el padrón autorizado del colegio y asigna código al instante si coincide.
 // Todo el acceso a `padres_autorizados` e `inscripciones` pasa exclusivamente por acá, del lado del servidor
 // (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
