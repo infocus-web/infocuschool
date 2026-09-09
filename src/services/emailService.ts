@@ -37,11 +37,13 @@ export interface EstadoResend {
 }
 
 /**
- * Consulta el estado de configuración de Resend en el servidor
+ * Consulta el estado de configuración de Resend en el servidor. Requiere sesión de
+ * administrador desde la auditoría 2026-09-09 (revisión a fondo): esta ruta devolvía un
+ * fragmento real de la clave de Resend a cualquier visitante, sin pedir ningún login.
  */
 export async function consultarEstadoResend(): Promise<EstadoResend> {
   try {
-    const res = await fetch('/api/resend/status');
+    const res = await fetchAdminAutenticado('/api/resend/status');
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }

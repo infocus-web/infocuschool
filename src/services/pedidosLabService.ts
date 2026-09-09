@@ -165,9 +165,19 @@ export function guardarPedidosEnStorage(pedidos: PedidoEscolarCompleto[]): void 
 }
 
 /**
+ * Resultado de registrar un pedido: incluye si la sincronización con Supabase
+ * (POST /api/pedidos/crear) fue confirmada por el servidor antes de proceder al pago.
+ */
+export interface ResultadoRegistroPedido {
+  pedido: PedidoEscolarCompleto;
+  sincronizado: boolean;
+  errorSincronizacion?: string;
+}
+
+/**
  * Registers a new order created by a parent in the portal
  */
-export function registrarPedidoDesdePortal(params: {
+export async function registrarPedidoDesdePortal(params: {
   colegioId: string;
   colegioNombre: string;
   cursoCodigo: string;
@@ -189,7 +199,7 @@ export function registrarPedidoDesdePortal(params: {
     docenteId?: string;
   };
   copiasExtras?: CopiasExtrasConfig;
-}): PedidoEscolarCompleto {
+}): Promise<ResultadoRegistroPedido> {
   const currentPedidos = obtenerPedidosGuardados();
   const numPedido = `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`;
   const numLista = params.alumnoNumeroLista || currentPedidos.length + 1;
@@ -456,33 +466,47 @@ export function registrarPedidoDesdePortal(params: {
   const listaActualizada = [nuevoPedido, ...currentPedidos];
   guardarPedidosEnStorage(listaActualizada);
 
-  // Sincronización asincrónica con Supabase en segundo plano.
-  // Auditoría 2026-09-09: esto antes insertaba directo en 'familias' y 'pedidos' con la clave
-  // anónima del navegador — ambas tablas tenían políticas de RLS que permitían escribir (y, en
-  // 'familias', también LEER el listado completo de clientes) a cualquiera, sin login. Ahora
-  // pasa por el servidor (POST /api/pedidos/crear), que recalcula el total él mismo y nunca
-  // acepta un pedido que no nazca en "pendiente_pago". Ver comentario completo en server.ts.
-  setTimeout(async () => {
-    try {
-      await fetch('/api/pedidos/crear', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pedidoId: nuevoPedido.supabaseId,
-          kitId: nuevoPedido.kitId,
-          carpetasExtras: nuevoPedido.copiasExtras?.carpetasExtras || 0,
-          tutorNombre: nuevoPedido.tutorNombre,
-          tutorTelefono: nuevoPedido.tutorTelefono,
-          metodoPago: nuevoPedido.metodoPago,
-        }),
-      });
+  // Sincronización con Supabase, ahora esperada por quien llama antes de avanzar al pago.
+  // Auditoría 2026-09-09 (revisión a fondo): esto antes insertaba directo en 'familias' y
+  // 'pedidos' con la clave anónima del navegador — ambas tablas tenían políticas de RLS que
+  // permitían escribir (y, en 'familias', también LEER el listado completo de clientes) a
+  // cualquiera, sin login. Luego se corrigió pasando por el servidor (POST /api/pedidos/crear),
+  // pero ese fetch quedaba disparado en un setTimeout sin ser esperado por el llamador: si
+  // fallaba (red caída, Supabase caído, error 500) el pedido quedaba SOLO en localStorage y el
+  // family podía terminar pagando en Mercado Pago un pedido que el servidor nunca llegó a crear
+  // — un pago real sin ningún registro en Supabase, un fallo completamente silencioso porque el
+  // error del fetch sólo se logueaba en la consola del navegador de la familia. Ahora esta
+  // función es async y devuelve si la sincronización fue confirmada, para que quien llama pueda
+  // frenar el pago si no lo fue.
+  let sincronizado = false;
+  let errorSincronizacion: string | undefined;
+  try {
+    const resSync = await fetch('/api/pedidos/crear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pedidoId: nuevoPedido.supabaseId,
+        kitId: nuevoPedido.kitId,
+        carpetasExtras: nuevoPedido.copiasExtras?.carpetasExtras || 0,
+        tutorNombre: nuevoPedido.tutorNombre,
+        tutorTelefono: nuevoPedido.tutorTelefono,
+        metodoPago: nuevoPedido.metodoPago,
+      }),
+    });
+    const dataSync = await resSync.json().catch(() => null);
+    if (resSync.ok && dataSync?.success) {
+      sincronizado = true;
       // El email de confirmación y fotos HD se despacha una vez aprobado el pago (vía webhook de Mercado Pago o confirmación admin)
-    } catch (e) {
-      console.warn('Sincronización en segundo plano con Supabase no completada:', e);
+    } else {
+      errorSincronizacion = dataSync?.error || `El servidor respondió con un error (HTTP ${resSync.status}).`;
+      console.warn('No se pudo confirmar el pedido en Supabase:', errorSincronizacion);
     }
-  }, 100);
+  } catch (e: any) {
+    errorSincronizacion = e?.message || 'Error de conexión al registrar el pedido en el servidor.';
+    console.warn('Sincronización con Supabase no completada:', e);
+  }
 
-  return nuevoPedido;
+  return { pedido: nuevoPedido, sincronizado, errorSincronizacion };
 }
 
 /**
