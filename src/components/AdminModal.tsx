@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package,
@@ -202,6 +202,46 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
   const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
+
+  // Auditoría 2026-09 (pedido de Pablo): en la pestaña "Nómina 2026", además de la barra
+  // superior fija (pestañas + métricas + resumen de kits), también deben quedar fijos el
+  // título "Nómina Escolar 2026" con sus botones, la fila de filtros (buscador + 2
+  // desplegables) y el encabezado de columnas de la tabla — de forma que sólo el listado de
+  // nombres (las filas de alumnos) se desplace por detrás. Como la altura de la barra superior
+  // fija puede variar (carga async de datos, botones que se acomodan en pantallas chicas), se
+  // mide su altura real con ResizeObserver y se usa como offset "top" dinámico para la segunda
+  // franja fija, en vez de un valor fijo a mano que se rompería con cualquier cambio de layout.
+  const barraSuperiorRef = useRef<HTMLDivElement | null>(null);
+  const nominaHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [alturaBarraSuperior, setAlturaBarraSuperior] = useState(0);
+  const [alturaNominaHeader, setAlturaNominaHeader] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = barraSuperiorRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setAlturaBarraSuperior(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = nominaHeaderRef.current;
+    if (!el) {
+      setAlturaNominaHeader(0);
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setAlturaNominaHeader(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [activeTab]);
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -1086,7 +1126,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 activa (por ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding
                 negativos hacen que este bloque llegue hasta los bordes del contenedor con
                 scroll (que tiene su propio padding) para que "top-0" pegue justo arriba. */}
-            <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-white space-y-3 border-b border-slate-200">
+            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-white space-y-3 border-b border-slate-200">
 
             {/* Navigation tabs: al inicio del panel, botones azul oscuro con letras
                 amarillas. Antes era una fila con scroll horizontal que escondía la
@@ -1681,6 +1721,16 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* TAB: NOMINA ALUMNOS 2026 */}
             {activeTab === 'alumnos' && (
               <div className="space-y-4">
+                {/* Auditoría 2026-09 (pedido de Pablo): "esta sección no debe desplazarse, solo
+                    el listado de nombres". Esta franja (título+botones, filtros y encabezado de
+                    columnas) queda fija, apilada justo debajo de la barra superior fija, usando
+                    su altura real (medida con ResizeObserver) como offset. Sólo las filas de la
+                    tabla (tbody) se desplazan por detrás. */}
+                <div
+                  ref={nominaHeaderRef}
+                  className="sticky z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 pb-3 bg-white space-y-3 border-b border-slate-200"
+                  style={{ top: alturaBarraSuperior }}
+                >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
                   <div>
                     <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -1779,19 +1829,24 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     </button>
                   )}
                 </div>
+                </div>
+                {/* fin franja fija de nómina (título, filtros, encabezado de tabla) */}
 
                 {/* Table */}
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+                    <thead
+                      className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200 sticky z-10"
+                      style={{ top: alturaBarraSuperior + alturaNominaHeader }}
+                    >
                       <tr>
-                        <th className="py-2.5 px-3 w-10 text-center">✓</th>
-                        <th className="py-2.5 px-3 w-12 text-slate-400">#</th>
-                        <th className="py-2.5 px-4 font-bold text-slate-800">Apellido y Nombre</th>
-                        <th className="py-2.5 px-4">Grado</th>
-                        <th className="py-2.5 px-4">Turno</th>
-                        <th className="py-2.5 px-4">División</th>
-                        <th className="py-2.5 px-4 text-center">Estado Foto</th>
+                        <th className="py-2.5 px-3 w-10 text-center bg-slate-50">✓</th>
+                        <th className="py-2.5 px-3 w-12 text-slate-400 bg-slate-50">#</th>
+                        <th className="py-2.5 px-4 font-bold text-slate-800 bg-slate-50">Apellido y Nombre</th>
+                        <th className="py-2.5 px-4 bg-slate-50">Grado</th>
+                        <th className="py-2.5 px-4 bg-slate-50">Turno</th>
+                        <th className="py-2.5 px-4 bg-slate-50">División</th>
+                        <th className="py-2.5 px-4 text-center bg-slate-50">Estado Foto</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
