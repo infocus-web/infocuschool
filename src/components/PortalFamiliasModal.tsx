@@ -679,12 +679,20 @@ export default function PortalFamiliasModal({
     try {
       const pedidoServidor = await buscarPedidoPorSeguimiento(query);
       if (pedidoServidor) {
+        // Auditoría 2026-09 (bug reportado por Pablo, pedido IFS-2026-3330): un pedido
+        // 'pendiente_pago' (por ejemplo, pagado por transferencia y todavía no confirmado)
+        // quedaba con paso:2, y el paso 2 del stepper de abajo ("2. Pago") se pinta en verde
+        // y dice "Acreditado" para cualquier pasoActual >= 2 — es decir, esta pantalla mostraba
+        // "Pago: Acreditado" arriba mientras más abajo (y en la pantalla de confirmación del
+        // pedido) se explicaba correctamente que el pago seguía pendiente. Un pedido sin pagar
+        // no puede haber completado el paso "Pago", así que ahora se queda en paso:1 (sólo
+        // "Pedido" completo) hasta que el estado real sea 'pagado' o 'entregado'.
         const infoEstado = {
-          pendiente_pago: { texto: 'En Espera de Procesamiento', paso: 2, descarga: false },
+          pendiente_pago: { texto: 'Pendiente de Acreditación del Pago', paso: 1, descarga: false },
           pagado: { texto: 'En Laboratorio Fotográfico', paso: 3, descarga: true },
           entregado: { texto: 'Entregado en la Institución', paso: 4, descarga: true },
           cancelado: { texto: 'Pedido Cancelado', paso: 0, descarga: false },
-        }[pedidoServidor.estado] || { texto: 'En Espera de Procesamiento', paso: 2, descarga: false };
+        }[pedidoServidor.estado] || { texto: 'Pendiente de Acreditación del Pago', paso: 1, descarga: false };
 
         setSearchedOrder({
           id: pedidoServidor.id,
@@ -700,6 +708,8 @@ export default function PortalFamiliasModal({
           descripcionEstado:
             pedidoServidor.estado === 'cancelado'
               ? 'Este pedido fue cancelado. Si creés que es un error, contactanos por WhatsApp.'
+              : pedidoServidor.estado === 'pendiente_pago'
+              ? 'Todavía estamos esperando la acreditación de tu pago (por ejemplo, la confirmación de la transferencia bancaria). En cuanto se acredite, tus fotos pasan a laboratorio para el revelado químico profesional en papel satinado 260g y corte computarizado.'
               : 'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.',
           pasoActual: infoEstado.paso,
           entregaEstimada: 'Entrega en el colegio coordinada con la dirección',
@@ -915,11 +925,11 @@ export default function PortalFamiliasModal({
                       </div>
 
                       <div className={`p-3 rounded-xl border text-left ${searchedOrder.pasoActual >= 2 ? 'bg-emerald-50/60 border-emerald-300' : 'bg-slate-50 border-slate-200 opacity-60'}`}>
-                        <div className="flex items-center gap-1.5 text-emerald-700 font-bold text-xs mb-1">
+                        <div className={`flex items-center gap-1.5 font-bold text-xs mb-1 ${searchedOrder.pasoActual >= 2 ? 'text-emerald-700' : 'text-slate-500'}`}>
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>2. Pago</span>
                         </div>
-                        <p className="text-[10px] text-slate-600">Acreditado</p>
+                        <p className="text-[10px] text-slate-600">{searchedOrder.pasoActual >= 2 ? 'Acreditado' : 'Pendiente'}</p>
                       </div>
 
                       <div className={`p-3 rounded-xl border text-left ${searchedOrder.pasoActual >= 3 ? 'bg-amber-50/80 border-amber-400' : 'bg-slate-50 border-slate-200 opacity-60'}`}>
