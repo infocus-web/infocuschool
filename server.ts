@@ -481,6 +481,77 @@ app.get('/api/admin/colegios/:colegioId/estado-pagos', requireAdminAuth, async (
   }
 });
 
+// Importa alumnos a la nómina real (tabla 'alumnos') para un colegio puntual. No existía
+// ninguna forma de cargar esta tabla desde el panel — se cargaba a mano, directo en Supabase.
+// Pensado para pegar la lista tal cual sale de copiar un rango de Excel (número de lista +
+// nombre separados por tab), una tanda por cada sección (grado/turno/división) del colegio.
+app.post('/api/admin/alumnos/importar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { colegioId, filas } = req.body || {};
+    if (!colegioId || typeof colegioId !== 'string') {
+      return res.status(400).json({ success: false, error: 'Falta indicar el colegio' });
+    }
+    if (!Array.isArray(filas) || filas.length === 0) {
+      return res.status(400).json({ success: false, error: 'No se recibieron filas para importar' });
+    }
+    if (filas.length > 500) {
+      return res.status(400).json({ success: false, error: 'Demasiadas filas en un solo lote (máximo 500)' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const acotar = (valor: unknown, maxLen: number): string => String(valor ?? '').trim().slice(0, maxLen);
+
+    const filasNormalizadas = filas
+      .map((f: any) => ({
+        colegio_id: colegioId,
+        nombre: acotar(f.nombre, 200),
+        grado: acotar(f.grado, 60),
+        division: acotar(f.division, 60),
+        turno: f.turno ? acotar(f.turno, 60) : null,
+        numero_lista: Number.isFinite(Number(f.numeroLista)) ? Math.floor(Number(f.numeroLista)) : null,
+        dni: f.dni ? acotar(f.dni, 30) : null,
+        origen: 'importado_panel_admin',
+      }))
+      .filter((f: any) => f.nombre && f.grado && f.division);
+
+    if (filasNormalizadas.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ninguna fila tiene los datos mínimos (nombre, grado y división)' });
+    }
+
+    const { data, error } = await supabase.from('alumnos').insert(filasNormalizadas).select('id');
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      importados: data?.length || 0,
+      descartados: filas.length - filasNormalizadas.length,
+    });
+  } catch (err: any) {
+    console.error('Error al importar alumnos:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al importar alumnos' });
+  }
+});
+
+// Elimina un alumno puntual de la nómina (ej. para corregir un import duplicado o mal cargado).
+app.delete('/api/admin/alumnos/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { error } = await supabase.from('alumnos').delete().eq('id', id);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar el alumno' });
+  }
+});
+
 // Obtener todas las familias con datos de contacto (restringido al admin)
 app.get('/api/admin/familias', requireAdminAuth, async (req, res) => {
   try {
