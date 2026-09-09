@@ -996,20 +996,20 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
       <div className="bg-white w-full h-full max-w-none max-h-none overflow-hidden flex flex-col shadow-2xl">
         
-        {/* Modal Header */}
-        <div className="p-5 sm:p-6 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold">
-              <Camera className="w-5 h-5" />
+        {/* Modal Header — auditoría 2026-09 (pedido de Pablo): a la mitad de alto que antes */}
+        <div className="px-4 py-2 sm:px-5 sm:py-2.5 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold shrink-0">
+              <Camera className="w-3.5 h-3.5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold font-['Outfit']">Panel de Control para Fotógrafos</h2>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                <h2 className="text-sm font-bold font-['Outfit'] leading-tight">Panel de Control para Fotógrafos</h2>
+                <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
                   Interno
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-[11px] text-slate-400 leading-tight hidden sm:block">
                 Gestión de pedidos familiares, subida con marca de agua y colegios
               </p>
             </div>
@@ -1019,7 +1019,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {isAuthenticated && (
               <button
                 onClick={handleCerrarSesion}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 transition-colors cursor-pointer"
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-slate-300 transition-colors cursor-pointer"
                 title="Cerrar sesión de administrador"
               >
                 Cerrar Sesión
@@ -1760,56 +1760,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     </div>
                   </div>
 
-                  {/* Section badges pills: agrupadas por nivel para que no queden las 33 secciones
-                      de primaria y secundaria mezcladas en una sola fila */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                      <button
-                        onClick={() => setFiltroSeccionAlumnos('todas')}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors cursor-pointer ${
-                          filtroSeccionAlumnos === 'todas'
-                            ? 'bg-amber-400 text-slate-950'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        Todas ({alumnosNominaReal.length})
-                      </button>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 px-1">
-                        Primaria/Inicial:
-                      </span>
-                      {seccionesPrimaria.map((sec) => (
-                        <button
-                          key={sec.id}
-                          onClick={() => setFiltroSeccionAlumnos(sec.id)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                            filtroSeccionAlumnos === sec.id
-                              ? 'bg-amber-400 text-slate-950 font-bold shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          {sec.nombreCompleto} ({sec.totalAlumnos})
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0 px-1">
-                        Secundaria:
-                      </span>
-                      {seccionesSecundaria.map((sec) => (
-                        <button
-                          key={sec.id}
-                          onClick={() => setFiltroSeccionAlumnos(sec.id)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                            filtroSeccionAlumnos === sec.id
-                              ? 'bg-amber-400 text-slate-950 font-bold shadow-xs'
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          {sec.nombreCompleto} ({sec.totalAlumnos})
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {filtroSeccionAlumnos !== 'todas' && (
+                    <button
+                      onClick={() => setFiltroSeccionAlumnos('todas')}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-2 cursor-pointer"
+                    >
+                      Ver todas las secciones ({alumnosNominaReal.length} alumnos)
+                    </button>
+                  )}
                 </div>
 
                 {/* Table */}

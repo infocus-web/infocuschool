@@ -77,33 +77,33 @@ export default function AdminResumenKitsSection({ className = '' }: Props) {
   };
 
   return (
-    <div className={`bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200 shadow-xs space-y-3 ${className}`}>
-      {/* Header de la sección */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center shrink-0">
-            <Package className="w-4 h-4" />
+    <div className={`bg-white rounded-2xl p-2 sm:p-2.5 border border-slate-200 shadow-xs space-y-1.5 ${className}`}>
+      {/* Header de la sección — auditoría 2026-09 (pedido de Pablo): a la mitad de alto que antes */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-slate-100 pb-1.5">
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 flex items-center justify-center shrink-0">
+            <Package className="w-3.5 h-3.5" />
           </div>
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-sm sm:text-base font-black text-slate-900 font-['Outfit']">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <h3 className="text-xs sm:text-sm font-black text-slate-900 font-['Outfit'] leading-tight">
                 Resumen de Familias por Kit de Fotos
               </h3>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <Database className="w-3 h-3 text-emerald-600" />
+                <Database className="w-2.5 h-2.5 text-emerald-600" />
                 <span>Supabase DB (pedidos)</span>
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-[10px] text-slate-500 leading-tight hidden sm:block">
               Conteo consolidado de familias que han seleccionado cada kit disponible directamente desde la base de datos.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex items-center gap-1.5 self-start sm:self-auto">
           {ultimaActualizacion && (
-            <span className="text-[11px] text-slate-400">
+            <span className="text-[10px] text-slate-400">
               Act: {ultimaActualizacion}
             </span>
           )}
@@ -111,43 +111,43 @@ export default function AdminResumenKitsSection({ className = '' }: Props) {
             type="button"
             onClick={cargarDatos}
             disabled={cargando || isPending}
-            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold text-[11px] flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
             title="Refrescar datos desde la base de datos de Supabase"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${cargando ? 'animate-spin text-amber-600' : ''}`} />
+            <RefreshCw className={`w-3 h-3 ${cargando ? 'animate-spin text-amber-600' : ''}`} />
             <span>{cargando ? 'Actualizando...' : 'Actualizar'}</span>
           </button>
           <button
             type="button"
             onClick={() => setSeccionPlegada(!seccionPlegada)}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
             title={seccionPlegada ? 'Expandir resumen' : 'Minimizar resumen'}
           >
-            {seccionPlegada ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+            {seccionPlegada ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
 
       {/* Métricas destacadas generales: tarjetas compactas de una sola línea */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div className="px-3 py-1.5 rounded-xl bg-amber-50/50 border border-amber-200/80 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider">Total Familias</span>
-          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
-            {cargando ? '...' : `${totalFamilias}`} <span className="text-[10px] font-normal text-slate-500 font-sans">familias</span>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+        <div className="px-2.5 py-1 rounded-lg bg-amber-50/50 border border-amber-200/80 flex items-center justify-between gap-2">
+          <span className="text-[9px] font-bold text-amber-800 uppercase tracking-wider">Total Familias</span>
+          <div className="text-xs font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            {cargando ? '...' : `${totalFamilias}`} <span className="text-[9px] font-normal text-slate-500 font-sans">familias</span>
           </div>
         </div>
 
-        <div className="px-3 py-1.5 rounded-xl bg-sky-50/50 border border-sky-200/80 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-bold text-sky-800 uppercase tracking-wider">Pedidos Registrados</span>
-          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
-            {cargando ? '...' : `${totalPedidos}`} <span className="text-[10px] font-normal text-slate-500 font-sans">pedidos</span>
+        <div className="px-2.5 py-1 rounded-lg bg-sky-50/50 border border-sky-200/80 flex items-center justify-between gap-2">
+          <span className="text-[9px] font-bold text-sky-800 uppercase tracking-wider">Pedidos Registrados</span>
+          <div className="text-xs font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            {cargando ? '...' : `${totalPedidos}`} <span className="text-[9px] font-normal text-slate-500 font-sans">pedidos</span>
           </div>
         </div>
 
-        <div className="px-3 py-1.5 rounded-xl bg-emerald-50/50 border border-emerald-200/80 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Recaudación Supabase</span>
-          <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
-            ${cargando ? '...' : totalRecaudado.toLocaleString('es-AR')} <span className="text-[10px] font-normal text-slate-500 font-sans">ARS</span>
+        <div className="px-2.5 py-1 rounded-lg bg-emerald-50/50 border border-emerald-200/80 flex items-center justify-between gap-2">
+          <span className="text-[9px] font-bold text-emerald-800 uppercase tracking-wider">Recaudación Supabase</span>
+          <div className="text-xs font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
+            ${cargando ? '...' : totalRecaudado.toLocaleString('es-AR')} <span className="text-[9px] font-normal text-slate-500 font-sans">ARS</span>
           </div>
         </div>
       </div>
