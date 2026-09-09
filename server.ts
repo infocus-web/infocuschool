@@ -345,7 +345,13 @@ app.get('/api/admin/pedidos', requireAdminAuth, async (req, res) => {
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
-    const { data, error } = await supabase.from('pedidos').select('*, pedido_fotos(*)').order('created_at', { ascending: false });
+    // Auditoría 2026-09-09 (revisión a fondo): se suma el join con "familias" (nombre, whatsapp,
+    // email) para que el panel pueda mostrar los datos del tutor sin depender de que el pedido
+    // haya quedado además guardado en el localStorage del navegador de esa familia.
+    const { data, error } = await supabase
+      .from('pedidos')
+      .select('*, pedido_fotos(*), familias(nombre, whatsapp, email)')
+      .order('created_at', { ascending: false });
     if (error) throw error;
     return res.json({ success: true, pedidos: data || [] });
   } catch (err: any) {
@@ -875,6 +881,47 @@ app.post('/api/admin/storage/limpiar-bucket', requireAdminAuth, async (req: Requ
   } catch (err: any) {
     console.error('Error al limpiar bucket de storage:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al limpiar el bucket' });
+  }
+});
+
+// Auditoría 2026-09-09 (revisión a fondo): endpoint puntual de una sola vez para borrar dos
+// buckets de Storage detectados como huérfanos (ningún código de la app los usa) — 'fotos'
+// (público, vacío) y 'photos' (privado, con 4 archivos viejos de prueba). Se usa una lista
+// separada de BUCKETS_FOTOS_PERMITIDOS (que son los buckets operativos reales) a propósito, para
+// que este endpoint nunca pueda llegar a borrar 'fotos-web' o 'fotos-hd' por error. Se puede
+// borrar este endpoint del código una vez usado.
+const BUCKETS_HUERFANOS_BORRABLES = new Set(['fotos', 'photos']);
+app.post('/api/admin/storage/borrar-bucket-huerfano', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { bucket } = req.body || {};
+    if (!BUCKETS_HUERFANOS_BORRABLES.has(bucket)) {
+      return res.status(400).json({ success: false, error: 'Ese bucket no está en la lista de buckets huérfanos permitidos para borrar.' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    let eliminados = 0;
+    for (let vuelta = 0; vuelta < 200; vuelta++) {
+      const { data: archivos, error: errorList } = await supabase.storage.from(bucket).list('', { limit: 100 });
+      if (errorList) throw errorList;
+      if (!archivos || archivos.length === 0) break;
+      const rutas = archivos.filter((f: any) => f.id).map((f: any) => f.name);
+      if (rutas.length === 0) break;
+      const { error: errorRemove } = await supabase.storage.from(bucket).remove(rutas);
+      if (errorRemove) throw errorRemove;
+      eliminados += rutas.length;
+      if (archivos.length < 100) break;
+    }
+
+    const { error: errorDeleteBucket } = await supabase.storage.deleteBucket(bucket);
+    if (errorDeleteBucket) throw errorDeleteBucket;
+
+    return res.json({ success: true, bucket, archivosEliminados: eliminados });
+  } catch (err: any) {
+    console.error('Error al borrar bucket huérfano:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al borrar el bucket' });
   }
 });
 
@@ -3064,7 +3111,19 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
 // 'familias' y 'pedidos' se cerraron del lado de Supabase (ver migración de la auditoría).
 app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 1000), async (req, res) => {
   try {
-    const { pedidoId, kitId, carpetasExtras, tutorNombre, tutorTelefono, metodoPago } = req.body || {};
+    const {
+      pedidoId, kitId, carpetasExtras, tutorNombre, tutorTelefono, metodoPago,
+      // Auditoría 2026-09-09 (revisión a fondo): campos nuevos para que el pedido quede
+      // completo en Supabase (quién, de qué colegio/curso, qué fotos, email del tutor) y deje
+      // de depender únicamente del localStorage del navegador de la familia. Son datos
+      // descriptivos para poder cumplir el pedido — igual que tutorNombre/tutorTelefono ya
+      // aceptados acá desde antes, se guardan tal como los manda el navegador (acotados en
+      // longitud); el monto a cobrar sigue siendo SIEMPRE el que calcula el servidor arriba,
+      // nunca un valor recibido del cliente.
+      pedidoFriendlyId, tutorEmail, colegioId, colegioNombre, cursoCodigo, grado, division, turno,
+      alumnoNombre, alumnoNumeroLista, codigoAlumno, kitNombre, fotosSeleccionadas, copiasExtras,
+      linkDescargaHD,
+    } = req.body || {};
 
     const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
     if (totalCalculado === null) {
@@ -3076,15 +3135,40 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
 
+    // Recorta cualquier texto libre recibido a una longitud razonable, para que un campo
+    // desbordado no pueda usarse para llenar la base de datos de basura.
+    const acotar = (valor: unknown, maxLen: number): string => String(valor ?? '').trim().slice(0, maxLen);
+    // Sólo acepta objetos planos chicos (no arrays, no anidados demasiado grandes) para las
+    // columnas jsonb — si viene otra cosa, se guarda un objeto vacío en vez de fallar el pedido.
+    const acotarJson = (valor: unknown): Record<string, any> => {
+      if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return {};
+      const entradas = Object.entries(valor as Record<string, any>).slice(0, 20);
+      const limpio: Record<string, any> = {};
+      for (const [clave, val] of entradas) {
+        if (typeof val === 'string') limpio[clave] = val.slice(0, 200);
+        else if (typeof val === 'number' && Number.isFinite(val)) limpio[clave] = val;
+        else if (typeof val === 'boolean') limpio[clave] = val;
+      }
+      return limpio;
+    };
+
     let familiaId: string | null = null;
     const nombreTutor = String(tutorNombre || '').trim();
     const telefonoTutor = String(tutorTelefono || '').trim();
-    if (nombreTutor || telefonoTutor) {
+    const emailTutor = acotar(tutorEmail, 200);
+    if (nombreTutor || telefonoTutor || emailTutor) {
+      // OJO: familias.colegio_id es un uuid que referencia a la tabla "colegios" (un modelo de
+      // datos más viejo, que hoy ni se usa) — NO tiene nada que ver con el "colegioId" (texto
+      // libre / slug) que maneja el resto de la app (fotos.colegio_id, alumnos.colegio_id,
+      // inscripciones.colegio_id son todos texto). Mandar ese valor acá rompería el INSERT
+      // completo (Postgres rechaza un uuid inválido), así que no se toca esa columna: el
+      // colegio del pedido se guarda en su lugar en pedidos.colegio_id / colegio_nombre (texto).
       const { data: famData, error: famError } = await supabase
         .from('familias')
         .insert({
           nombre: (nombreTutor || 'Familia').slice(0, 200),
           whatsapp: telefonoTutor.slice(0, 40),
+          email: emailTutor.includes('@') ? emailTutor : null,
         })
         .select('id')
         .single();
@@ -3106,6 +3190,20 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       total: totalCalculado,
       carpetas_impresas: extrasValidados + 1,
       metodo_pago: metodoPagoValido,
+      pedido_friendly_id: acotar(pedidoFriendlyId, 40) || null,
+      colegio_id: acotar(colegioId, 100) || null,
+      colegio_nombre: acotar(colegioNombre, 200) || null,
+      curso_codigo: acotar(cursoCodigo, 60) || null,
+      grado: acotar(grado, 60) || null,
+      division: acotar(division, 60) || null,
+      turno: acotar(turno, 60) || null,
+      alumno_nombre: acotar(alumnoNombre, 200) || null,
+      alumno_numero_lista: Number.isFinite(Number(alumnoNumeroLista)) ? Math.floor(Number(alumnoNumeroLista)) : null,
+      codigo_alumno: acotar(codigoAlumno, 200) || null,
+      kit_nombre: acotar(kitNombre, 120) || null,
+      fotos_seleccionadas: acotarJson(fotosSeleccionadas),
+      copias_extras: acotarJson(copiasExtras),
+      link_descarga_hd: acotar(linkDescargaHD, 500) || null,
     };
     // Se respeta el UUID generado en el navegador (para poder correlacionarlo con el tracking
     // local y con Mercado Pago vía external_reference) sólo si tiene forma de UUID válido.
@@ -3191,11 +3289,13 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             // Actualizar el pedido en Supabase.
             // OJO: la tabla "pedidos" solo tiene las columnas id, familia_id, evento_id,
             // alumno_id, tipo_kit, estado, total, mp_preference_id, mp_payment_id,
-            // created_at, updated_at, carpetas_impresas, metodo_pago. Antes este update()
-            // escribía en "estado_pago" y "mercadopago_payment_id", que NO existen en la
-            // tabla real — Postgres rechazaba el update completo (columna inexistente) y el
-            // pedido JAMÁS se marcaba como pagado en Supabase, aunque Mercado Pago sí hubiera
-            // aprobado el cobro. Se corrige a los nombres reales de columna.
+            // created_at, updated_at, carpetas_impresas, metodo_pago (más las columnas de
+            // fulfillment agregadas en la auditoría 2026-09-09: colegio_id, colegio_nombre,
+            // curso_codigo, grado, division, turno, alumno_nombre, etc. — ver esa migración).
+            // Antes este update() escribía en "estado_pago" y "mercadopago_payment_id", que NO
+            // existen en la tabla real — Postgres rechazaba el update completo (columna
+            // inexistente) y el pedido JAMÁS se marcaba como pagado en Supabase, aunque Mercado
+            // Pago sí hubiera aprobado el cobro. Se corrige a los nombres reales de columna.
             const { data, error } = await supabase
               .from('pedidos')
               .update({
@@ -3208,7 +3308,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                 updated_at: new Date().toISOString(),
               })
               .eq('id', pedidoId)
-              .select('*, familias(nombre, whatsapp)');
+              .select('*, familias(nombre, whatsapp, email)');
 
             if (error) {
               console.error('[Mercado Pago Webhook] Error al actualizar pedido en Supabase:', error);
@@ -3217,26 +3317,29 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             }
           }
 
-          // Disparar email automático con el comprobante.
-          // NOTA IMPORTANTE (dejar registrado para no repetir el mismo bug): la tabla "pedidos"
-          // no guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre, así que estos
-          // datos no se pueden recuperar acá — solo tenemos el nombre/whatsapp de la familia
-          // vía el join de arriba. Igual de importante: NO existe hoy ningún proceso que genere
-          // y suba un .zip por pedido a "fotos-hd" (se confirmó revisando el storage: ahí solo
-          // hay las fotos originales sueltas por curso, nunca un .zip por alumno/pedido), así
-          // que cualquier link que se arme acá para "descargar el HD" apuntaría a un archivo
-          // que no existe. Hasta que ese proceso de generación del ZIP exista, se omite el link
-          // de descarga en este correo automático en vez de mandar uno roto — el envío manual
-          // de las fotos HD se sigue haciendo como hasta ahora desde el panel.
-          const emailDestino = paymentInfo.payer?.email;
+          // Disparar email automático con el comprobante. Desde la auditoría 2026-09-09, el
+          // pedido ya guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre (ver
+          // migración de esa fecha), así que el correo puede mostrar los datos reales del
+          // pedido en vez de los genéricos "tu hijo/a" / "tu colegio" de antes. Se sigue
+          // omitiendo el link de descarga en este correo automático: no existe (todavía) ningún
+          // proceso que genere y suba un .zip por pedido a "fotos-hd" (se confirmó revisando el
+          // storage: ahí solo hay las fotos originales sueltas por curso), así que cualquier
+          // link armado acá apuntaría a un archivo inexistente — el envío manual de las fotos
+          // HD se sigue haciendo como hasta ahora desde el panel.
+          // El destinatario preferido es el email que la familia cargó al hacer el pedido (más
+          // confiable: es a quien le corresponde el pedido), y sólo si no lo tenemos se usa el
+          // email de quien pagó en Mercado Pago (puede ser otra persona, ej. un abuelo pagando).
+          const emailDestino = orderData?.familias?.email || paymentInfo.payer?.email;
           if (emailDestino && emailDestino.includes('@')) {
             console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${pedidoId} a ${emailDestino}`);
             await enviarCorreoFotosHD({
               to: emailDestino,
               tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
-              alumnoNombre: 'tu hijo/a',
-              colegioNombre: 'tu colegio',
-              pedidoId: pedidoId,
+              alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
+              colegioNombre: orderData?.colegio_nombre || 'tu colegio',
+              cursoCodigo: orderData?.curso_codigo || undefined,
+              kitNombre: orderData?.kit_nombre || undefined,
+              pedidoId: orderData?.pedido_friendly_id || pedidoId,
               total: paymentInfo.transaction_amount || 0,
               whatsappContacto: orderData?.familias?.whatsapp || '',
             });
@@ -3306,6 +3409,80 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al consultar estado del pedido' });
+  }
+});
+
+// Auditoría 2026-09-09 (revisión a fondo): el buscador de "seguimiento de pedido" del Portal de
+// Familias buscaba únicamente en el localStorage del navegador — una familia que entrara desde
+// otro dispositivo o hubiera borrado los datos del navegador no encontraba su pedido, aunque
+// estuviera pagado y guardado en Supabase. Este endpoint público (sin login, como corresponde a
+// una búsqueda que hace la propia familia con su número de pedido o teléfono) permite buscar
+// contra los datos reales. Es deliberadamente angosto para no poder usarse para "barrer" la
+// base de pedidos de otras familias: exige al menos 4 caracteres del número de pedido, o al
+// menos 6 dígitos de teléfono (la misma exigencia mínima que ya tenía la búsqueda local), sólo
+// devuelve UNA coincidencia (la más reciente) y va detrás del mismo limitador de frecuencia por
+// IP que el resto de los endpoints públicos sensibles.
+app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const qRaw = String(req.query.query || '').trim();
+    if (!qRaw) {
+      return res.status(400).json({ success: false, error: 'Ingresá tu número de pedido o teléfono.' });
+    }
+    const query = qRaw.toUpperCase().slice(0, 60);
+    const soloDigitos = query.replace(/\D/g, '');
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
+    }
+
+    const columnas = 'id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, familias(nombre, whatsapp)';
+    let fila: any = null;
+
+    if (query.length >= 4) {
+      const { data } = await supabase
+        .from('pedidos')
+        .select(columnas)
+        .ilike('pedido_friendly_id', `%${query}%`)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) fila = data[0];
+    }
+
+    if (!fila && soloDigitos.length >= 6) {
+      const { data, error } = await supabase
+        .from('pedidos')
+        .select('id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, familias!inner(nombre, whatsapp)')
+        .ilike('familias.whatsapp', `%${soloDigitos}%`)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (error) console.warn('[pedidos/buscar] búsqueda por teléfono falló:', error.message);
+      if (data && data.length > 0) fila = data[0];
+    }
+
+    if (!fila) {
+      return res.status(404).json({ success: false, error: 'No se encontró ningún pedido registrado con ese número o teléfono.' });
+    }
+
+    return res.json({
+      success: true,
+      pedido: {
+        id: fila.pedido_friendly_id || fila.id,
+        colegio: fila.colegio_nombre,
+        alumno: fila.alumno_nombre,
+        grado: fila.grado,
+        division: fila.division,
+        tutor: fila.familias?.nombre || null,
+        telefono: fila.familias?.whatsapp || null,
+        kit: fila.kit_nombre,
+        total: fila.total,
+        fecha: fila.created_at,
+        estado: fila.estado,
+      },
+    });
+  } catch (err: any) {
+    console.error('Error al buscar pedido:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al buscar el pedido' });
   }
 });
 
