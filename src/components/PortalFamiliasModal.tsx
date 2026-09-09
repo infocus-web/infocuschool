@@ -44,7 +44,6 @@ import {
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
-import { buscarSeccionPorCodigo } from '../data/codigosCursos';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
 import { crearPreferenciaMercadoPago } from '../services/mercadoPagoService';
 import {
@@ -103,7 +102,6 @@ export default function PortalFamiliasModal({
   // Dynamic WhatsApp number: prioritized by selected school, or global configuration
   const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
   const [codigoAcceso, setCodigoAcceso] = useState('');
-  const [seccionDetectada, setSeccionDetectada] = useState<any | null>(null);
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
   const [codigoErrorMsg, setCodigoErrorMsg] = useState<string | null>(null);
   const [familiaActiva, setFamiliaActiva] = useState<InscripcionFamilia | null>(null);
@@ -450,22 +448,12 @@ export default function PortalFamiliasModal({
       return true;
     }
 
-    // 1. Búsqueda en el sistema viejo de secciones de nivel inicial (PINs/nemotécnicos guardados
-    // en localStorage). Se mantiene solo para identificar de qué curso se trata y precargar el
-    // desplegable — YA NO desbloquea fotos reales por sí sola (ver codigoSeccionValidado arriba).
-    const match = buscarSeccionPorCodigo(clean);
-    if (match) {
-      const colInicial = colegios[0] || null;
-      if (colInicial) setSelectedColegio(colInicial);
-      setGrado(match.seccion.sala);
-      setTurno(match.seccion.turno);
-      setDivision(match.seccion.division);
-      setSeccionDetectada(match.seccion);
-      setCodigoValidadoMsg(`Curso identificado: ${match.seccion.nombreCompleto}. Para ver las fotos reales, ingresá el código de acceso que te enviamos por WhatsApp o Email.`);
-      setCodigoErrorMsg(null);
-      setCodigoSeccionValidado(null);
-      return true;
-    }
+    // Auditoría 2026-09-09: acá había un paso más que buscaba el código contra el sistema
+    // viejo de secciones de nivel inicial (códigos inventados en localStorage, ver antiguo
+    // src/data/codigosCursos.ts). Ya no desbloqueaba fotos reales por sí solo, y además
+    // siempre asumía que el colegio era el primero de la lista (`colegios[0]`), lo cual es
+    // incorrecto para cualquier colegio que no sea ese. Se saca del todo: si el código no es
+    // ni una familia real ni el código general de un colegio, se informa el error de una.
 
     // 2. Código general de institución (ej: ISBA2026): sólo identifica el colegio para
     // facilitar la búsqueda — tampoco desbloquea fotos reales por sí solo.
@@ -474,7 +462,6 @@ export default function PortalFamiliasModal({
     );
     if (colFound) {
       setSelectedColegio(colFound);
-      setSeccionDetectada(null);
       setCodigoValidadoMsg(`Institución reconocida: ${colFound.nombre}. Para ver las fotos reales, ingresá el código de acceso de tu curso.`);
       setCodigoErrorMsg(null);
       setCodigoSeccionValidado(null);
@@ -556,7 +543,6 @@ export default function PortalFamiliasModal({
     const numLista = Math.floor(1 + Math.random() * 25);
     const codCurso =
       codigoAcceso.trim() ||
-      seccionDetectada?.nemotecnico ||
       determinarCodigoParaInscripcion({ grado, turno, division });
 
     const nuevoPedido = registrarPedidoDesdePortal({

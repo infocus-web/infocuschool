@@ -18,8 +18,6 @@ import {
   EstadoResend 
 } from '../services/emailService';
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
-import { SECCIONES_INICIAL_2026 } from '../data/alumnosData';
-import { CODIGOS_CURSOS_INICIALES } from '../data/codigosCursos';
 import ModalPlanillaExcelLab from './ModalPlanillaExcelLab';
 
 interface AdminLaboratorioTabProps {
@@ -97,6 +95,30 @@ export default function AdminLaboratorioTab({
   const pedidosAprobados = useMemo(() => {
     return pedidos.filter(p => p.estadoPago === 'aprobado');
   }, [pedidos]);
+
+  // Cursos para las pastillas de filtro — auditoría 2026-09-09: antes esto salía de
+  // SECCIONES_INICIAL_2026 (una lista fija de 11 secciones de una sola sala de nivel
+  // inicial, mostrando solo las primeras 5) cruzada con CODIGOS_CURSOS_INICIALES (el mapa
+  // de códigos inventados en localStorage, sin relación con los pedidos reales). Ahora se
+  // arma directo con los cursos que de verdad aparecen en los pedidos aprobados — funciona
+  // para cualquier colegio y cualquier cantidad de secciones.
+  const cursosPresentes = useMemo(() => {
+    const mapa = new Map<string, { codigo: string; label: string; count: number }>();
+    pedidosAprobados.forEach((p) => {
+      const codigo = p.cursoCodigo || 'SIN-CODIGO';
+      const existente = mapa.get(codigo);
+      if (existente) {
+        existente.count += 1;
+      } else {
+        mapa.set(codigo, {
+          codigo,
+          label: `${p.grado || codigo}${p.division ? ` "${p.division}"` : ''}`,
+          count: 1,
+        });
+      }
+    });
+    return Array.from(mapa.values()).sort((a, b) => a.label.localeCompare(b.label, 'es'));
+  }, [pedidosAprobados]);
 
   const pedidosFiltrados = useMemo(() => {
     return pedidosAprobados.filter(p => {
@@ -645,23 +667,19 @@ export default function AdminLaboratorioTab({
             Todos los Cursos ({pedidosAprobados.length})
           </button>
 
-          {SECCIONES_INICIAL_2026.slice(0, 5).map(sec => {
-            const code = CODIGOS_CURSOS_INICIALES[sec.id] || sec.id;
-            const count = pedidosAprobados.filter(p => p.cursoCodigo === code).length;
-            return (
-              <button
-                key={sec.id}
-                onClick={() => setCursoFiltro(code)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
-                  cursoFiltro === code
-                    ? 'bg-amber-400 text-slate-950 shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {sec.nombreCompleto} ({count})
-              </button>
-            );
-          })}
+          {cursosPresentes.map((c) => (
+            <button
+              key={c.codigo}
+              onClick={() => setCursoFiltro(c.codigo)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                cursoFiltro === c.codigo
+                  ? 'bg-amber-400 text-slate-950 shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {c.label} ({c.count})
+            </button>
+          ))}
         </div>
 
         {/* Search input */}
