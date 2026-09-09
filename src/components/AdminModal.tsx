@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import {
   X, Lock, Camera, Upload, CheckCircle2, DollarSign, Package,
@@ -224,20 +224,24 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   // de la lista). La tabla con las filas de alumnos (tbody) usa las mismas columnas con ancho
   // fijo en porcentaje (colgroup + table-fixed) para que quede perfectamente alineada con el
   // encabezado de arriba, sin necesitar una tercera franja fija ni un tercer cálculo de offset.
-  const barraSuperiorRef = useRef<HTMLDivElement | null>(null);
-  const [alturaBarraSuperior, setAlturaBarraSuperior] = useState(0);
+    const observadorBarraSuperiorRef = useRef<ResizeObserver | null>(null);
+    const [alturaBarraSuperior, setAlturaBarraSuperior] = useState(0);
 
-  useLayoutEffect(() => {
-    const el = barraSuperiorRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setAlturaBarraSuperior(entry.contentRect.height);
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+    const barraSuperiorRef = useCallback((el: HTMLDivElement | null) => {
+          if (observadorBarraSuperiorRef.current) {
+                  observadorBarraSuperiorRef.current.disconnect();
+                  observadorBarraSuperiorRef.current = null;
+          }
+          if (el) {
+                  const observer = new ResizeObserver((entries) => {
+                            for (const entry of entries) {
+                                        setAlturaBarraSuperior(entry.contentRect.height);
+                            }
+                  });
+                  observer.observe(el);
+                  observadorBarraSuperiorRef.current = observer;
+          }
+    }, []);
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
