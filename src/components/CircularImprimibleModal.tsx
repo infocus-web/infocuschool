@@ -146,7 +146,7 @@ export function CircularImprimibleModal({
               <option value="todas">Todos los Cursos ({secciones.length})</option>
               {secciones.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.nombreCompleto} ({codigosMap[s.id] || s.id})
+                  {s.nombreCompleto} ({codigosMap[s.id] || 'sin código'})
                 </option>
               ))}
             </select>
@@ -170,7 +170,7 @@ export function CircularImprimibleModal({
             {formato === 'talones' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {seccionesFiltradas.map((sec) => {
-                  const code = codigosMap[sec.id] || sec.id;
+                  const code = codigosMap[sec.id] || '(SIN CÓDIGO ASIGNADO)';
                   return (
                     <div
                       key={sec.id}
@@ -235,7 +235,7 @@ export function CircularImprimibleModal({
             {formato === 'whatsapp' && (
               <div className="space-y-4">
                 {seccionesFiltradas.map((sec) => {
-                  const code = codigosMap[sec.id] || sec.id;
+                  const code = codigosMap[sec.id] || '(SIN CÓDIGO ASIGNADO)';
                   const mensaje = generarMensajeWhatsApp(sec, code, colegioNombre);
                   const isCopiado = copiadoIdx === sec.id;
 
@@ -301,7 +301,7 @@ export function CircularImprimibleModal({
             {formato === 'circular' && (
               <div className="space-y-6">
                 {seccionesFiltradas.map((sec) => {
-                  const code = codigosMap[sec.id] || sec.id;
+                  const code = codigosMap[sec.id] || '(SIN CÓDIGO ASIGNADO)';
                   return (
                     <div
                       key={sec.id}

@@ -16,10 +16,13 @@ import {
 } from '../services/configuracionService';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista, obtenerTokensPadronAdmin, regenerarTokenPadronAdmin, obtenerAlumnosNominaAdmin, AlumnoNominaReal } from '../services/colegiosService';
-import { SECCIONES_INICIAL_2026 } from '../data/alumnosData';
-import { 
-  getCodigosCursos, guardarCodigoCurso, regenerarTodosLosCodigos, getMensajeWhatsAppParaCurso 
-} from '../data/codigosCursos';
+import { SeccionEscolar } from '../data/alumnosData';
+import {
+  obtenerCodigosSeccionAdmin,
+  asegurarCodigoSeccionAdmin,
+  regenerarCodigoSeccionAdmin,
+  actualizarCodigoSeccionAdmin
+} from '../services/codigosSeccionService';
 import { 
   obtenerPedidosGuardados, 
   guardarPedidosEnStorage, 
@@ -318,11 +321,44 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     }
   };
 
-  // Course codes state
-  const [codigosMap, setCodigosMap] = useState<Record<string, string>>(() => getCodigosCursos());
+  // Nómina real del padrón (tabla 'alumnos' de Supabase) — se carga temprano porque tanto la
+  // pestaña de Nómina como la de Códigos & Difusión (más abajo) la necesitan.
+  const [alumnosNominaReal, setAlumnosNominaReal] = useState<AlumnoNominaReal[]>([]);
+  const [cargandoNominaReal, setCargandoNominaReal] = useState(false);
+
+  const cargarNominaReal = async () => {
+    setCargandoNominaReal(true);
+    try {
+      const data = await obtenerAlumnosNominaAdmin();
+      setAlumnosNominaReal(data);
+    } finally {
+      setCargandoNominaReal(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      cargarNominaReal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  // Códigos & Difusión WhatsApp — auditoría 2026-09-09: esta pestaña mostraba códigos
+  // inventados y guardados solo en el navegador (localStorage, ver antiguo
+  // src/data/codigosCursos.ts), sin ninguna relación con los códigos REALES que
+  // /api/fotos exige para dejar entrar a una familia (tabla `codigos_seccion`). Un
+  // colegio podía terminar recibiendo por WhatsApp un código que nunca iba a funcionar
+  // en el sitio. Ahora esta pestaña lee y escribe directamente esos códigos reales
+  // (ver services/codigosSeccionService.ts) y es específica por colegio, igual que la
+  // pestaña de Nómina y la de Carga de Fotos.
   const [copiadoFeedback, setCopiadoFeedback] = useState<string | null>(null);
   const [filtroSalaCodigos, setFiltroSalaCodigos] = useState<string>('todas');
   const [mensajeWhatsAppModal, setMensajeWhatsAppModal] = useState<{ seccion: any; codigo: string; texto: string } | null>(null);
+  const [colegioIdCodigos, setColegioIdCodigos] = useState<string>(() => colegiosList[0]?.id || '');
+  const [codigosRealesMap, setCodigosRealesMap] = useState<Record<string, string>>({});
+  const [cargandoCodigosReales, setCargandoCodigosReales] = useState(false);
+  const [guardandoCodigoId, setGuardandoCodigoId] = useState<string | null>(null);
+  const [errorCodigos, setErrorCodigos] = useState<string | null>(null);
 
   const handleCopiarTexto = (texto: string, label: string) => {
     navigator.clipboard.writeText(texto);
@@ -330,28 +366,152 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     setTimeout(() => setCopiadoFeedback(null), 2500);
   };
 
-  const handleGuardarCodigo = (seccionId: string, nuevoCodigo: string) => {
-    const updated = guardarCodigoCurso(seccionId, nuevoCodigo);
-    setCodigosMap(updated);
-    setCopiadoFeedback(`Código guardado: ${nuevoCodigo.toUpperCase()}`);
-    setTimeout(() => setCopiadoFeedback(null), 2000);
-  };
-
-  const handleRegenerarCodigos = (tipo: 'nemotecnico' | 'pin') => {
-    const updated = regenerarTodosLosCodigos(tipo);
-    setCodigosMap(updated);
-    setCopiadoFeedback('¡Códigos regenerados exitosamente para todos los cursos!');
-    setTimeout(() => setCopiadoFeedback(null), 2500);
-  };
-
   const [mostrarCircularModal, setMostrarCircularModal] = useState(false);
   const [seccionParaCircular, setSeccionParaCircular] = useState<string | undefined>(undefined);
 
   const colegioActualNombre = colegiosList[0]?.nombre || 'Instituto Madre del Divino Pastor';
+  const colegioCodigosNombre = colegiosList.find((c) => c.id === colegioIdCodigos)?.nombre || colegioActualNombre;
+
+  // Alumnos reales (tabla `alumnos`) del colegio elegido en esta pestaña.
+  const alumnosColegioCodigos = useMemo(
+    () => alumnosNominaReal.filter((a) => a.colegio_id === colegioIdCodigos),
+    [alumnosNominaReal, colegioIdCodigos]
+  );
+
+  // "Secciones" derivadas de grado + turno + división de esos alumnos reales — igual que
+  // en la pestaña de Nómina, no hay una tabla fija de secciones (cada colegio tiene las
+  // suyas). Se les da la forma de SeccionEscolar para poder reusar tal cual el modal de
+  // circulares imprimibles y todas las funciones de difusionEscolarService.ts.
+  const seccionesCodigosReales: SeccionEscolar[] = useMemo(() => {
+    const mapa = new Map<string, SeccionEscolar>();
+    alumnosColegioCodigos.forEach((a) => {
+      const grado = a.grado || 'Sin grado';
+      const turno = a.turno || 'Sin turno';
+      const division = a.division || '-';
+      const id = `${grado}__${turno}__${division}`;
+      const existente = mapa.get(id);
+      if (existente) {
+        existente.totalAlumnos += 1;
+      } else {
+        mapa.set(id, {
+          id,
+          sala: grado,
+          turno: turno as SeccionEscolar['turno'],
+          division,
+          nombreCompleto: `${grado} "${division}" (${turno})`,
+          totalAlumnos: 1,
+        });
+      }
+    });
+    return Array.from(mapa.values()).sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, 'es'));
+  }, [alumnosColegioCodigos]);
+
+  const gradosDisponiblesCodigos = useMemo(() => {
+    const set = new Set(seccionesCodigosReales.map((s) => s.sala));
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [seccionesCodigosReales]);
+
+  const cargarCodigosReales = async (colegioId: string) => {
+    if (!colegioId) {
+      setCodigosRealesMap({});
+      return;
+    }
+    setCargandoCodigosReales(true);
+    setErrorCodigos(null);
+    try {
+      const codigos = await obtenerCodigosSeccionAdmin(colegioId);
+      const mapa: Record<string, string> = {};
+      codigos.forEach((c) => {
+        const id = `${c.grado || 'Sin grado'}__${c.turno || 'Sin turno'}__${c.division || '-'}`;
+        mapa[id] = c.codigo_secreto;
+      });
+      setCodigosRealesMap(mapa);
+    } finally {
+      setCargandoCodigosReales(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated && colegioIdCodigos) {
+      cargarCodigosReales(colegioIdCodigos);
+      setFiltroSalaCodigos('todas');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, colegioIdCodigos]);
+
+  const handleAsegurarCodigo = async (sec: SeccionEscolar) => {
+    setGuardandoCodigoId(sec.id);
+    setErrorCodigos(null);
+    const resultado = await asegurarCodigoSeccionAdmin(colegioIdCodigos, sec.sala, sec.turno, sec.division);
+    setGuardandoCodigoId(null);
+    if (!resultado.success || !resultado.codigo) {
+      setErrorCodigos(resultado.error || 'No se pudo generar el código.');
+      return;
+    }
+    setCodigosRealesMap((prev) => ({ ...prev, [sec.id]: resultado.codigo! }));
+  };
+
+  const handleRegenerarCodigo = async (sec: SeccionEscolar) => {
+    if (!window.confirm(`¿Generar un código NUEVO para "${sec.nombreCompleto}"? El código anterior dejará de funcionar para las familias que ya lo tengan.`)) {
+      return;
+    }
+    setGuardandoCodigoId(sec.id);
+    setErrorCodigos(null);
+    const resultado = await regenerarCodigoSeccionAdmin(colegioIdCodigos, sec.sala, sec.turno, sec.division);
+    setGuardandoCodigoId(null);
+    if (!resultado.success || !resultado.codigo) {
+      setErrorCodigos(resultado.error || 'No se pudo regenerar el código.');
+      return;
+    }
+    setCodigosRealesMap((prev) => ({ ...prev, [sec.id]: resultado.codigo! }));
+    setCopiadoFeedback(`Código regenerado para ${sec.nombreCompleto}: ${resultado.codigo}`);
+    setTimeout(() => setCopiadoFeedback(null), 3000);
+  };
+
+  const handleGuardarCodigoManual = async (sec: SeccionEscolar, nuevoCodigo: string) => {
+    const limpio = nuevoCodigo.trim();
+    if (!limpio) return;
+    setGuardandoCodigoId(sec.id);
+    setErrorCodigos(null);
+    const resultado = await actualizarCodigoSeccionAdmin(colegioIdCodigos, sec.sala, sec.turno, sec.division, limpio);
+    setGuardandoCodigoId(null);
+    if (!resultado.success || !resultado.codigo) {
+      setErrorCodigos(resultado.error || 'No se pudo guardar el código (¿ya lo está usando otra sección?).');
+      return;
+    }
+    setCodigosRealesMap((prev) => ({ ...prev, [sec.id]: resultado.codigo! }));
+    setCopiadoFeedback(`Código guardado: ${resultado.codigo}`);
+    setTimeout(() => setCopiadoFeedback(null), 2000);
+  };
+
+  const handleAsegurarTodosLosCodigos = async () => {
+    const faltantes = seccionesCodigosReales.filter((sec) => !codigosRealesMap[sec.id]);
+    if (faltantes.length === 0) {
+      setCopiadoFeedback('Todas las secciones ya tienen un código asignado.');
+      setTimeout(() => setCopiadoFeedback(null), 2500);
+      return;
+    }
+    setCargandoCodigosReales(true);
+    for (const sec of faltantes) {
+      const resultado = await asegurarCodigoSeccionAdmin(colegioIdCodigos, sec.sala, sec.turno, sec.division);
+      if (resultado.success && resultado.codigo) {
+        setCodigosRealesMap((prev) => ({ ...prev, [sec.id]: resultado.codigo! }));
+      }
+    }
+    setCargandoCodigosReales(false);
+    setCopiadoFeedback(`¡Códigos generados para ${faltantes.length} sección(es) sin código!`);
+    setTimeout(() => setCopiadoFeedback(null), 3000);
+  };
 
   const handleDescargarExcelLegible = () => {
     try {
-      descargarExcelLegibleColegio(SECCIONES_INICIAL_2026, codigosMap, colegioActualNombre);
+      const alumnosParaDifusion = alumnosColegioCodigos.map((a) => ({
+        nombre: a.nombre,
+        grado: a.grado,
+        turno: a.turno,
+        division: a.division,
+      }));
+      descargarExcelLegibleColegio(seccionesCodigosReales, codigosRealesMap, colegioCodigosNombre, undefined, alumnosParaDifusion);
       setCopiadoFeedback('¡Libro de Microsoft Excel (.XLSX) con 3 hojas descargado con éxito!');
       setTimeout(() => setCopiadoFeedback(null), 3500);
     } catch (err) {
@@ -407,20 +567,20 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   };
 
   const handleExportarCSVEspañol = () => {
-    descargarCSVEspañolCompatible(SECCIONES_INICIAL_2026, codigosMap, colegioActualNombre);
+    descargarCSVEspañolCompatible(seccionesCodigosReales, codigosRealesMap, colegioCodigosNombre);
     setCopiadoFeedback('¡CSV descargado con codificación UTF-8 compatible con Excel en español!');
     setTimeout(() => setCopiadoFeedback(null), 3000);
   };
 
   const handleCopiarPackCompletoWhatsApp = () => {
-    const guiaTexto = generarGuiaWhatsAppColegioTexto(SECCIONES_INICIAL_2026, codigosMap, colegioActualNombre);
+    const guiaTexto = generarGuiaWhatsAppColegioTexto(seccionesCodigosReales, codigosRealesMap, colegioCodigosNombre);
     navigator.clipboard.writeText(guiaTexto);
     setCopiadoFeedback('¡Pack completo de WhatsApp copiado al portapapeles para enviar a la Dirección!');
     setTimeout(() => setCopiadoFeedback(null), 3500);
   };
 
   const handleDescargarGuiaTxt = () => {
-    descargarGuiaWhatsAppTxt(SECCIONES_INICIAL_2026, codigosMap, colegioActualNombre);
+    descargarGuiaWhatsAppTxt(seccionesCodigosReales, codigosRealesMap, colegioCodigosNombre);
     setCopiadoFeedback('¡Guía de mensajes en archivo de texto (.TXT) descargada!');
     setTimeout(() => setCopiadoFeedback(null), 3000);
   };
@@ -434,25 +594,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [filtroSeccionAlumnos, setFiltroSeccionAlumnos] = useState<string>('todas');
   const [busquedaAlumnos, setBusquedaAlumnos] = useState<string>('');
   const [checkedAlumnos, setCheckedAlumnos] = useState<Record<string, boolean>>({});
-  const [alumnosNominaReal, setAlumnosNominaReal] = useState<AlumnoNominaReal[]>([]);
-  const [cargandoNominaReal, setCargandoNominaReal] = useState(false);
-
-  const cargarNominaReal = async () => {
-    setCargandoNominaReal(true);
-    try {
-      const data = await obtenerAlumnosNominaAdmin();
-      setAlumnosNominaReal(data);
-    } finally {
-      setCargandoNominaReal(false);
-    }
-  };
-
-  useEffect(() => {
-    if (isAuthenticated) {
-      cargarNominaReal();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);
 
   // "Sección" real derivada de grado + turno + división de cada alumno (no hay ninguna tabla
   // fija de secciones para esto — cada colegio que se cargue puede tener grados distintos).
@@ -1174,6 +1315,19 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   </div>
                 )}
 
+                {/* Error banner */}
+                {errorCodigos && (
+                  <div className="p-3.5 bg-red-50 border border-red-300 text-red-900 rounded-2xl text-xs font-bold flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>{errorCodigos}</span>
+                    </div>
+                    <button onClick={() => setErrorCodigos(null)} className="text-[11px] text-red-700 hover:text-red-900">
+                      Cerrar
+                    </button>
+                  </div>
+                )}
+
                 {/* Header & Quick Action Buttons */}
                 <div className="bg-gradient-to-br from-amber-50 via-amber-100/40 to-emerald-50/50 border border-amber-200 rounded-3xl p-5 sm:p-6 shadow-xs space-y-4">
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -1187,7 +1341,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         <span>Códigos de Acceso & Difusión para Familias</span>
                       </h3>
                       <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
-                        Generá los mensajes y notas oficiales para que la Dirección o maestras compartan en los <strong>grupos de WhatsApp</strong> o peguen en los <strong>cuadernos de comunicaciones</strong>. Sin códigos técnicos ni archivos ilegibles.
+                        Estos son los códigos REALES que la familia tiene que escribir en el portal para entrar (los mismos que valida el sitio, guardados en el servidor — no una copia local). Generá los mensajes y notas oficiales para que la Dirección o maestras compartan en los <strong>grupos de WhatsApp</strong> o peguen en los <strong>cuadernos de comunicaciones</strong>.
                       </p>
                     </div>
 
@@ -1228,27 +1382,35 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     </div>
                   </div>
 
+                  {/* Colegio selector */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-3 border-t border-amber-200/60">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0">Colegio:</label>
+                    <select
+                      value={colegioIdCodigos}
+                      onChange={(e) => setColegioIdCodigos(e.target.value)}
+                      className="px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-bold text-slate-900 max-w-xs"
+                    >
+                      {colegiosList.map((c) => (
+                        <option key={c.id} value={c.id}>{c.nombre}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleAsegurarTodosLosCodigos}
+                      disabled={cargandoCodigosReales || seccionesCodigosReales.length === 0}
+                      className="px-3 py-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold text-[11px] rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
+                      title="Genera un código real para cada sección de este colegio que todavía no tenga uno"
+                    >
+                      <Key className="w-3.5 h-3.5" />
+                      <span>Asegurar códigos para todas las secciones</span>
+                    </button>
+                  </div>
+
                   {/* Secondary Tools row */}
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-amber-200/60 text-xs">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Generar Formato:</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRegenerarCodigos('nemotecnico')}
-                        className="px-2.5 py-1.5 bg-amber-200/80 hover:bg-amber-300 text-amber-950 font-bold text-[11px] rounded-lg transition-colors cursor-pointer"
-                        title="Códigos nemotécnicos como SALA-3TM"
-                      >
-                        Nemotécnicos (SALA-3TM)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRegenerarCodigos('pin')}
-                        className="px-2.5 py-1.5 bg-slate-200/80 hover:bg-slate-300 text-slate-800 font-bold text-[11px] rounded-lg transition-colors cursor-pointer"
-                        title="PINs numéricos como INF3-412"
-                      >
-                        PINs Aleatorios
-                      </button>
-                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      Los códigos se generan y guardan en el servidor (tabla <code className="font-mono">codigos_seccion</code>) — no hay formato "nemotécnico" adivinable por seguridad.
+                    </span>
 
                     <div className="flex items-center gap-2">
                       <button
@@ -1271,10 +1433,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   </div>
                 </div>
 
-                {/* Filter Tabs by Sala */}
+                {/* Filter Tabs by Grado/Sala (dinámico según el colegio elegido) */}
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="flex gap-1.5 p-1 bg-slate-100 rounded-xl">
-                    {['todas', 'Sala 3', 'Sala 4', 'Sala 5'].map((tab) => (
+                  <div className="flex flex-wrap gap-1.5 p-1 bg-slate-100 rounded-xl">
+                    {['todas', ...gradosDisponiblesCodigos].map((tab) => (
                       <button
                         key={tab}
                         type="button"
@@ -1285,23 +1447,32 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                             : 'text-slate-600 hover:text-slate-900'
                         }`}
                       >
-                        {tab === 'todas' ? `Todos los Cursos (${SECCIONES_INICIAL_2026.length})` : tab}
+                        {tab === 'todas' ? `Todos los Cursos (${seccionesCodigosReales.length})` : tab}
                       </button>
                     ))}
                   </div>
 
                   <span className="text-xs text-slate-500 font-medium">
-                    11 cursos configurados · 211 alumnos en nómina
+                    {cargandoCodigosReales
+                      ? 'Cargando códigos…'
+                      : `${seccionesCodigosReales.length} sección(es) · ${alumnosColegioCodigos.length} alumnos en nómina`}
                   </span>
                 </div>
 
+                {seccionesCodigosReales.length === 0 && !cargandoCodigosReales && (
+                  <div className="p-6 text-center text-sm text-slate-500 bg-slate-50 rounded-2xl border border-dashed border-slate-300">
+                    Este colegio todavía no tiene alumnos cargados en la nómina real (pestaña "Nómina Alumnos" o "Carga de Fotos").
+                  </div>
+                )}
+
                 {/* Course Codes List Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {SECCIONES_INICIAL_2026
-                    .filter((sec) => filtroSalaCodigos === 'todas' || sec.sala.includes(filtroSalaCodigos))
+                  {seccionesCodigosReales
+                    .filter((sec) => filtroSalaCodigos === 'todas' || sec.sala === filtroSalaCodigos)
                     .map((sec) => {
-                      const currentCode = codigosMap[sec.id] || '';
-                      const mensajeCurso = generarMensajeWhatsApp(sec, currentCode, colegioActualNombre);
+                      const currentCode = codigosRealesMap[sec.id] || '';
+                      const mensajeCurso = currentCode ? generarMensajeWhatsApp(sec, currentCode, colegioCodigosNombre) : '';
+                      const guardando = guardandoCodigoId === sec.id;
 
                       return (
                         <div
@@ -1326,39 +1497,63 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           {/* Code edit input */}
                           <div className="space-y-1.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
                             <label className="text-[10px] uppercase font-extrabold text-slate-500 tracking-wider flex items-center justify-between">
-                              <span>Código para las familias:</span>
-                              <span className="text-[10px] text-slate-400 font-normal">Editable al tipear</span>
+                              <span>Código real de acceso:</span>
+                              <span className="text-[10px] text-slate-400 font-normal">
+                                {guardando ? 'Guardando…' : 'Editable al tipear'}
+                              </span>
                             </label>
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                defaultValue={currentCode}
-                                key={currentCode}
-                                onBlur={(e) => {
-                                  const val = e.target.value.trim().toUpperCase();
-                                  if (val && val !== currentCode) {
-                                    handleGuardarCodigo(sec.id, val);
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    const val = (e.target as HTMLInputElement).value.trim().toUpperCase();
-                                    if (val) handleGuardarCodigo(sec.id, val);
-                                  }
-                                }}
-                                className="px-3 py-1.5 text-xs font-mono font-black uppercase bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 w-full tracking-wider text-slate-900"
-                              />
+                            {!currentCode ? (
                               <button
                                 type="button"
-                                onClick={() => handleCopiarTexto(currentCode, `Código ${currentCode} copiado al portapapeles`)}
-                                className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-1 transition-colors cursor-pointer shrink-0"
-                                title="Copiar código al portapapeles"
+                                disabled={guardando}
+                                onClick={() => handleAsegurarCodigo(sec)}
+                                className="w-full px-3 py-2 bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                               >
-                                <Copy className="w-3.5 h-3.5" />
-                                <span>Copiar</span>
+                                {guardando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                                <span>Generar código real para esta sección</span>
                               </button>
-                            </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  defaultValue={currentCode}
+                                  key={currentCode}
+                                  disabled={guardando}
+                                  onBlur={(e) => {
+                                    const val = e.target.value.trim().toUpperCase();
+                                    if (val && val !== currentCode) {
+                                      handleGuardarCodigoManual(sec, val);
+                                    }
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      const val = (e.target as HTMLInputElement).value.trim().toUpperCase();
+                                      if (val && val !== currentCode) handleGuardarCodigoManual(sec, val);
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 text-xs font-mono font-black uppercase bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 w-full tracking-wider text-slate-900 disabled:opacity-60"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopiarTexto(currentCode, `Código ${currentCode} copiado al portapapeles`)}
+                                  className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                                  title="Copiar código al portapapeles"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>Copiar</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={guardando}
+                                  onClick={() => handleRegenerarCodigo(sec)}
+                                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-60 text-slate-700 text-xs font-bold rounded-lg flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                                  title="Generar un código nuevo, invalidando el anterior"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           {/* Quick Message Preview & Actions */}
@@ -1366,11 +1561,17 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-2">
                                 <a
-                                  href={`https://wa.me/?text=${encodeURIComponent(mensajeCurso)}`}
+                                  href={currentCode ? `https://wa.me/?text=${encodeURIComponent(mensajeCurso)}` : undefined}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-                                  title="Abrir WhatsApp con el mensaje ya redactado"
+                                  aria-disabled={!currentCode}
+                                  onClick={(e) => { if (!currentCode) e.preventDefault(); }}
+                                  className={`px-2.5 py-1.5 font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-xs transition-colors ${
+                                    currentCode
+                                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
+                                      : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                  }`}
+                                  title={currentCode ? 'Abrir WhatsApp con el mensaje ya redactado' : 'Primero generá un código para esta sección'}
                                 >
                                   <Send className="w-3.5 h-3.5" />
                                   <span>WhatsApp</span>
@@ -1378,8 +1579,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
                                 <button
                                   type="button"
+                                  disabled={!currentCode}
                                   onClick={() => handleCopiarTexto(mensajeCurso, `¡Mensaje de WhatsApp para ${sec.nombreCompleto} copiado!`)}
-                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 transition-colors cursor-pointer"
+                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 transition-colors cursor-pointer"
                                   title="Copiar texto completo para WhatsApp"
                                 >
                                   <Copy className="w-3.5 h-3.5 text-slate-500" />
@@ -1401,7 +1603,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                   <span>Imprimir Nota</span>
                                 </button>
 
-                                {onProbarCodigo && (
+                                {onProbarCodigo && currentCode && (
                                   <button
                                     type="button"
                                     onClick={() => onProbarCodigo(currentCode)}
@@ -2151,9 +2353,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
         <CircularImprimibleModal
           isOpen={mostrarCircularModal}
           onClose={() => setMostrarCircularModal(false)}
-          secciones={SECCIONES_INICIAL_2026}
-          codigosMap={codigosMap}
-          colegioNombre={colegioActualNombre}
+          secciones={seccionesCodigosReales}
+          codigosMap={codigosRealesMap}
+          colegioNombre={colegioCodigosNombre}
           seccionSeleccionadaInicial={seccionParaCircular}
         />
 
