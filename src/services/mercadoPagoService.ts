@@ -9,7 +9,11 @@ export interface DatosPreferenciaMercadoPago {
   alumnoNombre: string;
   colegioNombre: string;
   cursoCodigo: string;
+  // El servidor recalcula el monto real a partir de kitId + carpetasExtras (ver auditoría
+  // 2026-09-09) — "total" ya no se usa para fijar el precio, solo queda por compatibilidad
+  // de tipos con el resto del flujo local; el servidor lo ignora.
   total: number;
+  carpetasExtras?: number;
   tutorNombre: string;
   tutorEmail: string;
   tutorTelefono?: string;

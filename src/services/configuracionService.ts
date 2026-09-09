@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getSupabase } from './supabaseClient';
+import { fetchAdminAutenticado } from './adminAuthService';
 
 export interface ConfiguracionWhatsApp {
   whatsappSolicitudCodigo: string;
@@ -126,59 +127,58 @@ export async function guardarConfiguracionWhatsApp(
     window.dispatchEvent(new CustomEvent('whatsapp_config_actualizada', { detail: actualizada }));
   }
 
-  // 2. Intentar guardar en Supabase si el cliente está inicializado
+  // 2. Guardar en Supabase pasando por el servidor con sesión de admin.
+  // Antes esto escribía directo desde el navegador a la tabla 'configuracion' usando la clave
+  // anónima (pública), protegido solo por una política de RLS que en los hechos permitía
+  // escribir a cualquiera sin login (ver auditoría 2026-09-09). Ahora pasa por
+  // POST /api/admin/configuracion, que exige sesión de admin, y la tabla se cerró en Supabase
+  // para escritura pública.
   let supabaseOk = false;
   let errorSupabase: string | undefined;
 
   try {
-    const supabase = getSupabase();
-    if (supabase) {
-      // Guardar en la tabla 'configuracion' (única tabla real de configuración en Supabase).
-      const datosExtraFlotante = {
-        nombreContacto: actualizada.nombreContacto,
-        mensajePredeterminado: actualizada.mensajePredeterminado,
-      };
-      const datosExtraSolicitud = {
-        nombreContacto: actualizada.nombreContacto,
-        mensajePredeterminado: actualizada.mensajePredeterminado,
-        whatsappFlotante: actualizada.whatsappFlotante,
-      };
+    const datosExtraFlotante = {
+      nombreContacto: actualizada.nombreContacto,
+      mensajePredeterminado: actualizada.mensajePredeterminado,
+    };
+    const datosExtraSolicitud = {
+      nombreContacto: actualizada.nombreContacto,
+      mensajePredeterminado: actualizada.mensajePredeterminado,
+      whatsappFlotante: actualizada.whatsappFlotante,
+    };
 
-      const { error: errConfiguracion } = await supabase
-        .from('configuracion')
-        .upsert(
-          [
-            {
-              clave: 'whatsapp_flotante',
-              valor: actualizada.whatsappFlotante || numeroSanitizado,
-              datos_extra: datosExtraFlotante,
-              updated_at: new Date().toISOString(),
-            },
-            {
-              clave: 'whatsapp_solicitud_codigo',
-              valor: numeroSanitizado,
-              datos_extra: datosExtraSolicitud,
-              updated_at: new Date().toISOString(),
-            },
-          ],
-          { onConflict: 'clave' }
-        );
+    const res = await fetchAdminAutenticado('/api/admin/configuracion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        registros: [
+          {
+            clave: 'whatsapp_flotante',
+            valor: actualizada.whatsappFlotante || numeroSanitizado,
+            datos_extra: datosExtraFlotante,
+          },
+          {
+            clave: 'whatsapp_solicitud_codigo',
+            valor: numeroSanitizado,
+            datos_extra: datosExtraSolicitud,
+          },
+        ],
+      }),
+    });
+    const data = await res.json();
 
-      if (!errConfiguracion) {
-        supabaseOk = true;
-        actualizada.guardadoEnSupabase = true;
-        if (typeof window !== 'undefined') {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(actualizada));
-        }
-      } else {
-        errorSupabase = errConfiguracion?.message;
-        actualizada.guardadoEnSupabase = false;
+    if (data?.success) {
+      supabaseOk = true;
+      actualizada.guardadoEnSupabase = true;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(actualizada));
       }
     } else {
-      errorSupabase = 'Supabase no inicializado o sin credenciales anon_key.';
+      errorSupabase = data?.error || 'No se pudo guardar en el servidor.';
+      actualizada.guardadoEnSupabase = false;
     }
   } catch (err: any) {
-    errorSupabase = err?.message || 'Error de conexión con Supabase.';
+    errorSupabase = err?.message || 'Error de conexión con el servidor.';
   }
 
   return {
@@ -275,11 +275,12 @@ create policy "Lectura publica de configuracion"
   on public.configuracion for select
   using (true);
 
--- Permitir guardado y actualización
-create policy "Permitir guardar configuracion"
-  on public.configuracion for all
-  using (true)
-  with check (true);
+-- OJO (auditoría 2026-09-09): NO agregar acá una política de escritura pública
+-- ("for all using (true) with check (true)") — eso permite a cualquier visitante
+-- reescribir esta tabla sin login, ya que la clave anónima es siempre visible en
+-- el código del sitio. El guardado desde el panel de admin pasa por el servidor
+-- (POST /api/admin/configuracion, con sesión de admin), que usa la Service Role
+-- Key y no necesita ninguna política de escritura en RLS para funcionar.
 `;
 }
 

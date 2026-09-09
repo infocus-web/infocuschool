@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { fetchAdminAutenticado } from './adminAuthService';
 
 const DEFAULT_SUPABASE_URL = 'https://ntkqypxvrljuihbxdrtx.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_94eG1ynOFoTUTPfcKgBwlw_rfhcRNbT';
@@ -132,59 +133,52 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
   let fotosWebError: string | undefined;
   let fotosHdError: string | undefined;
 
-  // 1. Test listing from fotos-web
+  // 1. Test listing from fotos-web (bucket público de lectura — sigue siendo válido probarlo
+  // con la clave anónima, es justo el acceso que debe seguir funcionando para cualquier
+  // visitante). Si la única política de lectura pública que queda ("Permitir lectura publica
+  // fotos-web") se llegara a borrar por error, esto lo detecta como RLS bloqueada.
   const { error: errWebList } = await client.storage.from('fotos-web').list('', { limit: 1 });
   if (errWebList) {
-    fotosWebStatus = errWebList.message?.includes('not found') ? 'not_found' : 'error';
+    if (errWebList.message?.includes('row-level security') || errWebList.message?.includes('AccessDenied')) {
+      fotosWebStatus = 'rls_blocked';
+    } else {
+      fotosWebStatus = errWebList.message?.includes('not found') ? 'not_found' : 'error';
+    }
     fotosWebError = errWebList.message;
   }
 
-  // 2. Test listing from fotos-hd
-  const { error: errHdList } = await client.storage.from('fotos-hd').list('', { limit: 1 });
-  if (errHdList) {
-    fotosHdStatus = errHdList.message?.includes('not found') ? 'not_found' : 'error';
-    fotosHdError = errHdList.message;
-  }
-
-  // 3. Test a tiny ping upload to check RLS write permissions on fotos-web
-  const pingBlob = new Blob(['ping'], { type: 'image/jpeg' });
-  const pingPath = `_ping_check_${Date.now()}.jpg`;
-  
-  const { error: errWebWrite } = await client.storage.from('fotos-web').upload(pingPath, pingBlob, { upsert: true });
-  if (errWebWrite) {
-    if (errWebWrite.message?.includes('row-level security') || errWebWrite.message?.includes('AccessDenied')) {
-      fotosWebStatus = 'rls_blocked';
-      fotosWebError = 'Bloqueado por Row-Level Security (RLS). Falta política INSERT en storage.objects para fotos-web.';
-    } else {
-      fotosWebStatus = 'error';
-      fotosWebError = errWebWrite.message;
-    }
-  } else {
-    fotosWebStatus = 'ok';
-    // Clean ping file
-    await client.storage.from('fotos-web').remove([pingPath]);
-  }
-
-  // 4. Test a tiny ping upload to check RLS write permissions on fotos-hd
-  const { error: errHdWrite } = await client.storage.from('fotos-hd').upload(pingPath, pingBlob, { upsert: true });
-  if (errHdWrite) {
-    if (errHdWrite.message?.includes('row-level security') || errHdWrite.message?.includes('AccessDenied')) {
-      fotosHdStatus = 'rls_blocked';
-      fotosHdError = 'Bloqueado por Row-Level Security (RLS). Falta política INSERT en storage.objects para fotos-hd.';
-    } else {
+  // 2. fotos-hd: auditoría 2026-09-09 — este bucket es privado (contiene las fotos originales,
+  // el producto pago) y ya NO se lee ni se escribe con la clave anónima del navegador para
+  // nada: antes esta misma función probaba subir/leer directo con la anon key, lo que
+  // significaba que el bucket TENÍA que tener políticas públicas de lectura/escritura para
+  // que este chequeo (y la subida real desde el panel) funcionaran — esas políticas son
+  // justamente el agujero que se cerró. Ahora se verifica indirectamente: se le pide al
+  // servidor (con sesión de admin) que genere una URL de subida firmada para fotos-hd sin
+  // subir nada — si el servidor puede generarla, es porque la Service Role Key está bien
+  // configurada y el bucket existe, que es todo lo que hace falta para que la subida real
+  // funcione.
+  try {
+    const resHd = await fetchAdminAutenticado('/api/admin/storage/signed-upload-url', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bucket: 'fotos-hd', path: `_diagnostico/ping_${Date.now()}.txt` }),
+    });
+    const dataHd = await resHd.json();
+    if (!dataHd?.success) {
       fotosHdStatus = 'error';
-      fotosHdError = errHdWrite.message;
+      fotosHdError = dataHd?.error || 'El servidor no pudo generar una URL de subida para fotos-hd.';
     }
-  } else {
-    fotosHdStatus = 'ok';
-    // Clean ping file
-    await client.storage.from('fotos-hd').remove([pingPath]);
+  } catch (err: any) {
+    fotosHdStatus = 'error';
+    fotosHdError = err?.message || 'No se pudo consultar al servidor para verificar fotos-hd.';
   }
 
   const ok = fotosWebStatus === 'ok' && fotosHdStatus === 'ok';
   let detalles = 'Conexión a Supabase Storage verificada.';
-  if (fotosWebStatus === 'rls_blocked' || fotosHdStatus === 'rls_blocked') {
-    detalles = 'Se requiere aplicar la política RLS en el SQL Editor de Supabase para permitir subidas con la Anon Key.';
+  if (fotosWebStatus === 'rls_blocked') {
+    detalles = 'Falta la política de lectura pública para fotos-web en el SQL Editor de Supabase.';
+  } else if (fotosHdStatus === 'error') {
+    detalles = 'El servidor no pudo confirmar acceso a fotos-hd — revisá que ADMIN_SESSION_SECRET y SUPABASE_SERVICE_ROLE_KEY estén configuradas, o iniciá sesión de admin de nuevo.';
   }
 
   return {
@@ -200,49 +194,62 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
   };
 }
 
+// Auditoría 2026-09-09: las cuatro funciones de abajo (limpiar bucket, borrar foto, subir HD,
+// subir web) antes escribían/borraban directo en Supabase Storage usando la clave anónima
+// del navegador (getSupabase()). Eso solo funcionaba porque los buckets 'fotos-web' y
+// 'fotos-hd' tenían políticas de RLS que decían "permitir a cualquiera, sin login" para
+// insertar/actualizar/borrar — y 'fotos-hd' (las fotos originales, el producto pago) además
+// permitía LEER a cualquiera. Es decir, cualquier visitante del sitio (no solo el admin) podía
+// copiar la clave anónima pública (visible en el propio código del sitio) y, sin ningún PIN,
+// descargar todas las fotos originales gratis, subir archivos arbitrarios, o borrar
+// permanentemente todas las fotos del negocio. El PIN de admin de este panel nunca protegió
+// nada de esto — solo ocultaba el botón, la puerta de atrás seguía abierta.
+//
+// Ahora estas cuatro funciones piden al SERVIDOR (con sesión de admin real) que haga el
+// trabajo con la Service Role Key, que no necesita ninguna política pública en Storage. Las
+// políticas públicas de escritura/lectura de 'fotos-hd' y de escritura de 'fotos-web' se
+// cerraron del lado de Supabase (ver migración de la auditoría 2026-09-09); sólo queda
+// pública la LECTURA de 'fotos-web' (las miniaturas con marca de agua, que sí deben verse en
+// la galería pública).
+
 /**
- * Remove all files in a specific storage bucket and path
+ * Vacía por completo un bucket (botón "Limpiar Supabase" del panel admin).
  */
 export async function limpiarStorageBucket(bucket: 'fotos-web' | 'fotos-hd' | 'fotos', prefix = ''): Promise<{ eliminados: number; error?: string }> {
-  const client = getSupabase();
-  if (!client) return { eliminados: 0, error: 'Supabase no conectado' };
-
   try {
-    const { data: files, error: listErr } = await client.storage.from(bucket).list(prefix, { limit: 100 });
-    if (listErr) return { eliminados: 0, error: listErr.message };
-    if (!files || files.length === 0) return { eliminados: 0 };
-
-    const filePaths: string[] = [];
-    for (const f of files) {
-      if (f.id) {
-        filePaths.push(prefix ? `${prefix}/${f.name}` : f.name);
-      }
+    const res = await fetchAdminAutenticado('/api/admin/storage/limpiar-bucket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bucket, prefix }),
+    });
+    const data = await res.json();
+    if (!data?.success) {
+      return { eliminados: 0, error: data?.error || 'No se pudo limpiar el bucket.' };
     }
-
-    if (filePaths.length === 0) return { eliminados: 0 };
-
-    const { error: removeErr } = await client.storage.from(bucket).remove(filePaths);
-    if (removeErr) return { eliminados: 0, error: removeErr.message };
-
-    return { eliminados: filePaths.length };
+    return { eliminados: data.eliminados || 0 };
   } catch (err: any) {
     return { eliminados: 0, error: err?.message || 'Error al limpiar bucket' };
   }
 }
 
 /**
- * Delete a photo from both web and HD buckets
+ * Borra una foto puntual de los buckets web y/o HD.
  */
 export async function eliminarFotoDeStorage(pathWeb?: string, pathHD?: string): Promise<{ ok: boolean; error?: string }> {
-  const client = getSupabase();
-  if (!client) return { ok: false, error: 'Supabase no conectado' };
-
   try {
     if (pathWeb) {
-      await client.storage.from('fotos-web').remove([pathWeb]);
+      await fetchAdminAutenticado('/api/admin/storage/eliminar-archivos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucket: 'fotos-web', paths: [pathWeb] }),
+      });
     }
     if (pathHD) {
-      await client.storage.from('fotos-hd').remove([pathHD]);
+      await fetchAdminAutenticado('/api/admin/storage/eliminar-archivos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bucket: 'fotos-hd', paths: [pathHD] }),
+      });
     }
     return { ok: true };
   } catch (err: any) {
@@ -251,25 +258,43 @@ export async function eliminarFotoDeStorage(pathWeb?: string, pathHD?: string): 
 }
 
 /**
- * Upload an original High Resolution photo or ZIP to private 'fotos-hd' bucket
+ * Pide al servidor una URL de subida firmada de un solo uso para `bucket`/`filePath`, y sube
+ * el archivo directo a Supabase Storage con ella — sin necesitar ninguna política pública de
+ * escritura, ya que la autorización viene del token firmado (generado por el servidor con la
+ * Service Role Key tras validar la sesión de admin), no del rol de la clave anónima.
  */
-export async function uploadFotoHD(file: File | Blob, filePath: string): Promise<{ path: string; error?: string }> {
+async function subirConUrlFirmada(bucket: 'fotos-hd' | 'fotos-web', file: File | Blob, filePath: string): Promise<{ path: string; error?: string }> {
   const client = getSupabase();
   if (!client) {
-    return { path: filePath, error: 'Supabase no conectado con anon key' };
+    return { path: '', error: 'Supabase no conectado con anon key' };
+  }
+  const resFirma = await fetchAdminAutenticado('/api/admin/storage/signed-upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bucket, path: filePath }),
+  });
+  const dataFirma = await resFirma.json();
+  if (!dataFirma?.success) {
+    return { path: '', error: dataFirma?.error || 'No se pudo autorizar la subida (¿sesión de admin vencida?)' };
   }
 
   const { data, error } = await client.storage
-    .from('fotos-hd')
-    .upload(filePath, file, {
-      upsert: true,
-      contentType: file.type || 'image/jpeg'
+    .from(bucket)
+    .uploadToSignedUrl(dataFirma.path, dataFirma.token, file, {
+      contentType: (file as File).type || 'image/jpeg',
     });
 
   if (error) {
     return { path: '', error: error.message };
   }
   return { path: data.path };
+}
+
+/**
+ * Upload an original High Resolution photo or ZIP to private 'fotos-hd' bucket
+ */
+export async function uploadFotoHD(file: File | Blob, filePath: string): Promise<{ path: string; error?: string }> {
+  return subirConUrlFirmada('fotos-hd', file, filePath);
 }
 
 /**
@@ -281,40 +306,24 @@ export async function uploadFotoWeb(file: File | Blob, filePath: string): Promis
     return { publicUrl: '', error: 'Supabase no conectado con anon key' };
   }
 
-  const { data, error } = await client.storage
-    .from('fotos-web')
-    .upload(filePath, file, {
-      upsert: true,
-      contentType: file.type || 'image/jpeg'
-    });
-
-  if (error) {
-    return { publicUrl: '', error: error.message };
+  const resultado = await subirConUrlFirmada('fotos-web', file, filePath);
+  if (resultado.error) {
+    return { publicUrl: '', error: resultado.error };
   }
 
   const { data: publicUrlData } = client.storage
     .from('fotos-web')
-    .getPublicUrl(data.path);
+    .getPublicUrl(resultado.path);
 
   return { publicUrl: publicUrlData.publicUrl };
 }
 
-/**
- * Generate a signed temporary download URL for an HD original photo (only for parents with paid orders)
- */
-export async function getSignedDownloadUrl(storagePath: string, expiresIn = 60 * 60 * 24 * 7): Promise<string | null> {
-  const client = getSupabase();
-  if (!client) return null;
-
-  try {
-    const { data, error } = await client.storage
-      .from('fotos-hd')
-      .createSignedUrl(storagePath, expiresIn);
-
-    if (error || !data?.signedUrl) return null;
-    return data.signedUrl;
-  } catch (err) {
-    console.error('Error generating signed URL:', err);
-    return null;
-  }
-}
+// Nota (auditoría 2026-09-09): existía acá una función "getSignedDownloadUrl" pensada para
+// generar un link de descarga de una foto HD directo con la clave anónima del navegador —
+// nunca llegó a usarse en ningún lugar del código (se confirmó buscando todos sus llamadores),
+// pero para que hubiera funcionado el bucket 'fotos-hd' habría necesitado permitir LECTURA
+// pública, que es exactamente el agujero que se cerró (cualquiera podía descargar todas las
+// fotos originales gratis). Se quita: si en el futuro hace falta mandarle a una familia un
+// link de descarga de su HD ya pago, hay que generarlo del lado del servidor (con la Service
+// Role Key, protegido detrás de una verificación real de que ese pedido está pagado), nunca
+// con la clave anónima del navegador.
