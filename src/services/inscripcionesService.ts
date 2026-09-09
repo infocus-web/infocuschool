@@ -179,7 +179,13 @@ function mapearFilaPadron(row: any): FilaPadron {
 export interface ResultadoValidarInscripcion {
   success: boolean;
   estado?: EstadoInscripcion;
-  codigoAcceso?: string | null;
+  /**
+   * Auditoría 2026-09-09: el código de acceso real ya NO viaja acá (ver server.ts). Cuando la
+   * inscripción se aprueba automáticamente (o se reenvía a una familia ya aprobada), el código
+   * se manda sólo por correo al email ya validado contra el padrón — nunca en esta respuesta.
+   */
+  emailEnviado?: boolean;
+  emailDestino?: string | null;
   inscripcion?: InscripcionFamilia;
   error?: string;
 }
@@ -211,7 +217,7 @@ export async function validarEInscribirFamilia(datos: {
     }
     const inscripcion = mapearFilaSupabaseAInscripcion(data.inscripcion);
     guardarFamiliaActiva(inscripcion);
-    return { success: true, estado: data.estado, codigoAcceso: data.codigoAcceso, inscripcion };
+    return { success: true, estado: data.estado, emailEnviado: data.emailEnviado, emailDestino: data.emailDestino, inscripcion };
   } catch (err: any) {
     console.error('Error al validar/inscribir familia:', err);
     return { success: false, error: 'Error al conectar con el servidor. Verificá tu conexión e intentá de nuevo.' };
@@ -219,23 +225,49 @@ export async function validarEInscribirFamilia(datos: {
 }
 
 /**
- * Busca la inscripción propia por código de acceso, teléfono o email (endpoint público,
- * sólo devuelve como máximo un registro propio, nunca la tabla completa).
+ * Resultado de buscar la propia inscripción por código, teléfono o email (endpoint público).
+ *
+ * Auditoría 2026-09-09 (revisión a fondo, hallazgo reportado por Pablo): antes, buscar por
+ * teléfono o email de una familia ya aprobada devolvía directo su código de acceso real — el
+ * teléfono de un padre empadronado no es secreto, así que cualquiera que lo supiera podía
+ * "entrar" con él. Ahora, sólo escribir el código real (que sólo se entrega por WhatsApp/email)
+ * devuelve la familia completa (`encontrada: true`). Si se buscó por teléfono/email y esa familia
+ * YA tiene un código asignado, esta ruta nunca lo devuelve: como mucho reenvía el código al
+ * correo de confianza ya guardado (`yaRegistrado` + `emailReenviado` + `emailDestino` parcial).
  */
-export async function buscarMiInscripcion(query: string): Promise<InscripcionFamilia | null> {
+export interface ResultadoBuscarInscripcion {
+  encontrada: boolean;
+  inscripcion?: InscripcionFamilia;
+  yaRegistrado?: boolean;
+  emailReenviado?: boolean;
+  emailDestino?: string | null;
+}
+
+export async function buscarMiInscripcion(query: string): Promise<ResultadoBuscarInscripcion> {
   try {
-    if (!query || query.trim().length < 3) return null;
+    if (!query || query.trim().length < 3) return { encontrada: false };
     const res = await fetch('/api/inscripciones/buscar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: query.trim() })
     });
     const data = await res.json();
-    if (!res.ok || !data.success || !data.inscripcion) return null;
-    return mapearFilaSupabaseAInscripcion(data.inscripcion);
+    if (!res.ok) return { encontrada: false };
+    if (data.success && data.inscripcion) {
+      return { encontrada: true, inscripcion: mapearFilaSupabaseAInscripcion(data.inscripcion) };
+    }
+    if (data.yaRegistrado) {
+      return {
+        encontrada: false,
+        yaRegistrado: true,
+        emailReenviado: Boolean(data.emailReenviado),
+        emailDestino: data.emailDestino || null
+      };
+    }
+    return { encontrada: false };
   } catch (err) {
     console.error('Error al buscar inscripción:', err);
-    return null;
+    return { encontrada: false };
   }
 }
 
