@@ -40,6 +40,7 @@ import {
   Users,
   RefreshCw,
   Send,
+  Images,
 } from 'lucide-react';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
@@ -515,6 +516,15 @@ export default function PortalFamiliasModal({
   const totalCopiasExtrasCantidad = extraCarpetas;
   const precioCopiasExtras = extraCarpetas * PRECIO_CARPETA_EXTRA;
   const total = precioBase + precioCopiasExtras;
+
+  // Cuántas de las 3 fotos del pack están realmente elegidas (es decir, la selección apunta a una
+  // foto que existe de verdad en esta galería, no sólo un ID que quedó de otra galería/curso). El
+  // badge de "X de 3 fotos seleccionadas" mostraba siempre "3 de 3" fijo, sin importar si el curso
+  // todavía no tenía cargada alguna de las 3 categorías.
+  const fotoGrupalSeleccionadaValida = fotosDisponibles.some((f) => f.id === fotoSeleccionadaGrupal && f.categoria === 'grupal');
+  const fotoIndividualSeleccionadaValida = fotosDisponibles.some((f) => f.id === fotoSeleccionadaIndividual && f.categoria === 'individual');
+  const fotoDocenteSeleccionadaValida = fotosDisponibles.some((f) => f.id === fotoSeleccionadaDocente && f.categoria === 'docente');
+  const cantidadFotosPackSeleccionadas = [fotoGrupalSeleccionadaValida, fotoIndividualSeleccionadaValida, fotoDocenteSeleccionadaValida].filter(Boolean).length;
 
   // Handlers
   const handleIngresarCodigo = async () => {
@@ -1343,14 +1353,18 @@ export default function PortalFamiliasModal({
                       Elegí las 3 tomas que integran tu recuerdo escolar: 1 grupal, 1 individual y 1 con la seño.
                     </p>
                   </div>
-                  <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold shrink-0 self-start sm:self-auto flex items-center gap-1.5">
-                    <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>3 de 3 fotos seleccionadas</span>
+                  <span className={`px-3 py-1 rounded-full border text-xs font-bold shrink-0 self-start sm:self-auto flex items-center gap-1.5 ${
+                    cantidadFotosPackSeleccionadas === 3
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                  }`}>
+                    <CheckCheck className={`w-3.5 h-3.5 ${cantidadFotosPackSeleccionadas === 3 ? 'text-emerald-400' : 'text-amber-400'}`} />
+                    <span>{cantidadFotosPackSeleccionadas} de 3 fotos seleccionadas</span>
                   </span>
                 </div>
 
-                {/* 3 Slots */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 text-left">
+                {/* 3 Slots + Otras Fotos (mismo estilo, para que se vea igual de accesible que las 3 del pack) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1 text-left">
                   {/* Slot 1: Grupal */}
                   <div
                     onClick={() => setCategoriaActiva('grupal')}
@@ -1401,7 +1415,7 @@ export default function PortalFamiliasModal({
                         Foto 2 de 3 (Retrato 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo?.split(' - ')[1] || fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo || 'Retrato Individual'}
+                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo?.split(' - ')[0] || 'Retrato Individual'}
                       </p>
                       <span className="text-[10px] text-slate-400">Clic para cambiar toma</span>
                     </div>
@@ -1434,13 +1448,35 @@ export default function PortalFamiliasModal({
                       <span className="text-[10px] text-slate-400">Clic para cambiar</span>
                     </div>
                   </div>
+
+                  {/* Slot 4: Otras Fotos — mismo tamaño y lugar que los 3 del pack (antes era un
+                      botón aparte, más chico y menos visible), pero con estilo distinto (punteado,
+                      sin check) para que se note que NO forma parte de las 3 fotos incluidas. */}
+                  <div
+                    onClick={() => setCategoriaActiva('patio')}
+                    className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border border-dashed ${
+                      categoriaActiva === 'patio' ? 'border-amber-400 ring-1 ring-amber-400/40 bg-slate-800/70' : 'border-slate-600 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="w-13 h-13 rounded-lg shrink-0 bg-slate-950/60 border border-slate-700 flex items-center justify-center">
+                      <Images className="w-5 h-5 text-slate-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
+                        Opcional, aparte del pack
+                      </span>
+                      <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
+                        Otras Fotos
+                      </p>
+                      <span className="text-[10px] text-slate-400">Actos, eventos, salidas...</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Debajo del panel de arriba: título de la categoría que se está mostrando +
-                  acceso a "Otras Fotos" (única categoría que no tiene su propio slot arriba, porque
-                  no forma parte de las 3 fotos incluidas en el paquete). Antes acá había 4 botones
-                  que repetían las mismas 3 categorías de arriba; se simplificó para evitar la confusión. */}
+              {/* Debajo del panel de arriba: sólo el título de la categoría que se está mostrando —
+                  el acceso a las 4 categorías (3 del pack + Otras Fotos) ya está arriba, con el
+                  mismo tamaño y estilo para las 4. */}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
                 <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                   {categoriaActiva === 'patio'
@@ -1448,25 +1484,12 @@ export default function PortalFamiliasModal({
                     : 'Elegí tu toma tocando una foto'}
                 </h5>
 
-                <div className="flex items-center gap-2">
-                  {extraCarpetas > 0 && (
-                    <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-1.5 shadow-2xs">
-                      <Copy className="w-3.5 h-3.5 text-amber-700" />
-                      <span>{extraCarpetas} carpeta(s) extra(s) agregada(s)</span>
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setCategoriaActiva(categoriaActiva === 'patio' ? 'individual' : 'patio')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      categoriaActiva === 'patio'
-                        ? 'bg-slate-900 text-white shadow-xs'
-                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                    }`}
-                  >
-                    {categoriaActiva === 'patio' ? '← Volver a las 3 fotos del paquete' : 'Otras Fotos'}
-                  </button>
-                </div>
+                {extraCarpetas > 0 && (
+                  <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-1.5 shadow-2xs">
+                    <Copy className="w-3.5 h-3.5 text-amber-700" />
+                    <span>{extraCarpetas} carpeta(s) extra(s) agregada(s)</span>
+                  </span>
+                )}
               </div>
 
               {/* Photo Cards Grid */}
