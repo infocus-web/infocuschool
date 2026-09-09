@@ -19,6 +19,46 @@ app.set('trust proxy', true);
 
 app.use(express.json());
 
+// Límite de intentos básico, en memoria, para frenar fuerza bruta / spam en endpoints
+// públicos sensibles (login de admin, búsqueda de inscripción por teléfono/email, creación
+// de preferencias de pago, solicitudes de código). Auditoría 2026-09-09: hasta ahora ningún
+// endpoint tenía ningún límite de frecuencia.
+//
+// OJO — limitación conocida: en Vercel (serverless) cada instancia puede tener su propia
+// memoria, así que esto no es un límite global infalible contra un atacante distribuido;
+// sí frena intentos manuales y scripts simples desde una misma conexión, que es el 90% del
+// riesgo real hoy. Si en el futuro esto pasa a preocupar más, lo correcto es un store
+// compartido (Redis/Upstash) en vez de memoria del proceso.
+const intentosPorClave = new Map<string, { count: number; desde: number }>();
+function limitarFrecuencia(nombre: string, maxIntentos: number, ventanaMs: number) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip || 'desconocida';
+    const clave = `${nombre}:${ip}`;
+    const ahora = Date.now();
+    const entrada = intentosPorClave.get(clave);
+    if (!entrada || ahora - entrada.desde > ventanaMs) {
+      intentosPorClave.set(clave, { count: 1, desde: ahora });
+      return next();
+    }
+    entrada.count += 1;
+    if (entrada.count > maxIntentos) {
+      const segundosRestantes = Math.ceil((ventanaMs - (ahora - entrada.desde)) / 1000);
+      return res.status(429).json({
+        success: false,
+        error: `Demasiados intentos. Probá de nuevo en ${segundosRestantes} segundos.`,
+      });
+    }
+    return next();
+  };
+}
+// Limpieza periódica para no acumular memoria indefinidamente en un proceso de larga vida.
+setInterval(() => {
+  const ahora = Date.now();
+  for (const [clave, entrada] of intentosPorClave.entries()) {
+    if (ahora - entrada.desde > 30 * 60 * 1000) intentosPorClave.delete(clave);
+  }
+}, 5 * 60 * 1000).unref?.();
+
 // ==============================================================================
 // 1. CONFIGURACIÓN DE SERVICIOS Y CLIENTES
 // ==============================================================================
@@ -146,7 +186,7 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
 // ==============================================================================
 
 // Login de administrador con PIN
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', limitarFrecuencia('admin-login', 8, 10 * 60 * 1000), (req, res) => {
   const adminPin = getAdminPin();
   if (!adminPin) {
     return res.status(500).json({
@@ -211,6 +251,49 @@ app.get('/api/admin/verify', (req, res) => {
 // 4. RUTAS ADMINISTRATIVAS PROTEGIDAS (SUPABASE SERVICE ROLE)
 // ==============================================================================
 
+// Guarda valores de configuración pública del sitio (hoy: números de WhatsApp de contacto).
+// Antes el panel de admin escribía esto directo desde el navegador contra Supabase con la
+// clave anónima (pública, embebida igual en el bundle), protegido solo por una política de
+// RLS que en los hechos decía "permitir a cualquiera" (for all using (true) with check (true))
+// sin pedir ningún login — cualquiera que supiera el nombre de la tabla podía reescribir el
+// WhatsApp de contacto del sitio sin pasar nunca por el panel. Ahora el guardado pasa por acá,
+// protegido con sesión de admin, y la política pública de escritura se cierra en Supabase (la
+// lectura pública de esta tabla se mantiene, la necesita el sitio para mostrar el WhatsApp).
+// Ver auditoría 2026-09-09.
+app.post('/api/admin/configuracion', requireAdminAuth, async (req, res) => {
+  try {
+    const { registros } = req.body || {};
+    if (!Array.isArray(registros) || registros.length === 0) {
+      return res.status(400).json({ success: false, error: 'Se requiere un array "registros" con al menos un elemento.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const filas = registros
+      .filter((r: any) => r && typeof r.clave === 'string' && r.clave.trim())
+      .map((r: any) => ({
+        clave: String(r.clave).trim(),
+        valor: r.valor === undefined || r.valor === null ? '' : String(r.valor),
+        datos_extra: r.datos_extra && typeof r.datos_extra === 'object' ? r.datos_extra : {},
+        updated_at: new Date().toISOString(),
+      }));
+
+    if (filas.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ningún registro válido para guardar.' });
+    }
+
+    const { error } = await supabase.from('configuracion').upsert(filas, { onConflict: 'clave' });
+    if (error) throw error;
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al guardar configuración' });
+  }
+});
+
 // Obtener todas las familias con datos de contacto (restringido al admin)
 app.get('/api/admin/familias', requireAdminAuth, async (req, res) => {
   try {
@@ -251,15 +334,41 @@ app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => 
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
 
+    // OJO: la tabla "pedidos" solo tiene UNA columna de estado ("estado": pendiente_pago |
+    // pagado | entregado | cancelado) — no existen columnas separadas "estado_pago" ni
+    // "estado_entrega". Antes este endpoint escribía en esas dos columnas inexistentes: como
+    // Postgres rechaza el UPDATE completo si cualquiera de las columnas no existe, este botón
+    // del panel (marcar pedido pagado/entregado a mano, pensado sobre todo para pagos en
+    // efectivo) nunca guardaba nada en Supabase, aunque sí quedara guardado en el localStorage
+    // del navegador del admin. Se mapea todo al único estado real. Ver auditoría 2026-09-09.
+    let nuevoEstado: string | undefined;
+    if (estadoEntrega === 'entregado') {
+      nuevoEstado = 'entregado';
+    } else if (estadoPago === 'aprobado' || estadoPago === 'pagado') {
+      nuevoEstado = 'pagado';
+    } else if (estadoPago === 'rechazado' || estadoPago === 'cancelado') {
+      nuevoEstado = 'cancelado';
+    } else if (estadoPago === 'pendiente') {
+      nuevoEstado = 'pendiente_pago';
+    }
+
     const updates: Record<string, any> = {
       updated_at: new Date().toISOString(),
     };
-    if (estadoPago) {
-      updates.estado_pago = estadoPago;
-      updates.estado = estadoPago === 'aprobado' ? 'pagado' : 'pendiente';
+    if (nuevoEstado) {
+      updates.estado = nuevoEstado;
     }
-    if (estadoEntrega) {
-      updates.estado_entrega = estadoEntrega;
+
+    if (Object.keys(updates).length === 1) {
+      // Llegó un estado intermedio que hoy no tiene columna propia en la base (ej: estados de
+      // laboratorio internos como "laboratorio_listo") — no hay nada real para persistir acá,
+      // así que no se hace ningún UPDATE. El panel sigue funcionando con su propio localStorage
+      // para esa granularidad interna.
+      return res.json({
+        success: true,
+        pedido: null,
+        warning: 'Estado intermedio no persistido en Supabase (sin columna propia para esto).',
+      });
     }
 
     const { data, error } = await supabase.from('pedidos').update(updates).eq('id', id).select();
@@ -620,6 +729,123 @@ app.delete('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respo
     return res.json({ success: true });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al limpiar el catálogo de fotos' });
+  }
+});
+
+// ==============================================================================
+// 4B. STORAGE DE FOTOS — SUBIDA/BORRADO PROTEGIDOS (auditoría 2026-09-09)
+// ==============================================================================
+// Antes de esto, el panel de admin subía y borraba archivos en los buckets 'fotos-web' y
+// 'fotos-hd' escribiendo directo desde el navegador con la clave anónima (pública, la misma
+// que cualquiera puede leer del bundle del sitio). La única barrera era el PIN de admin en la
+// interfaz — pero eso no protege nada del lado de la base: las políticas de RLS de
+// storage.objects para esos buckets decían literalmente "permitir a cualquiera, sin login,
+// subir/actualizar/borrar" (roles anon/authenticated, sin ninguna condición real). Además el
+// bucket 'fotos-hd' (las fotos originales de alta resolución, el producto pago) tenía una
+// política de LECTURA pública para el rol anon: cualquiera podía descargar TODAS las fotos
+// originales gratis, sin comprar nada. Combinado con el permiso de borrado público, cualquier
+// visitante también podía borrar TODAS las fotos del negocio (web y HD) de forma permanente,
+// sin que quedara ninguna copia — el peor escenario posible para una empresa de fotografía.
+// Ver auditoría 2026-09-09.
+//
+// La solución: estas operaciones ahora pasan siempre por acá (con sesión de admin) y usan la
+// Service Role Key del servidor, que no necesita ninguna política pública en RLS. Las subidas
+// grandes de fotos (pueden ser decenas de MB) no conviene mandarlas dentro de un JSON al
+// servidor (los límites de tamaño de request de Vercel son bastante más chicos que eso) —así
+// que para subir, el servidor solo genera una "signed upload URL" de un solo uso (con permiso
+// ya verificado), y el navegador sube el archivo directo a Supabase Storage con esa URL. La
+// política pública de INSERT/UPDATE/DELETE/SELECT en los buckets se cierra por completo del
+// lado de Supabase — ver migración aplicada en la auditoría.
+
+const BUCKETS_FOTOS_PERMITIDOS = new Set(['fotos-web', 'fotos-hd']);
+
+// Genera una URL de subida firmada y de un solo uso para un archivo puntual. El navegador la
+// usa para subir el archivo directo a Storage (client.storage.from(bucket).uploadToSignedUrl),
+// sin necesitar ningún permiso público de escritura en el bucket.
+app.post('/api/admin/storage/signed-upload-url', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { bucket, path: rutaArchivo } = req.body || {};
+    if (!BUCKETS_FOTOS_PERMITIDOS.has(bucket)) {
+      return res.status(400).json({ success: false, error: 'Bucket no permitido' });
+    }
+    if (!rutaArchivo || typeof rutaArchivo !== 'string') {
+      return res.status(400).json({ success: false, error: 'Falta la ruta del archivo' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase.storage.from(bucket).createSignedUploadUrl(rutaArchivo, { upsert: true } as any);
+    if (error) throw error;
+    return res.json({ success: true, signedUrl: data.signedUrl, token: data.token, path: data.path });
+  } catch (err: any) {
+    console.error('Error al generar URL de subida firmada:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al generar URL de subida' });
+  }
+});
+
+// Borra archivos puntuales de un bucket (usado al eliminar una foto individual del panel).
+app.post('/api/admin/storage/eliminar-archivos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { bucket, paths } = req.body || {};
+    if (!BUCKETS_FOTOS_PERMITIDOS.has(bucket)) {
+      return res.status(400).json({ success: false, error: 'Bucket no permitido' });
+    }
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return res.json({ success: true, eliminados: 0 });
+    }
+    const rutasValidas = paths.filter((p: any) => typeof p === 'string' && p.trim()).slice(0, 200);
+    if (rutasValidas.length === 0) {
+      return res.json({ success: true, eliminados: 0 });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { error } = await supabase.storage.from(bucket).remove(rutasValidas);
+    if (error) throw error;
+    return res.json({ success: true, eliminados: rutasValidas.length });
+  } catch (err: any) {
+    console.error('Error al eliminar archivos de storage:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar archivos' });
+  }
+});
+
+// Vacía por completo un bucket (botón "Limpiar Supabase" del panel, antes de subir un lote nuevo).
+app.post('/api/admin/storage/limpiar-bucket', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { bucket, prefix } = req.body || {};
+    if (!BUCKETS_FOTOS_PERMITIDOS.has(bucket)) {
+      return res.status(400).json({ success: false, error: 'Bucket no permitido' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const prefijo = typeof prefix === 'string' ? prefix : '';
+
+    let eliminados = 0;
+    // Se pagina por si hay más de 100 archivos (límite por defecto de list()); tope defensivo
+    // de 200 vueltas (20.000 archivos) para nunca quedar en un loop infinito.
+    for (let vuelta = 0; vuelta < 200; vuelta++) {
+      const { data: archivos, error: errorList } = await supabase.storage.from(bucket).list(prefijo, { limit: 100 });
+      if (errorList) throw errorList;
+      if (!archivos || archivos.length === 0) break;
+
+      const rutas = archivos.filter((f: any) => f.id).map((f: any) => (prefijo ? `${prefijo}/${f.name}` : f.name));
+      if (rutas.length === 0) break;
+
+      const { error: errorRemove } = await supabase.storage.from(bucket).remove(rutas);
+      if (errorRemove) throw errorRemove;
+      eliminados += rutas.length;
+
+      if (archivos.length < 100) break;
+    }
+
+    return res.json({ success: true, eliminados });
+  } catch (err: any) {
+    console.error('Error al limpiar bucket de storage:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al limpiar el bucket' });
   }
 });
 
@@ -1233,7 +1459,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
 // Recuperar mi inscripción por teléfono, email o código (público). Devuelve como máximo UN registro
 // propio — nunca la tabla completa — y usa siempre comparaciones exactas/parametrizadas (nada de
 // interpolar el texto del usuario en un filtro .or() crudo, que sería explotable).
-app.post('/api/inscripciones/buscar', async (req: Request, res: Response) => {
+app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 15, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { query } = req.body || {};
     const q = String(query || '').trim();
@@ -1262,9 +1488,18 @@ app.post('/api/inscripciones/buscar', async (req: Request, res: Response) => {
     await tryEq('codigo_familiar', qUpper);
     await tryEq('email', qEmail);
 
-    if (!encontrada && qTel.length >= 6) {
-      const { data } = await supabase.from('inscripciones').select('*').ilike('telefono_whatsapp', `%${qTel}%`).limit(1);
-      if (data && data.length > 0) encontrada = data[0];
+    // Auditoría 2026-09-09: antes esto buscaba con ilike '%qTel%' aceptando desde 6 dígitos
+    // sueltos en cualquier parte del teléfono guardado — eso es fuerza-bruteable (basta con
+    // probar secuencias de 6 dígitos) y devuelve datos + código de acceso de OTRA familia si
+    // hay coincidencia parcial casual. Ahora exige el teléfono completo (mínimo 8 dígitos) y
+    // sólo lo compara, ya normalizado, contra el final exacto del teléfono guardado — no
+    // contra cualquier subcadena.
+    if (!encontrada && qTel.length >= 8) {
+      const sufijo = qTel.slice(-8);
+      const { data } = await supabase.from('inscripciones').select('*').ilike('telefono_whatsapp', `%${sufijo}`).limit(5);
+      if (data && data.length > 0) {
+        encontrada = data.find((i: any) => normalizarTelefonoServidor(i.telefono_whatsapp || '').endsWith(qTel.length >= 10 ? qTel : sufijo)) || null;
+      }
     }
 
     if (!encontrada) {
@@ -1690,7 +1925,7 @@ app.post('/api/padron/link/:codigo', async (req: Request, res: Response) => {
 // ==============================================================================
 
 // Envío público: cualquier familia puede dejar su solicitud, sin login
-app.post('/api/solicitudes-codigo', async (req: Request, res: Response) => {
+app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { nombreSolicitante, contacto, alumnoNombre, colegioId, colegioNombre, grado, division, turno, mensaje } = req.body || {};
 
@@ -2154,19 +2389,58 @@ app.post(['/api/resend/test', '/resend/test'], requireAdminAuth, async (req, res
 // 7. INTEGRACIÓN MERCADO PAGO CHECKOUT PRO Y WEBHOOKS
 // ==============================================================================
 
+// Precios oficiales de cada kit (deben coincidir siempre con src/data/colegiosData.ts —
+// KITS_DISPONIBLES). Es la fuente de verdad del lado del servidor: antes el monto a cobrar
+// (unit_price) se armaba directamente con el "total" que mandaba el navegador, sin volver a
+// calcularlo acá. Cualquiera podía interceptar el pedido a este endpoint (sin login, es la
+// creación de la preferencia de pago) y cambiar "total" a $1 antes de que Mercado Pago generara
+// el link de cobro — el pago hubiera sido válido por ese monto. Ver auditoría 2026-09-09.
+const PRECIOS_KITS: Record<string, number> = {
+  'kit-clasico': 30000,
+  'kit-digital': 15000,
+  'kit-evento-suelto': 5000,
+};
+const PRECIO_CARPETA_EXTRA = 15000;
+const MAX_CARPETAS_EXTRA = 20; // tope defensivo, no hay caso de uso real por encima de esto
+
+// Única función que calcula lo que se cobra por un pedido — la usan tanto la creación de la
+// preferencia de Mercado Pago como el registro del pedido en la base (ver auditoría
+// 2026-09-09, punto de gestión "un solo lugar de verdad para los precios"). Devuelve null si
+// el kit no se reconoce.
+function calcularTotalPedido(kitId: string, carpetasExtras: unknown): number | null {
+  const precioBaseKit = PRECIOS_KITS[kitId];
+  if (precioBaseKit === undefined) return null;
+  const extrasValidados = Math.min(
+    MAX_CARPETAS_EXTRA,
+    Math.max(0, Math.floor(Number(carpetasExtras) || 0))
+  );
+  return precioBaseKit + extrasValidados * PRECIO_CARPETA_EXTRA;
+}
+
 // Crear preferencia de pago en Mercado Pago
-app.post('/api/mercadopago/crear-preferencia', async (req, res) => {
+app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferencia', 20, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId,
+      kitId,
       kitNombre,
       alumnoNombre,
       colegioNombre,
-      total,
+      carpetasExtras,
       tutorNombre,
       tutorEmail,
       tutorTelefono,
     } = req.body;
+
+    // El monto a cobrar SIEMPRE se calcula acá, del lado del servidor — nunca se usa el
+    // "total" que pueda mandar el cliente, aunque venga en el body.
+    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
+    if (totalCalculado === null) {
+      return res.status(400).json({
+        success: false,
+        error: 'Kit no reconocido. No se puede calcular el precio a cobrar.',
+      });
+    }
 
     const mpConfig = getMercadoPagoConfig();
     if (!mpConfig) {
@@ -2195,7 +2469,7 @@ app.post('/api/mercadopago/crear-preferencia', async (req, res) => {
             title: `Retrato Escolar 2026 - ${kitNombre || 'Kit Fotográfico'} (${alumnoNombre || 'Alumno'})`,
             description: `Fotos escolares para ${alumnoNombre} en ${colegioNombre}`,
             quantity: 1,
-            unit_price: Number(total) || 1,
+            unit_price: totalCalculado,
             currency_id: 'ARS',
           },
         ],
@@ -2235,6 +2509,87 @@ app.post('/api/mercadopago/crear-preferencia', async (req, res) => {
   }
 });
 
+// Registra un pedido nuevo (lo llama el Portal de Familias al iniciar el checkout, antes de
+// pagar). Auditoría 2026-09-09: antes esto lo hacía el NAVEGADOR directo contra Supabase con la
+// clave anónima (insertando en 'familias' y 'pedidos'), y esas dos tablas tenían políticas de
+// RLS que decían "permitir INSERT a cualquiera, sin ninguna condición" (with_check: true, para
+// los roles anon/authenticated e incluso para "public"). Además 'familias' tenía una política
+// de SELECT igual de abierta ("familias_select_public_temporal", sin ningún filtro) que dejaba
+// leer el nombre y WhatsApp de TODAS las familias a cualquiera. En conjunto, cualquiera podía:
+// (1) leer el listado completo de clientes (nombre + WhatsApp) sin ningún login, y (2) insertar
+// pedidos falsos directo contra la API de Supabase (sin pasar por este sitio ni por Mercado
+// Pago), con cualquier "total" o "estado" que quisiera — incluyendo "pagado". El PIN de admin
+// del panel nunca protegió nada de esto, porque el navegador de CUALQUIER visitante ya tenía
+// todo lo que hacía falta (la clave anónima pública) para escribir directo. Ahora esto pasa
+// por acá: el total se recalcula siempre del lado del servidor (nunca se confía en un total
+// mandado por el cliente) y el pedido SIEMPRE nace en estado "pendiente_pago" — ningún cliente
+// puede crear un pedido ya marcado como pagado. Las políticas públicas de escritura/lectura de
+// 'familias' y 'pedidos' se cerraron del lado de Supabase (ver migración de la auditoría).
+app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const { pedidoId, kitId, carpetasExtras, tutorNombre, tutorTelefono, metodoPago } = req.body || {};
+
+    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
+    if (totalCalculado === null) {
+      return res.status(400).json({ success: false, error: 'Kit no reconocido. No se puede registrar el pedido.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    let familiaId: string | null = null;
+    const nombreTutor = String(tutorNombre || '').trim();
+    const telefonoTutor = String(tutorTelefono || '').trim();
+    if (nombreTutor || telefonoTutor) {
+      const { data: famData, error: famError } = await supabase
+        .from('familias')
+        .insert({
+          nombre: (nombreTutor || 'Familia').slice(0, 200),
+          whatsapp: telefonoTutor.slice(0, 40),
+        })
+        .select('id')
+        .single();
+      if (!famError && famData) familiaId = famData.id;
+    }
+
+    const tipoKit = kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
+    const extrasValidados = Math.min(MAX_CARPETAS_EXTRA, Math.max(0, Math.floor(Number(carpetasExtras) || 0)));
+    const metodosValidos = ['mercadopago', 'transferencia', 'efectivo'];
+    const metodoPagoValido = metodosValidos.includes(metodoPago) ? metodoPago : 'mercadopago';
+
+    const filaPedido: Record<string, any> = {
+      familia_id: familiaId,
+      tipo_kit: tipoKit,
+      // Nace SIEMPRE en pendiente_pago — nunca se acepta un "estado" mandado por el cliente.
+      // Sólo el webhook de Mercado Pago o el panel de admin (con sesión) lo pueden pasar a
+      // "pagado". Ver comentario de auditoría arriba de este endpoint.
+      estado: 'pendiente_pago',
+      total: totalCalculado,
+      carpetas_impresas: extrasValidados + 1,
+      metodo_pago: metodoPagoValido,
+    };
+    // Se respeta el UUID generado en el navegador (para poder correlacionarlo con el tracking
+    // local y con Mercado Pago vía external_reference) sólo si tiene forma de UUID válido.
+    if (typeof pedidoId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pedidoId)) {
+      filaPedido.id = pedidoId;
+    }
+
+    const { data: pedidoCreado, error: errorPedido } = await supabase
+      .from('pedidos')
+      .insert(filaPedido)
+      .select('id')
+      .single();
+    if (errorPedido) throw errorPedido;
+
+    return res.json({ success: true, pedidoId: pedidoCreado.id, total: totalCalculado });
+  } catch (err: any) {
+    console.error('Error al registrar pedido:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al registrar el pedido' });
+  }
+});
+
 // Webhook de Mercado Pago
 app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) => {
   try {
@@ -2269,8 +2624,14 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             .createHmac('sha256', webhookSecret.trim())
             .update(manifest)
             .digest('hex');
+          // Antes esto solo dejaba un warning en el log y SEGUÍA procesando la notificación
+          // igual. El impacto real de una firma inválida era acotado (después igual se
+          // reconsulta el pago directo contra la API de Mercado Pago con el access token
+          // propio, así que no se puede "inventar" un pago aprobado), pero no hay motivo para
+          // aceptar una notificación que dice no venir de Mercado Pago: se rechaza.
           if (hash !== expectedHash) {
-            console.warn('[Mercado Pago Webhook] Advertencia: La firma x-signature no coincide.');
+            console.warn('[Mercado Pago Webhook] Firma x-signature inválida — notificación rechazada.');
+            return res.status(401).send('Invalid signature');
           }
         }
       }
@@ -2303,6 +2664,10 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
               .update({
                 estado: 'pagado',
                 mp_payment_id: String(paymentId),
+                // Se guarda el monto que realmente cobró Mercado Pago (no el que se haya
+                // calculado o mandado antes), para que "total" en la base siempre refleje la
+                // plata que efectivamente entró — ver auditoría 2026-09-09.
+                total: paymentInfo.transaction_amount ?? undefined,
                 updated_at: new Date().toISOString(),
               })
               .eq('id', pedidoId)
@@ -2371,9 +2736,16 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
       return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
     }
 
+    // OJO: la tabla "pedidos" solo tiene una columna de estado ("estado": pendiente_pago |
+    // pagado | entregado | cancelado) — no existen "estado_pago" ni "mercadopago_payment_id".
+    // Antes este select pedía esas columnas inexistentes, Postgres devolvía error, y este
+    // endpoint (que usa el Portal de Familias para avisar automáticamente "tu pago fue
+    // aprobado" apenas vuelven de Mercado Pago) fallaba siempre con 400 — ninguna familia veía
+    // la confirmación automática, aunque el pago sí se hubiera acreditado bien. Ver auditoría
+    // 2026-09-09.
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, estado, estado_pago, updated_at, mercadopago_payment_id')
+      .select('id, estado, updated_at, mp_payment_id')
       .eq('id', id)
       .maybeSingle();
 
@@ -2385,8 +2757,8 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
     }
 
-    const esAprobado = data.estado_pago === 'aprobado' || data.estado === 'pagado';
-    const esRechazado = data.estado_pago === 'rechazado' || data.estado === 'cancelado';
+    const esAprobado = data.estado === 'pagado' || data.estado === 'entregado';
+    const esRechazado = data.estado === 'cancelado';
 
     return res.json({
       success: true,
