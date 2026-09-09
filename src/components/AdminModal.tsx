@@ -58,6 +58,7 @@ import {
 } from '../services/adminAuthService';
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminPadronTab from './AdminPadronTab';
+import AdminEstadoPagosTab from './AdminEstadoPagosTab';
 import AdminSolicitudesCodigoTab from './AdminSolicitudesCodigoTab';
 import { obtenerSolicitudesCodigoAdmin } from '../services/solicitudesCodigoService';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
@@ -199,7 +200,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'estado-pagos'>('inscriptos');
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -1083,6 +1084,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
                 { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
                 { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})`, icon: Users },
+                { id: 'estado-pagos', label: 'Estado de Pagos por Curso', icon: DollarSign },
                 { id: 'colegios', label: 'Colegios y Códigos', icon: School },
                 { id: 'cerrar-anio', label: 'Cerrar Año', icon: Trash2 },
                 { id: 'whatsapp', label: 'WhatsApp & Widget Flotante', icon: MessageSquare },
@@ -1835,6 +1837,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   </span>
                 </div>
               </div>
+            )}
+            {activeTab === 'estado-pagos' && (
+              <AdminEstadoPagosTab />
             )}
             {activeTab === 'subir' && (
               <AdminLoteFotosTab />
