@@ -1081,6 +1081,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
           /* Authenticated Admin Dashboard */
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
 
+            {/* Barra superior fija (auditoría 2026-09, pedido de Pablo): pestañas + métricas +
+                resumen de kits quedan pegadas arriba al scrollear el contenido de la pestaña
+                activa (por ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding
+                negativos hacen que este bloque llegue hasta los bordes del contenedor con
+                scroll (que tiene su propio padding) para que "top-0" pegue justo arriba. */}
+            <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-white space-y-3 border-b border-slate-200">
+
             {/* Navigation tabs: al inicio del panel, botones azul oscuro con letras
                 amarillas. Antes era una fila con scroll horizontal que escondía la
                 mayoría de las herramientas fuera de la vista. Ahora es una grilla que se
@@ -1168,6 +1175,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
             {/* SECCIÓN RESUMEN DE KITS SELECCIONADOS POR FAMILIAS (SUPABASE DB) */}
             <AdminResumenKitsSection />
+
+            </div>
+            {/* fin barra superior fija */}
 
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
