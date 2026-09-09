@@ -294,6 +294,35 @@ app.post('/api/admin/configuracion', requireAdminAuth, async (req, res) => {
   }
 });
 
+// Nómina real de alumnos (tabla 'alumnos', cargada por el importador de padrón). Antes la
+// pestaña "Nómina 2026" del panel mostraba una lista vieja, escrita a mano en el código
+// (src/data/alumnosData.ts, 211 alumnos de una sola sala de nivel inicial) que no tenía nada
+// que ver con los padrones reales que se van cargando por colegio. Se agrega este endpoint
+// para que el panel muestre la nómina real de Supabase en vez de esa lista fija.
+app.get('/api/admin/alumnos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId } = req.query;
+    let builder = supabase
+      .from('alumnos')
+      .select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni, origen')
+      .order('grado', { ascending: true })
+      .order('division', { ascending: true })
+      .order('numero_lista', { ascending: true, nullsFirst: false });
+    if (typeof colegioId === 'string' && colegioId) {
+      builder = builder.eq('colegio_id', colegioId);
+    }
+    const { data, error } = await builder;
+    if (error) throw error;
+    return res.json({ success: true, alumnos: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener la nómina de alumnos' });
+  }
+});
+
 // Obtener todas las familias con datos de contacto (restringido al admin)
 app.get('/api/admin/familias', requireAdminAuth, async (req, res) => {
   try {
@@ -846,6 +875,289 @@ app.post('/api/admin/storage/limpiar-bucket', requireAdminAuth, async (req: Requ
   } catch (err: any) {
     console.error('Error al limpiar bucket de storage:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al limpiar el bucket' });
+  }
+});
+
+// ==============================================================================
+// 4C. CIERRE DE TEMPORADA ("Cerrar año") — 2026-09-09
+// ==============================================================================
+// Antes de esto, el único botón de limpieza ("Limpiar Supabase", en la pestaña de carga de
+// fotos) sólo vaciaba los buckets de storage y la tabla `fotos`. Nunca tocaba `alumnos`,
+// `familias`, `pedidos`, `pedido_fotos`, `inscripciones`, `padres_autorizados`,
+// `codigos_seccion` ni `solicitudes_codigo` — así que no había forma real de arrancar una
+// temporada nueva sin dejar pegados los alumnos/pedidos/inscripciones del año anterior.
+//
+// Este cierre de año SIEMPRE conserva la tabla `colegios` (el colegio en sí no se borra,
+// sólo los datos de LA TEMPORADA de ese colegio: alumnos, familias, pedidos, fotos,
+// inscripciones, códigos). Se puede aplicar a un colegio puntual, o mandar colegioId="todos"
+// para vaciar la temporada completa de todos los colegios de una sola vez (útil hoy, que
+// sólo hay uno cargado; pensado para cuando haya varios). Es DESTRUCTIVO e IRREVERSIBLE:
+//   1. GET /resumen nunca borra nada — sólo cuenta cuántas filas se verían afectadas, para
+//      que el panel se lo muestre al fotógrafo antes de que decida.
+//   2. POST /ejecutar exige una frase de confirmación exacta (el nombre real del colegio,
+//      verificado del lado del servidor, nunca lo que mande el navegador) — así un clic
+//      accidental o un bug del cliente nunca puede disparar el borrado solo.
+
+async function idsDeColegioParaCierre(
+  supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
+  colegioId: string
+) {
+  const todos = colegioId === 'todos';
+
+  const familiasQuery = supabase.from('familias').select('id');
+  const { data: familias, error: errF } = todos
+    ? await familiasQuery
+    : await familiasQuery.eq('colegio_id', colegioId);
+  if (errF) throw errF;
+
+  const alumnosQuery = supabase.from('alumnos').select('id');
+  const { data: alumnos, error: errA } = todos
+    ? await alumnosQuery
+    : await alumnosQuery.eq('colegio_id', colegioId);
+  if (errA) throw errA;
+
+  const familiaIds: string[] = (familias || []).map((f: any) => f.id);
+  const alumnoIds: string[] = (alumnos || []).map((a: any) => a.id);
+
+  let fotosQuery = supabase.from('fotos').select('id, storage_path, thumb_path, preview_path');
+  if (!todos) {
+    const filtros = [`colegio_id.eq.${colegioId}`];
+    if (alumnoIds.length > 0) filtros.push(`alumno_id.in.(${alumnoIds.join(',')})`);
+    fotosQuery = fotosQuery.or(filtros.join(','));
+  }
+  const { data: fotosData, error: errFo } = await fotosQuery;
+  if (errFo) throw errFo;
+  const fotos = (fotosData || []) as { id: string; storage_path: string | null; thumb_path: string | null; preview_path: string | null }[];
+
+  let pedidosQuery = supabase.from('pedidos').select('id');
+  if (!todos) {
+    const filtros: string[] = [];
+    if (familiaIds.length > 0) filtros.push(`familia_id.in.(${familiaIds.join(',')})`);
+    if (alumnoIds.length > 0) filtros.push(`alumno_id.in.(${alumnoIds.join(',')})`);
+    if (filtros.length === 0) {
+      // Sin familias ni alumnos en este colegio: no puede haber ningún pedido que le pertenezca.
+      pedidosQuery = pedidosQuery.eq('id', '00000000-0000-0000-0000-000000000000');
+    } else {
+      pedidosQuery = pedidosQuery.or(filtros.join(','));
+    }
+  }
+  const { data: pedidosData, error: errP } = await pedidosQuery;
+  if (errP) throw errP;
+
+  return { familiaIds, alumnoIds, fotos, pedidoIds: (pedidosData || []).map((p: any) => p.id) };
+}
+
+// Las miniaturas/vistas ampliadas (thumb_path/preview_path) se guardan como URL pública
+// completa (bucket 'fotos-web'); storage_path (HD) se guarda como ruta relativa dentro de
+// 'fotos-hd'. Esto extrae la ruta relativa real dentro del bucket para poder borrar el
+// archivo físico, sea cual sea el formato en el que haya quedado guardado.
+function extraerPathStorageParaCierre(valor: string | null, bucket: string): string | null {
+  if (!valor) return null;
+  const marcador = `/object/public/${bucket}/`;
+  const idx = valor.indexOf(marcador);
+  if (idx >= 0) return valor.substring(idx + marcador.length);
+  return valor.startsWith('http') ? null : valor;
+}
+
+app.get('/api/admin/cerrar-anio/resumen', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const colegioId = (req.query.colegioId as string) || '';
+    if (!colegioId) {
+      return res.status(400).json({ success: false, error: 'Falta colegioId (o "todos")' });
+    }
+
+    let nombreColegio = 'Todos los colegios';
+    if (colegioId !== 'todos') {
+      const { data: colegio, error: errC } = await supabase
+        .from('colegios')
+        .select('nombre')
+        .eq('id', colegioId)
+        .single();
+      if (errC || !colegio) {
+        return res.status(404).json({ success: false, error: 'Colegio no encontrado' });
+      }
+      nombreColegio = colegio.nombre;
+    }
+
+    const { familiaIds, alumnoIds, fotos, pedidoIds } = await idsDeColegioParaCierre(supabase, colegioId);
+
+    const contarPorColegio = async (tabla: string) => {
+      let q = supabase.from(tabla).select('id', { count: 'exact', head: true });
+      if (colegioId !== 'todos') q = q.eq('colegio_id', colegioId);
+      const { count, error } = await q;
+      if (error) throw error;
+      return count || 0;
+    };
+
+    const [inscripciones, padresAutorizados, codigosSeccion, solicitudesCodigo] = await Promise.all([
+      contarPorColegio('inscripciones'),
+      contarPorColegio('padres_autorizados'),
+      contarPorColegio('codigos_seccion'),
+      contarPorColegio('solicitudes_codigo'),
+    ]);
+
+    let pedidoFotos = 0;
+    if (pedidoIds.length > 0 || fotos.length > 0) {
+      const filtros: string[] = [];
+      if (pedidoIds.length > 0) filtros.push(`pedido_id.in.(${pedidoIds.join(',')})`);
+      if (fotos.length > 0) filtros.push(`foto_id.in.(${fotos.map((f) => f.id).join(',')})`);
+      const { count, error } = await supabase
+        .from('pedido_fotos')
+        .select('id', { count: 'exact', head: true })
+        .or(filtros.join(','));
+      if (error) throw error;
+      pedidoFotos = count || 0;
+    }
+
+    return res.json({
+      success: true,
+      colegioNombre: nombreColegio,
+      resumen: {
+        familias: familiaIds.length,
+        alumnos: alumnoIds.length,
+        fotos: fotos.length,
+        pedidos: pedidoIds.length,
+        pedidoFotos,
+        inscripciones,
+        padresAutorizados,
+        codigosSeccion,
+        solicitudesCodigo,
+      },
+    });
+  } catch (err: any) {
+    console.error('Error al armar el resumen de cierre de año:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al armar el resumen' });
+  }
+});
+
+app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId, confirmacion } = req.body || {};
+    if (!colegioId || typeof colegioId !== 'string') {
+      return res.status(400).json({ success: false, error: 'Falta colegioId (o "todos")' });
+    }
+    if (typeof confirmacion !== 'string' || !confirmacion.trim()) {
+      return res.status(400).json({ success: false, error: 'Falta la frase de confirmación' });
+    }
+
+    const normalizar = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+
+    let fraseEsperada: string;
+    if (colegioId === 'todos') {
+      fraseEsperada = 'cerrar todos los colegios';
+    } else {
+      const { data: colegio, error: errC } = await supabase
+        .from('colegios')
+        .select('nombre')
+        .eq('id', colegioId)
+        .single();
+      if (errC || !colegio) {
+        return res.status(404).json({ success: false, error: 'Colegio no encontrado' });
+      }
+      fraseEsperada = `cerrar ${colegio.nombre}`;
+    }
+
+    if (normalizar(confirmacion) !== normalizar(fraseEsperada)) {
+      return res.status(400).json({
+        success: false,
+        error: `La frase de confirmación no coincide. Tenés que escribir exactamente: "${fraseEsperada.toUpperCase()}"`,
+      });
+    }
+
+    const { familiaIds, alumnoIds, fotos, pedidoIds } = await idsDeColegioParaCierre(supabase, colegioId);
+    const fotoIds = fotos.map((f) => f.id);
+
+    // 1) pedido_fotos (depende de pedidos y fotos)
+    if (pedidoIds.length > 0 || fotoIds.length > 0) {
+      const filtros: string[] = [];
+      if (pedidoIds.length > 0) filtros.push(`pedido_id.in.(${pedidoIds.join(',')})`);
+      if (fotoIds.length > 0) filtros.push(`foto_id.in.(${fotoIds.join(',')})`);
+      const { error } = await supabase.from('pedido_fotos').delete().or(filtros.join(','));
+      if (error) throw error;
+    }
+
+    // 2) pedidos
+    if (pedidoIds.length > 0) {
+      const { error } = await supabase.from('pedidos').delete().in('id', pedidoIds);
+      if (error) throw error;
+    }
+
+    // 3) archivos físicos en storage de las fotos que se van a borrar. Best-effort: si el
+    // borrado físico falla no frenamos el cierre de año (los registros igual se limpian);
+    // los errores quedan listados en la respuesta para que se puedan revisar a mano.
+    const erroresStorage: string[] = [];
+    const rutasHD = fotos.map((f) => f.storage_path).filter((p): p is string => !!p);
+    const rutasWeb = fotos
+      .flatMap((f) => [
+        extraerPathStorageParaCierre(f.thumb_path, 'fotos-web'),
+        extraerPathStorageParaCierre(f.preview_path, 'fotos-web'),
+      ])
+      .filter((p): p is string => !!p);
+    for (const [bucket, rutas] of [
+      ['fotos-hd', rutasHD],
+      ['fotos-web', rutasWeb],
+    ] as const) {
+      for (let i = 0; i < rutas.length; i += 200) {
+        const lote = rutas.slice(i, i + 200);
+        if (lote.length === 0) continue;
+        const { error } = await supabase.storage.from(bucket).remove(lote);
+        if (error) erroresStorage.push(`${bucket}: ${error.message}`);
+      }
+    }
+
+    // 4) fotos
+    if (fotoIds.length > 0) {
+      const { error } = await supabase.from('fotos').delete().in('id', fotoIds);
+      if (error) throw error;
+    }
+
+    // 5) alumnos
+    if (alumnoIds.length > 0) {
+      const { error } = await supabase.from('alumnos').delete().in('id', alumnoIds);
+      if (error) throw error;
+    }
+
+    // 6) familias
+    if (familiaIds.length > 0) {
+      const { error } = await supabase.from('familias').delete().in('id', familiaIds);
+      if (error) throw error;
+    }
+
+    // 7-11) el resto de las tablas de temporada, scopeadas por colegio (o todas si es "todos").
+    // Igual que en /api/admin/fotos (DELETE), .not('id','is',null) es el filtro "matchea todo"
+    // que exige el cliente de Supabase para no permitir un delete() totalmente sin condición.
+    const borrarPorColegio = async (tabla: string) => {
+      const q = supabase.from(tabla).delete();
+      const { error } = colegioId === 'todos' ? await q.not('id', 'is', null) : await q.eq('colegio_id', colegioId);
+      if (error) throw error;
+    };
+    await borrarPorColegio('eventos');
+    await borrarPorColegio('inscripciones');
+    await borrarPorColegio('padres_autorizados');
+    await borrarPorColegio('codigos_seccion');
+    await borrarPorColegio('solicitudes_codigo');
+
+    return res.json({
+      success: true,
+      borrados: {
+        familias: familiaIds.length,
+        alumnos: alumnoIds.length,
+        fotos: fotoIds.length,
+        pedidos: pedidoIds.length,
+      },
+      erroresStorage: erroresStorage.length > 0 ? erroresStorage : undefined,
+    });
+  } catch (err: any) {
+    console.error('Error al ejecutar el cierre de año:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al cerrar el año' });
   }
 });
 
