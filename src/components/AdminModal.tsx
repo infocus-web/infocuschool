@@ -5,7 +5,7 @@ import {
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
   FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe,
-  Pencil, Loader2, Link2
+  Pencil, Loader2, Link2, UploadCloud
 } from 'lucide-react';
 import {
   obtenerConfiguracionWhatsApp,
@@ -59,6 +59,7 @@ import {
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminPadronTab from './AdminPadronTab';
 import AdminEstadoPagosTab from './AdminEstadoPagosTab';
+import AdminImportarAlumnosTab from './AdminImportarAlumnosTab';
 import AdminSolicitudesCodigoTab from './AdminSolicitudesCodigoTab';
 import { obtenerSolicitudesCodigoAdmin } from '../services/solicitudesCodigoService';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
@@ -200,7 +201,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'estado-pagos'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -1084,6 +1085,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
                 { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
                 { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})`, icon: Users },
+                { id: 'importar-alumnos', label: 'Importar Alumnos', icon: UploadCloud },
                 { id: 'estado-pagos', label: 'Estado de Pagos por Curso', icon: DollarSign },
                 { id: 'colegios', label: 'Colegios y Códigos', icon: School },
                 { id: 'cerrar-anio', label: 'Cerrar Año', icon: Trash2 },
@@ -1840,6 +1842,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             )}
             {activeTab === 'estado-pagos' && (
               <AdminEstadoPagosTab />
+            )}
+            {activeTab === 'importar-alumnos' && (
+              <AdminImportarAlumnosTab />
             )}
             {activeTab === 'subir' && (
               <AdminLoteFotosTab />
