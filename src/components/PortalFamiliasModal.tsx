@@ -88,6 +88,7 @@ export default function PortalFamiliasModal({
   const [trackingQuery, setTrackingQuery] = useState('');
   const [searchedOrder, setSearchedOrder] = useState<any | null>(null);
   const [trackingError, setTrackingError] = useState('');
+  const [buscandoSeguimiento, setBuscandoSeguimiento] = useState(false);
 
   // Step 1: School & Student Selection
   const [searchColegio, setSearchColegio] = useState('');
@@ -638,7 +639,6 @@ export default function PortalFamiliasModal({
   // hubiera borrado los datos de este) no encontraba su pedido, aunque estuviera pagado y
   // guardado en Supabase. Ahora se consulta primero al servidor (datos reales); el localStorage
   // queda sólo como respaldo si la consulta al servidor falla (por ejemplo, sin conexión).
-  const [buscandoSeguimiento, setBuscandoSeguimiento] = useState(false);
   const handleConsultarSeguimiento = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     setTrackingError('');
