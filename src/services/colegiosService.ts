@@ -168,6 +168,36 @@ export async function regenerarTokenPadronAdmin(colegioId: string): Promise<{ su
   }
 }
 
+export interface AlumnoNominaReal {
+  id: string;
+  nombre: string;
+  grado: string;
+  division: string;
+  turno: string | null;
+  colegio_id: string | null;
+  numero_lista: number | null;
+  dni: string | null;
+  origen: string | null;
+}
+
+/**
+ * Panel admin: trae la nómina REAL de alumnos (tabla 'alumnos' de Supabase, cargada por el
+ * importador de padrón), no la lista vieja hardcodeada de src/data/alumnosData.ts. Opcionalmente
+ * se puede filtrar por colegioId.
+ */
+export async function obtenerAlumnosNominaAdmin(colegioId?: string): Promise<AlumnoNominaReal[]> {
+  try {
+    const query = colegioId ? `?colegioId=${encodeURIComponent(colegioId)}` : '';
+    const res = await fetchAdminAutenticado(`/api/admin/alumnos${query}`);
+    const data = await res.json();
+    if (!res.ok || !data.success) return [];
+    return data.alumnos || [];
+  } catch (err) {
+    console.error('Error al obtener la nómina de alumnos:', err);
+    return [];
+  }
+}
+
 /**
  * Hook de React para consumir la lista de colegios y reaccionar automáticamente a altas/bajas/ediciones.
  * La lista vive en Supabase: es la misma para todos los visitantes del sitio.
