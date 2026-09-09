@@ -323,6 +323,164 @@ app.get('/api/admin/alumnos', requireAdminAuth, async (req: Request, res: Respon
   }
 });
 
+// Normaliza un nombre para poder comparar "Juan Pérez" con "juan   perez," (sin acentos,
+// mayúsculas, comas/puntos ni espacios de más) — mismo criterio de limpieza que ya se usa
+// para los códigos de curso más arriba en este archivo.
+function normalizarNombreComparable(nombre: unknown): string {
+  return String(nombre || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// La nómina suele cargarse como "Apellido, Nombre" mientras que la familia tipea su propio
+// pedido como "Nombre Apellido" (o en cualquier otro orden) — para no perder esos casos, esta
+// clave alternativa ordena alfabéticamente las palabras del nombre, así "García María José" y
+// "María José García" quedan con la misma clave sin importar el orden en que se escribieron.
+function normalizarNombrePorPalabras(nombre: unknown): string {
+  return normalizarNombreComparable(nombre)
+    .split(' ')
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+}
+
+// Estado de pagos de un colegio/curso puntual: cruza la nómina real de alumnos (tabla
+// 'alumnos') contra los pedidos ya registrados para ese mismo colegio_id (tabla 'pedidos'),
+// para poder ver de un vistazo quién ya pagó y quién todavía falta — pensado para cursos
+// puntuales (ej. actos de egresados) donde el organizador se compromete a una tarifa total
+// fija por todo el curso, y hay que ver cuánto falta para llegar a esa meta.
+// No hay una columna "alumno_id" confiable en pedidos (no se completa al crear el pedido),
+// así que el cruce se hace por nombre normalizado — puede fallar si el nombre cargado en el
+// pedido no coincide textualmente con el de la nómina (ej. errores de tipeo de la familia).
+app.get('/api/admin/colegios/:colegioId/estado-pagos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { colegioId } = req.params;
+    if (!colegioId) {
+      return res.status(400).json({ success: false, error: 'Falta el colegioId' });
+    }
+
+    const [alumnosRes, pedidosRes] = await Promise.all([
+      supabase
+        .from('alumnos')
+        .select('id, nombre, grado, division, turno, numero_lista')
+        .eq('colegio_id', colegioId)
+        .order('grado', { ascending: true })
+        .order('division', { ascending: true })
+        .order('numero_lista', { ascending: true, nullsFirst: false }),
+      supabase
+        .from('pedidos')
+        .select('id, alumno_nombre, alumno_numero_lista, estado, total, kit_nombre, metodo_pago, created_at')
+        .eq('colegio_id', colegioId),
+    ]);
+
+    if (alumnosRes.error) throw alumnosRes.error;
+    if (pedidosRes.error) throw pedidosRes.error;
+
+    const alumnos = alumnosRes.data || [];
+    const pedidos = pedidosRes.data || [];
+
+    // Un pedido cuenta como "pagado" a los fines de este listado si Mercado Pago (o el admin
+    // a mano) ya lo confirmó, o si ya se entregó (lo cual implica que se cobró antes).
+    const ESTADOS_PAGADOS = new Set(['pagado', 'entregado']);
+
+    // Agrupa los pedidos de este colegio por nombre de alumno normalizado. Si un mismo
+    // alumno tiene más de un pedido, se prioriza el pagado (o el más reciente, si hay varios
+    // pagados o ninguno lo está) para no perder de vista los otros pedidos.
+    // Dos mapas: uno por la clave exacta ("garcia maria jose") y otro por las mismas palabras
+    // pero ordenadas alfabéticamente ("garcia jose maria"), para poder emparejar igual aunque
+    // la nómina diga "Apellido, Nombre" y la familia haya tipeado "Nombre Apellido".
+    const pedidosPorNombreExacto = new Map<string, typeof pedidos>();
+    const pedidosPorPalabras = new Map<string, typeof pedidos>();
+    for (const p of pedidos) {
+      const claveExacta = normalizarNombreComparable(p.alumno_nombre);
+      if (!claveExacta) continue;
+      if (!pedidosPorNombreExacto.has(claveExacta)) pedidosPorNombreExacto.set(claveExacta, []);
+      pedidosPorNombreExacto.get(claveExacta)!.push(p);
+
+      const clavePalabras = normalizarNombrePorPalabras(p.alumno_nombre);
+      if (!pedidosPorPalabras.has(clavePalabras)) pedidosPorPalabras.set(clavePalabras, []);
+      pedidosPorPalabras.get(clavePalabras)!.push(p);
+    }
+
+    const nombresDeLaNomina = new Set(alumnos.map((a) => normalizarNombreComparable(a.nombre)));
+    const nombresDeLaNominaPorPalabras = new Set(alumnos.map((a) => normalizarNombrePorPalabras(a.nombre)));
+
+    const alumnosConEstado = alumnos.map((a) => {
+      const claveExacta = normalizarNombreComparable(a.nombre);
+      const clavePalabras = normalizarNombrePorPalabras(a.nombre);
+      const pedidosDelAlumno =
+        pedidosPorNombreExacto.get(claveExacta) || pedidosPorPalabras.get(clavePalabras) || [];
+      const pedidoPagado = pedidosDelAlumno.find((p) => ESTADOS_PAGADOS.has(p.estado));
+      const pedidoElegido = pedidoPagado || pedidosDelAlumno[pedidosDelAlumno.length - 1] || null;
+      return {
+        id: a.id,
+        nombre: a.nombre,
+        grado: a.grado,
+        division: a.division,
+        turno: a.turno,
+        numeroLista: a.numero_lista,
+        pagado: !!pedidoPagado,
+        pedido: pedidoElegido
+          ? {
+              id: pedidoElegido.id,
+              estado: pedidoElegido.estado,
+              total: Number(pedidoElegido.total) || 0,
+              kitNombre: pedidoElegido.kit_nombre,
+              metodoPago: pedidoElegido.metodo_pago,
+              fecha: pedidoElegido.created_at,
+            }
+          : null,
+        otrosPedidos: pedidosDelAlumno.length > 1 ? pedidosDelAlumno.length - 1 : 0,
+      };
+    });
+
+    // Pedidos de este colegio cuyo nombre de alumno no matchea con nadie de la nómina cargada
+    // (typo, alumno que ya no está en la nómina, etc.) — se muestran aparte para que el admin
+    // los pueda revisar a mano en vez de perderlos silenciosamente.
+    const pedidosSinAlumnoEnNomina = pedidos
+      .filter((p) => {
+        const claveExacta = normalizarNombreComparable(p.alumno_nombre);
+        const clavePalabras = normalizarNombrePorPalabras(p.alumno_nombre);
+        return claveExacta && !nombresDeLaNomina.has(claveExacta) && !nombresDeLaNominaPorPalabras.has(clavePalabras);
+      })
+      .map((p) => ({
+        id: p.id,
+        alumnoNombre: p.alumno_nombre,
+        estado: p.estado,
+        total: Number(p.total) || 0,
+        kitNombre: p.kit_nombre,
+        fecha: p.created_at,
+      }));
+
+    const totalAlumnos = alumnos.length;
+    const alumnosPagados = alumnosConEstado.filter((a) => a.pagado).length;
+    const totalRecaudado =
+      alumnosConEstado.reduce((acc, a) => acc + (a.pagado ? a.pedido!.total : 0), 0) +
+      pedidosSinAlumnoEnNomina.reduce((acc, p) => acc + (ESTADOS_PAGADOS.has(p.estado) ? p.total : 0), 0);
+
+    return res.json({
+      success: true,
+      alumnos: alumnosConEstado,
+      pedidosSinAlumnoEnNomina,
+      resumen: {
+        totalAlumnos,
+        alumnosPagados,
+        alumnosFaltantes: totalAlumnos - alumnosPagados,
+        totalRecaudado,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener el estado de pagos del colegio' });
+  }
+});
+
 // Obtener todas las familias con datos de contacto (restringido al admin)
 app.get('/api/admin/familias', requireAdminAuth, async (req, res) => {
   try {
