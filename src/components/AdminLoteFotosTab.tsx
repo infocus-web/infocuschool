@@ -6,9 +6,13 @@ import {
   Sliders, Image as ImageIcon, Sparkles, User,
   X, CheckSquare, Square, Wand2
 } from 'lucide-react';
-import { useColegiosLista } from '../services/colegiosService';
-import { SECCIONES_INICIAL_2026, ALUMNOS_NOMINA_2026 } from '../data/alumnosData';
-import { CODIGOS_CURSOS_INICIALES } from '../data/codigosCursos';
+import {
+  useColegiosLista,
+  obtenerAlumnosNominaAdmin,
+  AlumnoNominaReal,
+  COLEGIO_POR_DEFECTO
+} from '../services/colegiosService';
+import { determinarCodigoParaInscripcion } from '../services/inscripcionesService';
 import { 
   uploadFotoWeb, 
   uploadFotoHD,
@@ -44,8 +48,16 @@ interface FotoLoteItem {
 
 export default function AdminLoteFotosTab() {
   const { colegios } = useColegiosLista();
-  const [cursoSeleccionado, setCursoSeleccionado] = useState<string>('SALA-3TM');
   const [colegioSeleccionado, setColegioSeleccionado] = useState<string>(() => colegios[0]?.id || 'col-isba-2026');
+  // Antes el curso se elegía de una lista fija de 11 secciones de nivel inicial
+  // (SECCIONES_INICIAL_2026), sin importar qué colegio estuviera seleccionado arriba — así que
+  // para cualquier colegio nuevo (primaria, secundaria) esta pestaña era inútil. Ahora se arma
+  // a partir de los grados/turnos/divisiones REALES configurados en cada colegio (o una lista
+  // genérica si el colegio no configuró ninguno), así funciona igual para cualquier institución.
+  const [gradoSeleccionado, setGradoSeleccionado] = useState<string>('');
+  const [turnoSeleccionado, setTurnoSeleccionado] = useState<string>('');
+  const [divisionSeleccionada, setDivisionSeleccionada] = useState<string>('');
+  const [alumnosColegioActual, setAlumnosColegioActual] = useState<AlumnoNominaReal[]>([]);
   const [tipoFotoLote, setTipoFotoLote] = useState<'individual' | 'grupal' | 'docente'>('individual');
   const [alumnoSeleccionadoId, setAlumnoSeleccionadoId] = useState<string>('');
 
@@ -88,23 +100,75 @@ export default function AdminLoteFotosTab() {
   const [configUrl, setConfigUrl] = useState(() => getSupabaseConfig().url);
   const [configKey, setConfigKey] = useState(() => getSupabaseConfig().anonKey);
 
-  const seccionActual = useMemo(() => {
-    return SECCIONES_INICIAL_2026.find(s => (CODIGOS_CURSOS_INICIALES[s.id] || s.id) === cursoSeleccionado) || SECCIONES_INICIAL_2026[0];
-  }, [cursoSeleccionado]);
+  // Colegio actualmente seleccionado, para leer sus grados/turnos/divisiones configurados
+  const colegioActualObj = useMemo(
+    () => colegios.find(c => c.id === colegioSeleccionado),
+    [colegios, colegioSeleccionado]
+  );
+
+  // Si el colegio todavía no configuró sus propios grados/turnos/divisiones, se usa una lista
+  // genérica (la misma que ofrece el alta de colegios) para que esta pestaña nunca quede vacía.
+  const gradosDisponibles = colegioActualObj?.grados?.length ? colegioActualObj.grados : COLEGIO_POR_DEFECTO.grados;
+  const turnosDisponibles = colegioActualObj?.turnos?.length ? colegioActualObj.turnos : COLEGIO_POR_DEFECTO.turnos;
+  const divisionesDisponibles = colegioActualObj?.divisiones?.length ? colegioActualObj.divisiones : COLEGIO_POR_DEFECTO.divisiones;
+
+  // Al cambiar de colegio (o al entrar), si el grado/turno/división elegidos no existen en la
+  // nueva lista, se cae al primero disponible — así nunca queda un curso "fantasma" seleccionado.
+  useEffect(() => {
+    if (!gradosDisponibles.includes(gradoSeleccionado)) setGradoSeleccionado(gradosDisponibles[0] || '');
+    if (!turnosDisponibles.includes(turnoSeleccionado)) setTurnoSeleccionado(turnosDisponibles[0] || '');
+    if (!divisionesDisponibles.includes(divisionSeleccionada)) setDivisionSeleccionada(divisionesDisponibles[0] || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colegioSeleccionado, gradosDisponibles.join('|'), turnosDisponibles.join('|'), divisionesDisponibles.join('|')]);
+
+  // Antes esto era un `id` fijo de una de las 11 secciones hardcodeadas de nivel inicial. Ahora
+  // se calcula con la misma fórmula que usa el resto de la app (inscripciones, servidor) para
+  // cualquier grado/turno/división real — ver determinarCodigoParaInscripcion. Se usa como
+  // nombre de carpeta en Storage; el código real que ven las familias lo calcula el servidor.
+  const cursoSeleccionado = useMemo(() => {
+    if (!gradoSeleccionado || !turnoSeleccionado) return '';
+    return determinarCodigoParaInscripcion({ grado: gradoSeleccionado, turno: turnoSeleccionado, division: divisionSeleccionada });
+  }, [gradoSeleccionado, turnoSeleccionado, divisionSeleccionada]);
+
+  const nombreSeccionActual =
+    [gradoSeleccionado, divisionSeleccionada, turnoSeleccionado].filter(Boolean).join(' · ') || 'el curso seleccionado';
+
+  // Nómina REAL (tabla `alumnos` de Supabase) del colegio elegido — antes era la lista fija
+  // ALUMNOS_NOMINA_2026 de una sola sala de nivel inicial. Se trae una vez por colegio y se
+  // filtra localmente por grado/turno/división para armar el selector de "Asignar a Alumno".
+  useEffect(() => {
+    let cancelado = false;
+    if (!colegioSeleccionado) {
+      setAlumnosColegioActual([]);
+      return;
+    }
+    obtenerAlumnosNominaAdmin(colegioSeleccionado).then(lista => {
+      if (!cancelado) setAlumnosColegioActual(lista);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [colegioSeleccionado]);
 
   // Alumnos del curso actual para asignación opcional
   const alumnosDelCurso = useMemo(() => {
-    if (!seccionActual) return [];
-    return ALUMNOS_NOMINA_2026.filter(a => a.seccionId === seccionActual.id);
-  }, [seccionActual]);
+    if (!gradoSeleccionado || !turnoSeleccionado) return [];
+    return alumnosColegioActual.filter(
+      a => a.grado === gradoSeleccionado && a.turno === turnoSeleccionado && a.division === divisionSeleccionada
+    );
+  }, [alumnosColegioActual, gradoSeleccionado, turnoSeleccionado, divisionSeleccionada]);
 
   // Cargar fotos activas del curso (desde Supabase, vía el panel admin)
   const recargarFotosActivas = async () => {
+    if (!gradoSeleccionado || !turnoSeleccionado) {
+      setFotosActivasCurso([]);
+      return;
+    }
     const fotos = await obtenerFotosActivasAdmin({
       colegioId: colegioSeleccionado,
-      grado: seccionActual.sala,
-      turno: seccionActual.turno,
-      division: seccionActual.division,
+      grado: gradoSeleccionado,
+      turno: turnoSeleccionado,
+      division: divisionSeleccionada,
     });
     setFotosActivasCurso(fotos);
   };
@@ -115,7 +179,9 @@ export default function AdminLoteFotosTab() {
     setFiltroCategoriaActivas('todas');
     setModoSeleccionActivas(false);
     setIdsSeleccionados(new Set());
-  }, [cursoSeleccionado, colegioSeleccionado]);
+    setAlumnoSeleccionadoId('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradoSeleccionado, turnoSeleccionado, divisionSeleccionada, colegioSeleccionado]);
 
   // Ejecutar diagnóstico automático al iniciar
   useEffect(() => {
@@ -278,13 +344,13 @@ export default function AdminLoteFotosTab() {
         tipo: tipoFotoLote,
         nombreOriginal: file.name,
         estado: 'procesada',
-        alumnoNombre: alumnoEncontrado ? `${alumnoEncontrado.nombre} ${alumnoEncontrado.apellido || ''}`.trim() : undefined
+        alumnoNombre: alumnoEncontrado ? alumnoEncontrado.nombre : undefined
       });
     }
 
     setFotosLote(prev => [...nuevosItems, ...prev]);
     setIsProcessing(false);
-    setStatusMessage(`¡${files.length} foto(s) procesadas con marca de agua y listas para subir a Supabase para ${seccionActual.nombreCompleto}!`);
+    setStatusMessage(`¡${files.length} foto(s) procesadas con marca de agua y listas para subir a Supabase para ${nombreSeccionActual}!`);
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
@@ -372,9 +438,9 @@ export default function AdminLoteFotosTab() {
           fotosParaRegistrar.push({
             colegioId: colegioSeleccionado,
             categoria: item.tipo,
-            grado: seccionActual.sala,
-            turno: seccionActual.turno,
-            division: seccionActual.division,
+            grado: gradoSeleccionado,
+            turno: turnoSeleccionado,
+            division: divisionSeleccionada,
             storagePathHD: pathHD,
             storagePathWeb: urlWeb,
             storagePathThumb: urlThumb,
@@ -924,7 +990,7 @@ USING (bucket_id = 'fotos-web');
           <span>Carga Masiva de Fotos por Curso / Sesión</span>
         </h3>
 
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">Colegio</label>
             <select
@@ -939,19 +1005,40 @@ USING (bucket_id = 'fotos-web');
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-700">Curso / Sección</label>
+            <label className="text-xs font-bold text-slate-700">Grado / Sala</label>
             <select
-              value={cursoSeleccionado}
-              onChange={(e) => {
-                setCursoSeleccionado(e.target.value);
-                setAlumnoSeleccionadoId('');
-              }}
+              value={gradoSeleccionado}
+              onChange={(e) => setGradoSeleccionado(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 font-bold"
             >
-              {SECCIONES_INICIAL_2026.map(sec => (
-                <option key={sec.id} value={CODIGOS_CURSOS_INICIALES[sec.id] || sec.id}>
-                  {sec.nombreCompleto} ({sec.totalAlumnos} alumnos) - {CODIGOS_CURSOS_INICIALES[sec.id] || sec.id}
-                </option>
+              {gradosDisponibles.map(g => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-700">Turno</label>
+            <select
+              value={turnoSeleccionado}
+              onChange={(e) => setTurnoSeleccionado(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 font-bold"
+            >
+              {turnosDisponibles.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-slate-700">División</label>
+            <select
+              value={divisionSeleccionada}
+              onChange={(e) => setDivisionSeleccionada(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs bg-slate-50 font-bold"
+            >
+              {divisionesDisponibles.map(d => (
+                <option key={d} value={d}>{d}</option>
               ))}
             </select>
           </div>
@@ -981,7 +1068,7 @@ USING (bucket_id = 'fotos-web');
               <option value="">-- Sin asignar / Múltiples --</option>
               {alumnosDelCurso.map(a => (
                 <option key={a.id} value={a.id}>
-                  {a.nombre} {a.apellido || ''}
+                  {a.nombre}
                 </option>
               ))}
             </select>
@@ -1003,7 +1090,7 @@ USING (bucket_id = 'fotos-web');
               <Upload className="w-6 h-6" />
             </div>
             <p className="text-sm font-extrabold text-slate-900">
-              Arrastrá las fotos de {seccionActual.nombreCompleto} aquí o hacé clic para seleccionar
+              Arrastrá las fotos de {nombreSeccionActual} aquí o hacé clic para seleccionar
             </p>
             <p className="text-xs text-slate-500 max-w-xl mx-auto">
               Podés seleccionar 1, 20 o 50 fotos al mismo tiempo. El sistema aplicará la marca de agua fotográfica y las preparará para subirlas a Supabase Storage con código <strong className="text-amber-900 font-mono">{cursoSeleccionado}</strong>.
@@ -1154,7 +1241,7 @@ USING (bucket_id = 'fotos-web');
           <div>
             <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
               <ImageIcon className="w-4 h-4 text-amber-600" />
-              <span>Fotos Activas en Supabase para {seccionActual.nombreCompleto} ({fotosActivasCurso.length})</span>
+              <span>Fotos Activas en Supabase para {nombreSeccionActual} ({fotosActivasCurso.length})</span>
             </h4>
             <span className="text-[11px] text-slate-500">
               Estas son las fotos que ven las familias cuando ingresan el código <strong className="text-slate-900 font-mono">{cursoSeleccionado}</strong>
@@ -1251,7 +1338,7 @@ USING (bucket_id = 'fotos-web');
               <Camera className="w-5 h-5" />
             </div>
             <p className="text-sm font-bold text-slate-700">
-              No hay fotos cargadas aún para {seccionActual.nombreCompleto}
+              No hay fotos cargadas aún para {nombreSeccionActual}
             </p>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               El almacenamiento está limpio y listo. Arrastrá las fotos del curso arriba para comenzar la carga a Supabase Pro.
@@ -1263,7 +1350,7 @@ USING (bucket_id = 'fotos-web');
               <Camera className="w-5 h-5" />
             </div>
             <p className="text-sm font-bold text-slate-700">
-              No hay fotos "{filtroCategoriaActivas}" en {seccionActual.nombreCompleto}
+              No hay fotos "{filtroCategoriaActivas}" en {nombreSeccionActual}
             </p>
           </div>
         ) : (

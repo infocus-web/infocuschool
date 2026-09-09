@@ -15,8 +15,8 @@ import {
   ConfiguracionWhatsApp
 } from '../services/configuracionService';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
-import { useColegiosLista, obtenerTokensPadronAdmin, regenerarTokenPadronAdmin } from '../services/colegiosService';
-import { ALUMNOS_NOMINA_2026, SECCIONES_INICIAL_2026 } from '../data/alumnosData';
+import { useColegiosLista, obtenerTokensPadronAdmin, regenerarTokenPadronAdmin, obtenerAlumnosNominaAdmin, AlumnoNominaReal } from '../services/colegiosService';
+import { SECCIONES_INICIAL_2026 } from '../data/alumnosData';
 import { 
   getCodigosCursos, guardarCodigoCurso, regenerarTodosLosCodigos, getMensajeWhatsAppParaCurso 
 } from '../data/codigosCursos';
@@ -26,7 +26,8 @@ import {
   PedidoEscolarCompleto 
 } from '../services/pedidosLabService';
 import {
-  obtenerInscripcionesAdmin
+  obtenerInscripcionesAdmin,
+  determinarCodigoParaInscripcion
 } from '../services/inscripcionesService';
 import { 
   descargarExcelLegibleColegio,
@@ -36,6 +37,11 @@ import {
   generarMensajeWhatsApp
 } from '../services/difusionEscolarService';
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
+import {
+  obtenerResumenCierreAnio,
+  ejecutarCierreAnio,
+  ResumenCierreAnio
+} from '../services/cierreAnioService';
 import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
 import {
@@ -188,7 +194,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'whatsapp' | 'solicitudes'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes'>('inscriptos');
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -359,24 +365,27 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     try {
       const wb = XLSX.utils.book_new();
       const data = alumnosFiltradosAdmin.map((a, idx) => ({
-        'N°': idx + 1,
-        'Apellido': a.apellido,
-        'Nombre': a.nombre,
-        'Curso / Sala': a.grado,
-        'Turno': a.turno,
+        'N°': a.numero_lista ?? idx + 1,
+        'Apellido y Nombre': a.nombre,
+        'Curso / Grado': a.grado,
+        'Turno': a.turno || '',
         'División': a.division,
-        'Código de Acceso': codigosMap[a.seccionId] || a.seccionId,
+        // Código de referencia visual (misma fórmula que usa el checkout real); ver
+        // determinarCodigoParaInscripcion — no es el código secreto real de la sección
+        // (ese vive en la tabla codigos_seccion), sólo sirve de guía para el fotógrafo.
+        'Código de Referencia': determinarCodigoParaInscripcion({ grado: a.grado, turno: a.turno || '', division: a.division }),
+        'DNI': a.dni || '',
         'Fotos Incluidas en Paquete': '3 tomas (Retrato, Grupo, Docente)'
       }));
       const ws = XLSX.utils.json_to_sheet(data);
       ws['!cols'] = [
         { wch: 6 },
-        { wch: 22 },
-        { wch: 22 },
+        { wch: 30 },
         { wch: 26 },
         { wch: 12 },
         { wch: 10 },
         { wch: 20 },
+        { wch: 14 },
         { wch: 35 }
       ];
       XLSX.utils.book_append_sheet(wb, ws, 'Nómina Alumnos');
@@ -416,10 +425,57 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     setTimeout(() => setCopiadoFeedback(null), 3000);
   };
 
-  // Alumnos roster states
+  // Alumnos roster states — auditoría 2026-09-09: antes esta pestaña mostraba
+  // ALUMNOS_NOMINA_2026, una lista de 211 alumnos escrita a mano en el código para una sola
+  // sala de nivel inicial. La nómina real (la que se carga por el importador de padrón) vive
+  // en la tabla 'alumnos' de Supabase — hoy son 600 alumnos de "Instituto Madre del Divino
+  // Pastor", con grados de primaria (1° a 6°), nada que ver con esa lista vieja. Ahora se trae
+  // la nómina real del servidor.
   const [filtroSeccionAlumnos, setFiltroSeccionAlumnos] = useState<string>('todas');
   const [busquedaAlumnos, setBusquedaAlumnos] = useState<string>('');
   const [checkedAlumnos, setCheckedAlumnos] = useState<Record<string, boolean>>({});
+  const [alumnosNominaReal, setAlumnosNominaReal] = useState<AlumnoNominaReal[]>([]);
+  const [cargandoNominaReal, setCargandoNominaReal] = useState(false);
+
+  const cargarNominaReal = async () => {
+    setCargandoNominaReal(true);
+    try {
+      const data = await obtenerAlumnosNominaAdmin();
+      setAlumnosNominaReal(data);
+    } finally {
+      setCargandoNominaReal(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      cargarNominaReal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  // "Sección" real derivada de grado + turno + división de cada alumno (no hay ninguna tabla
+  // fija de secciones para esto — cada colegio que se cargue puede tener grados distintos).
+  const seccionIdDeAlumno = (a: AlumnoNominaReal): string =>
+    `${a.grado || '-'}__${a.turno || '-'}__${a.division || '-'}`;
+
+  const seccionesReales = useMemo(() => {
+    const mapa = new Map<string, { id: string; nombreCompleto: string; totalAlumnos: number }>();
+    alumnosNominaReal.forEach((a) => {
+      const id = seccionIdDeAlumno(a);
+      const existente = mapa.get(id);
+      if (existente) {
+        existente.totalAlumnos += 1;
+      } else {
+        mapa.set(id, {
+          id,
+          nombreCompleto: `${a.grado || 'Sin grado'} "${a.division || '-'}" (${a.turno || 'Turno sin definir'})`,
+          totalAlumnos: 1,
+        });
+      }
+    });
+    return Array.from(mapa.values()).sort((a, b) => a.nombreCompleto.localeCompare(b.nombreCompleto, 'es'));
+  }, [alumnosNominaReal]);
 
   const toggleCheckAlumno = (id: string) => {
     setCheckedAlumnos(prev => ({ ...prev, [id]: !prev[id] }));
@@ -435,16 +491,15 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   };
 
   const alumnosFiltradosAdmin = useMemo(() => {
-    return ALUMNOS_NOMINA_2026.filter((alu) => {
-      const matchSeccion = filtroSeccionAlumnos === 'todas' || alu.seccionId === filtroSeccionAlumnos;
+    return alumnosNominaReal.filter((alu) => {
+      const matchSeccion = filtroSeccionAlumnos === 'todas' || seccionIdDeAlumno(alu) === filtroSeccionAlumnos;
       const q = busquedaAlumnos.toLowerCase().trim();
-      const matchSearch = !q || 
-        `${alu.apellido} ${alu.nombre}`.toLowerCase().includes(q) ||
-        `${alu.nombre} ${alu.apellido}`.toLowerCase().includes(q) ||
+      const matchSearch = !q ||
+        alu.nombre.toLowerCase().includes(q) ||
         alu.grado.toLowerCase().includes(q);
       return matchSeccion && matchSearch;
     });
-  }, [filtroSeccionAlumnos, busquedaAlumnos]);
+  }, [alumnosNominaReal, filtroSeccionAlumnos, busquedaAlumnos]);
 
   // Upload photo state
   const [targetColegioId, setTargetColegioId] = useState(() => colegiosList[0]?.id || 'col-isba-2026');
@@ -456,6 +511,16 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [watermarkedUrl, setWatermarkedUrl] = useState<string | null>(null);
   const [isProcessingWatermark, setIsProcessingWatermark] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+
+  // Cierre de año (borrado de temporada, ver services/cierreAnioService.ts)
+  const [cierreAnioColegioId, setCierreAnioColegioId] = useState<string>(() => colegiosList[0]?.id || '');
+  const [cierreAnioResumen, setCierreAnioResumen] = useState<ResumenCierreAnio | null>(null);
+  const [cierreAnioNombreConfirmado, setCierreAnioNombreConfirmado] = useState<string>('');
+  const [cargandoResumenCierre, setCargandoResumenCierre] = useState(false);
+  const [errorCierreAnio, setErrorCierreAnio] = useState<string | null>(null);
+  const [textoConfirmacionCierre, setTextoConfirmacionCierre] = useState('');
+  const [ejecutandoCierreAnio, setEjecutandoCierreAnio] = useState(false);
+  const [resultadoCierreAnio, setResultadoCierreAnio] = useState<{ familias: number; alumnos: number; fotos: number; pedidos: number } | null>(null);
 
   // New / editing school state (el mismo formulario sirve para alta y edición)
   const [colegioEditandoId, setColegioEditandoId] = useState<string | null>(null);
@@ -640,6 +705,56 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     limpiarFormularioColegio();
   };
 
+  // Nombre exacto que hay que escribir para confirmar el cierre de año del colegio/ámbito
+  // elegido actualmente (el servidor valida esto mismo del lado suyo, contra el nombre real).
+  const fraseConfirmacionCierreAnio =
+    cierreAnioColegioId === 'todos'
+      ? 'CERRAR TODOS LOS COLEGIOS'
+      : `CERRAR ${(colegiosList.find((c) => c.id === cierreAnioColegioId)?.nombre || '').toUpperCase()}`;
+
+  const handleVerResumenCierreAnio = async () => {
+    if (!cierreAnioColegioId) return;
+    setCargandoResumenCierre(true);
+    setErrorCierreAnio(null);
+    setResultadoCierreAnio(null);
+    setTextoConfirmacionCierre('');
+    const resultado = await obtenerResumenCierreAnio(cierreAnioColegioId);
+    setCargandoResumenCierre(false);
+    if (!resultado.success || !resultado.resumen) {
+      setErrorCierreAnio(resultado.error || 'No se pudo armar el resumen.');
+      setCierreAnioResumen(null);
+      return;
+    }
+    setCierreAnioResumen(resultado.resumen);
+    setCierreAnioNombreConfirmado(resultado.colegioNombre || '');
+  };
+
+  const handleEjecutarCierreAnio = async () => {
+    if (!cierreAnioColegioId || !cierreAnioResumen) return;
+    const totalAfectado =
+      cierreAnioResumen.alumnos + cierreAnioResumen.familias + cierreAnioResumen.pedidos + cierreAnioResumen.fotos;
+    if (
+      !window.confirm(
+        `Esta acción borra ${totalAfectado} registros de temporada (alumnos, familias, pedidos, fotos y más) de forma DEFINITIVA. No se puede deshacer.\n\n¿Confirmás que querés continuar?`
+      )
+    ) {
+      return;
+    }
+    setEjecutandoCierreAnio(true);
+    setErrorCierreAnio(null);
+    const resultado = await ejecutarCierreAnio(cierreAnioColegioId, textoConfirmacionCierre);
+    setEjecutandoCierreAnio(false);
+    if (!resultado.success) {
+      setErrorCierreAnio(resultado.error || 'No se pudo cerrar el año.');
+      return;
+    }
+    setResultadoCierreAnio(resultado.borrados || null);
+    setCierreAnioResumen(null);
+    setTextoConfirmacionCierre('');
+    // La nómina y la lista de colegios pudieron haber cambiado — se refrescan solas.
+    cargarNominaReal();
+  };
+
   const handleBorrarColegioClick = async (c: Colegio) => {
     if (!window.confirm(`¿Deseás eliminar "${c.nombre}"?`)) return;
 
@@ -811,8 +926,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 { id: 'pedidos', label: `Pedidos Familias (${pedidosCompletos.length})`, icon: Package },
                 { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
                 { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
-                { id: 'alumnos', label: `Nómina 2026 (${ALUMNOS_NOMINA_2026.length})`, icon: Users },
+                { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})`, icon: Users },
                 { id: 'colegios', label: 'Colegios y Códigos', icon: School },
+                { id: 'cerrar-anio', label: 'Cerrar Año', icon: Trash2 },
                 { id: 'whatsapp', label: 'WhatsApp & Widget Flotante', icon: MessageSquare },
               ].map(t => {
                 const Icon = t.icon;
@@ -1315,11 +1431,24 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                       <span>Nómina Escolar 2026</span>
                     </h3>
                     <p className="text-xs text-slate-500">
-                      {ALUMNOS_NOMINA_2026.length} alumnos registrados en {SECCIONES_INICIAL_2026.length} secciones / salas
+                      {cargandoNominaReal
+                        ? 'Cargando nómina real desde Supabase...'
+                        : `${alumnosNominaReal.length} alumnos registrados en ${seccionesReales.length} secciones (datos reales del padrón)`}
                     </p>
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={cargarNominaReal}
+                      disabled={cargandoNominaReal}
+                      className="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-50 rounded-xl text-xs font-semibold text-slate-700 flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                      title="Volver a traer la nómina desde Supabase"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${cargandoNominaReal ? 'animate-spin' : ''}`} />
+                      <span>Actualizar</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={toggleSelectAllSeccion}
@@ -1350,7 +1479,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         type="text"
                         value={busquedaAlumnos}
                         onChange={(e) => setBusquedaAlumnos(e.target.value)}
-                        placeholder="Buscar por apellido o nombre de alumno..."
+                        placeholder="Buscar por nombre de alumno o grado..."
                         className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                       />
                     </div>
@@ -1360,8 +1489,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         onChange={(e) => setFiltroSeccionAlumnos(e.target.value)}
                         className="w-full px-3 py-2 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-700"
                       >
-                        <option value="todas">Todas las secciones ({ALUMNOS_NOMINA_2026.length} alumnos)</option>
-                        {SECCIONES_INICIAL_2026.map((sec) => (
+                        <option value="todas">Todas las secciones ({alumnosNominaReal.length} alumnos)</option>
+                        {seccionesReales.map((sec) => (
                           <option key={sec.id} value={sec.id}>
                             {sec.nombreCompleto} ({sec.totalAlumnos} alumnos)
                           </option>
@@ -1380,9 +1509,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                     >
-                      Todas ({ALUMNOS_NOMINA_2026.length})
+                      Todas ({alumnosNominaReal.length})
                     </button>
-                    {SECCIONES_INICIAL_2026.map((sec) => (
+                    {seccionesReales.map((sec) => (
                       <button
                         key={sec.id}
                         onClick={() => setFiltroSeccionAlumnos(sec.id)}
@@ -1406,7 +1535,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                         <th className="py-2.5 px-3 w-10 text-center">✓</th>
                         <th className="py-2.5 px-3 w-12 text-slate-400">#</th>
                         <th className="py-2.5 px-4 font-bold text-slate-800">Apellido y Nombre</th>
-                        <th className="py-2.5 px-4">Sala</th>
+                        <th className="py-2.5 px-4">Grado</th>
                         <th className="py-2.5 px-4">Turno</th>
                         <th className="py-2.5 px-4">División</th>
                         <th className="py-2.5 px-4 text-center">Estado Foto</th>
@@ -1416,7 +1545,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                       {alumnosFiltradosAdmin.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="py-8 text-center text-slate-400">
-                            No se encontraron alumnos con los criterios seleccionados.
+                            {cargandoNominaReal
+                              ? 'Cargando nómina...'
+                              : 'No se encontraron alumnos con los criterios seleccionados.'}
                           </td>
                         </tr>
                       ) : (
@@ -1439,10 +1570,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                 />
                               </td>
                               <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px]">
-                                {index + 1}
+                                {alu.numero_lista ?? index + 1}
                               </td>
                               <td className="py-2.5 px-4 font-bold text-slate-900">
-                                {alu.apellido}, {alu.nombre}
+                                {alu.nombre}
                               </td>
                               <td className="py-2.5 px-4">
                                 <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[11px]">
@@ -1451,7 +1582,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                               </td>
                               <td className="py-2.5 px-4">
                                 <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-medium text-[11px]">
-                                  {alu.turno}
+                                  {alu.turno || '—'}
                                 </span>
                               </td>
                               <td className="py-2.5 px-4">
@@ -1480,10 +1611,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
                 <div className="flex items-center justify-between text-xs text-slate-500 px-2">
                   <span>
-                    Mostrando {alumnosFiltradosAdmin.length} de {ALUMNOS_NOMINA_2026.length} alumnos
+                    Mostrando {alumnosFiltradosAdmin.length} de {alumnosNominaReal.length} alumnos
                   </span>
                   <span>
-                    {Object.values(checkedAlumnos).filter(Boolean).length} alumnos marcados como fotografiados
+                    {Object.values(checkedAlumnos).filter(Boolean).length} alumnos marcados como fotografiados (solo en esta sesión del navegador)
                   </span>
                 </div>
               </div>
@@ -1738,6 +1869,124 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     ))}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* TAB: CERRAR AÑO (borrado real de temporada, ver services/cierreAnioService.ts) */}
+            {activeTab === 'cerrar-anio' && (
+              <div className="max-w-2xl space-y-5">
+                <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-rose-900">Cerrar año / arrancar temporada nueva</h3>
+                    <p className="text-[11px] text-rose-800 leading-relaxed">
+                      Esto borra, para el colegio que elijas (o para todos), los datos DE LA TEMPORADA:
+                      alumnos, familias, pedidos, fotos y sus archivos en storage, inscripciones, padres
+                      autorizados y códigos de sección. El colegio en sí <strong>no</strong> se borra —
+                      queda listo para cargarle la nómina y las fotos del año que viene. Es una acción
+                      irreversible sobre datos reales: no hay forma de deshacerla.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700">Colegio a cerrar</label>
+                  <select
+                    value={cierreAnioColegioId}
+                    onChange={(e) => {
+                      setCierreAnioColegioId(e.target.value);
+                      setCierreAnioResumen(null);
+                      setResultadoCierreAnio(null);
+                      setErrorCierreAnio(null);
+                      setTextoConfirmacionCierre('');
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white"
+                  >
+                    {colegiosList.map((c) => (
+                      <option key={c.id} value={c.id}>{c.nombre}</option>
+                    ))}
+                    <option value="todos">— Todos los colegios —</option>
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleVerResumenCierreAnio}
+                  disabled={!cierreAnioColegioId || cargandoResumenCierre}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white font-bold text-xs shadow flex items-center gap-1.5 cursor-pointer"
+                >
+                  {cargandoResumenCierre ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                  <span>{cargandoResumenCierre ? 'Calculando...' : 'Ver qué se borraría'}</span>
+                </button>
+
+                {errorCierreAnio && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{errorCierreAnio}</span>
+                  </div>
+                )}
+
+                {resultadoCierreAnio && (
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-1">
+                    <p className="font-bold">Año cerrado correctamente.</p>
+                    <p>
+                      Se borraron {resultadoCierreAnio.alumnos} alumnos, {resultadoCierreAnio.familias} familias,{' '}
+                      {resultadoCierreAnio.pedidos} pedidos y {resultadoCierreAnio.fotos} fotos (con sus archivos).
+                    </p>
+                  </div>
+                )}
+
+                {cierreAnioResumen && (
+                  <div className="p-4 rounded-2xl bg-white border-2 border-rose-200 space-y-4">
+                    <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      Se va a borrar de "{cierreAnioNombreConfirmado}"
+                    </h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center">
+                      {[
+                        ['Alumnos', cierreAnioResumen.alumnos],
+                        ['Familias', cierreAnioResumen.familias],
+                        ['Pedidos', cierreAnioResumen.pedidos],
+                        ['Fotos', cierreAnioResumen.fotos],
+                        ['Fotos en pedidos', cierreAnioResumen.pedidoFotos],
+                        ['Inscripciones', cierreAnioResumen.inscripciones],
+                        ['Padres autorizados', cierreAnioResumen.padresAutorizados],
+                        ['Códigos de sección', cierreAnioResumen.codigosSeccion],
+                        ['Solicitudes de código', cierreAnioResumen.solicitudesCodigo],
+                      ].map(([label, valor]) => (
+                        <div key={label as string} className="p-2 rounded-xl bg-slate-50 border border-slate-200">
+                          <div className="text-lg font-black text-slate-900">{valor as number}</div>
+                          <div className="text-[9px] text-slate-500 font-bold uppercase">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700">
+                        Para confirmar, escribí exactamente: <span className="font-mono text-rose-700">{fraseConfirmacionCierreAnio}</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={textoConfirmacionCierre}
+                        onChange={(e) => setTextoConfirmacionCierre(e.target.value)}
+                        placeholder={fraseConfirmacionCierreAnio}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white font-mono"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={
+                        ejecutandoCierreAnio ||
+                        textoConfirmacionCierre.trim().toLowerCase() !== fraseConfirmacionCierreAnio.trim().toLowerCase()
+                      }
+                      onClick={handleEjecutarCierreAnio}
+                      className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white font-bold text-xs shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {ejecutandoCierreAnio ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      <span>{ejecutandoCierreAnio ? 'Cerrando año...' : 'Cerrar año (borrado definitivo)'}</span>
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
