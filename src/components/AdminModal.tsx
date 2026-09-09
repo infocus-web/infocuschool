@@ -7,7 +7,6 @@ import {
   FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe,
   Pencil, Loader2, Link2
 } from 'lucide-react';
-import { getSupabase } from '../services/supabaseClient';
 import {
   obtenerConfiguracionWhatsApp,
   guardarNumeroWhatsAppFlotante,
@@ -287,33 +286,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     }
 
     try {
-      // 1. Guardar de forma persistente en Supabase en la tabla 'configuracion'
-      const supabase = getSupabase();
-      let persistidoEnSupabase = false;
-
-      if (supabase) {
-        const payload = {
-          clave: 'whatsapp_flotante',
-          valor: limpio,
-          datos_extra: {
-            actualizado_desde: 'AdminModal',
-            tipo: 'widget_flotante',
-          },
-          updated_at: new Date().toISOString(),
-        };
-
-        // Guardar en la tabla 'configuracion' (única tabla real de configuración en Supabase)
-        const { error: errConfiguracion } = await supabase
-          .from('configuracion')
-          .upsert(payload, { onConflict: 'clave' });
-
-        if (!errConfiguracion) {
-          persistidoEnSupabase = true;
-        }
-      }
-
-      // 2. Persistir localmente en Storage y emitir evento reactivo para WhatsAppFloating
-      await guardarNumeroWhatsAppFlotante(limpio);
+      // Auditoría 2026-09-09: acá había un segundo camino que escribía directo a la tabla
+      // 'configuracion' con la clave anónima del navegador (además del que ya hacía
+      // guardarNumeroWhatsAppFlotante más abajo) — dependía de una política de RLS que en los
+      // hechos permitía escribir a cualquiera sin login, que es justo el agujero que se cerró.
+      // Se saca este camino duplicado: guardarNumeroWhatsAppFlotante ya guarda en Supabase de
+      // forma correcta, pasando por el servidor con sesión de admin.
+      const resultado = await guardarNumeroWhatsAppFlotante(limpio);
+      const persistidoEnSupabase = resultado.supabaseOk;
       setWhatsappNumero(limpio);
 
       setWhatsappFeedback(

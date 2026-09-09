@@ -127,7 +127,7 @@ export default function AdminLoteFotosTab() {
     try {
       const diag = await testSupabaseConnection();
       setDiagnostico(diag);
-      if (diag.fotosWebStatus === 'rls_blocked' || diag.fotosHdStatus === 'rls_blocked') {
+      if (diag.fotosWebStatus === 'rls_blocked') {
         setMostrarSqlHelper(true);
       }
     } catch (err: any) {
@@ -408,8 +408,7 @@ export default function AdminLoteFotosTab() {
       setTimeout(() => setStatusMessage(null), 7000);
       setFotosLote(colaActualizada.filter(f => f.estado !== 'subida'));
     } else if (fallidas > 0) {
-      setErrorMessage(`Se subieron ${exitosas} fotos. ${fallidas} fotos fallaron. Verificá los permisos RLS en Supabase.`);
-      setMostrarSqlHelper(true);
+      setErrorMessage(`Se subieron ${exitosas} fotos. ${fallidas} fotos fallaron. Revisá el diagnóstico de arriba (puede ser la sesión de admin vencida) y volvé a intentar.`);
     } else {
       setStatusMessage(`¡${exitosas} foto(s) subidas y vinculadas con éxito a Supabase Pro para ${cursoSeleccionado}! Ya están disponibles en el Portal de Familias.`);
       setTimeout(() => setStatusMessage(null), 6000);
@@ -631,47 +630,36 @@ export default function AdminLoteFotosTab() {
     handleEjecutarDiagnostico();
   };
 
+  // Auditoría 2026-09-09: este script antes dejaba política pública de INSERT en fotos-web,
+  // e INSERT + SELECT + "FOR ALL" (o sea, también UPDATE/DELETE) públicas en fotos-hd — eso es
+  // lo que permitía a cualquier visitante (sin PIN, sin login) descargar gratis todas las
+  // fotos originales y borrar todo el storage del negocio. Ya no hace falta ninguna de esas
+  // políticas: la app ahora sube/borra/limpia todo a través del servidor (con sesión de admin
+  // y la Service Role Key, que no necesita RLS). Este script queda solo para (re)crear los
+  // buckets si hiciera falta, y para la única política real que sigue haciendo falta: que
+  // cualquiera pueda VER las miniaturas de fotos-web (la galería pública con marca de agua).
   const sqlPoliticas = `-- ==========================================
--- POLÍTICAS DE ACCESO PARA SUPABASE STORAGE
+-- CONFIGURACIÓN DE BUCKETS PARA SUPABASE STORAGE
 -- Ejecutar en Supabase -> SQL Editor -> Run
+-- (auditoría 2026-09-09: ya NO se necesitan políticas de INSERT/UPDATE/DELETE públicas —
+--  todo eso lo hace el servidor con la Service Role Key)
 -- ==========================================
 
 -- 1. Crear / Asegurar los dos buckets necesarios
-INSERT INTO storage.buckets (id, name, public) 
-VALUES 
+INSERT INTO storage.buckets (id, name, public)
+VALUES
   ('fotos-web', 'fotos-web', true),
   ('fotos-hd', 'fotos-hd', false)
 ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
 
--- 2. Permitir a la aplicación subir fotos a fotos-web
-CREATE POLICY "Permitir subida a fotos-web" 
-ON storage.objects FOR INSERT 
-TO anon, authenticated 
-WITH CHECK (bucket_id = 'fotos-web');
-
--- 3. Permitir ver fotos-web públicamente (para las familias)
-CREATE POLICY "Permitir lectura publica fotos-web" 
-ON storage.objects FOR SELECT 
-TO public 
+-- 2. Permitir ver fotos-web públicamente (las miniaturas con marca de agua, para las familias)
+CREATE POLICY "Permitir lectura publica fotos-web"
+ON storage.objects FOR SELECT
+TO public
 USING (bucket_id = 'fotos-web');
 
--- 4. Permitir subir fotos de alta resolución a fotos-hd
-CREATE POLICY "Permitir subida a fotos-hd" 
-ON storage.objects FOR INSERT 
-TO anon, authenticated 
-WITH CHECK (bucket_id = 'fotos-hd');
-
--- 5. Permitir lectura de fotos-hd para generar enlaces de descarga
-CREATE POLICY "Permitir lectura fotos-hd" 
-ON storage.objects FOR SELECT 
-TO anon, authenticated 
-USING (bucket_id = 'fotos-hd');
-
--- 6. Permitir eliminar/actualizar fotos
-CREATE POLICY "Permitir actualizar y borrar fotos" 
-ON storage.objects FOR ALL 
-TO anon, authenticated 
-USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
+-- NO agregar políticas de INSERT/UPDATE/DELETE ni de SELECT sobre fotos-hd acá: eso reabriría
+-- el agujero de seguridad de la auditoría 2026-09-09. Todo eso pasa por el servidor.`;
 
   const handleCopiarSql = () => {
     navigator.clipboard.writeText(sqlPoliticas);
@@ -820,16 +808,12 @@ USING (bucket_id IN ('fotos-web', 'fotos-hd'));`;
               <span className="text-sky-300">fotos-hd</span>
               {diagnostico ? (
                 diagnostico.fotosHdStatus === 'ok' ? (
-                  <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                    ✓ Listo
-                  </span>
-                ) : diagnostico.fotosHdStatus === 'rls_blocked' ? (
-                  <span className="text-[10px] text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
-                    ⚠ Falta RLS
+                  <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800" title="Bucket privado, protegido por el servidor (no por RLS pública) — así debe estar.">
+                    ✓ Listo (privado)
                   </span>
                 ) : (
-                  <span className="text-[10px] text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800">
-                    ✗ Error
+                  <span className="text-[10px] text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800" title={diagnostico.fotosHdError || ''}>
+                    ✗ Servidor no responde
                   </span>
                 )
               ) : (
