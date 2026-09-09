@@ -198,6 +198,60 @@ export async function obtenerAlumnosNominaAdmin(colegioId?: string): Promise<Alu
   }
 }
 
+export interface FilaAlumnoAImportar {
+  nombre: string;
+  grado: string;
+  division: string;
+  turno?: string | null;
+  numeroLista?: number | null;
+  dni?: string | null;
+}
+
+export interface ResultadoImportarAlumnos {
+  success: boolean;
+  importados: number;
+  descartados: number;
+  error?: string;
+}
+
+/**
+ * Carga en lote una lista de alumnos (tabla 'alumnos') para un colegio puntual — pensado para
+ * pegar el rango que sale de copiar dos columnas de Excel (número de lista + nombre) y cargar
+ * así una sección (grado/turno/división) por vez.
+ */
+export async function importarAlumnosAdmin(
+  colegioId: string,
+  filas: FilaAlumnoAImportar[]
+): Promise<ResultadoImportarAlumnos> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/alumnos/importar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ colegioId, filas }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, importados: 0, descartados: filas.length, error: data?.error || 'No se pudo importar la lista.' };
+    }
+    return { success: true, importados: data.importados || 0, descartados: data.descartados || 0 };
+  } catch (err: any) {
+    return { success: false, importados: 0, descartados: filas.length, error: err?.message || 'Error de conexión al importar.' };
+  }
+}
+
+export async function eliminarAlumnoAdmin(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/alumnos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data?.error || 'No se pudo eliminar el alumno.' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de conexión al eliminar.' };
+  }
+}
+
 /**
  * Hook de React para consumir la lista de colegios y reaccionar automáticamente a altas/bajas/ediciones.
  * La lista vive en Supabase: es la misma para todos los visitantes del sitio.
