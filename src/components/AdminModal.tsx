@@ -211,10 +211,21 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   // fija puede variar (carga async de datos, botones que se acomodan en pantallas chicas), se
   // mide su altura real con ResizeObserver y se usa como offset "top" dinámico para la segunda
   // franja fija, en vez de un valor fijo a mano que se rompería con cualquier cambio de layout.
+  //
+  // IMPORTANTE (corrección 2026-09-09): la franja fija de "Nómina 2026" (título + filtros +
+  // encabezado de columnas) se arma como UNA sola franja "sticky" (igual que la barra superior),
+  // en vez de anidar una segunda franja fija dentro de otra. El encabezado de columnas de la
+  // tabla ("Apellido y Nombre", "Grado", etc.) vive ahora en una tabla aparte SOLO con ese
+  // encabezado, dentro de esta misma franja — y NO dentro del contenedor con scroll horizontal
+  // de la tabla de filas, porque ese contenedor (overflow-x-auto) hace que el navegador rompa el
+  // "sticky" del <thead> (al fijar overflow-x, el navegador fuerza overflow-y a comportarse
+  // como "auto" también, y el <thead> termina pegándose contra ESE contenedor en vez de contra
+  // el verdadero contenedor con scroll de la pantalla, apareciendo flotando en cualquier lugar
+  // de la lista). La tabla con las filas de alumnos (tbody) usa las mismas columnas con ancho
+  // fijo en porcentaje (colgroup + table-fixed) para que quede perfectamente alineada con el
+  // encabezado de arriba, sin necesitar una tercera franja fija ni un tercer cálculo de offset.
   const barraSuperiorRef = useRef<HTMLDivElement | null>(null);
-  const nominaHeaderRef = useRef<HTMLDivElement | null>(null);
   const [alturaBarraSuperior, setAlturaBarraSuperior] = useState(0);
-  const [alturaNominaHeader, setAlturaNominaHeader] = useState(0);
 
   useLayoutEffect(() => {
     const el = barraSuperiorRef.current;
@@ -227,21 +238,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-
-  useLayoutEffect(() => {
-    const el = nominaHeaderRef.current;
-    if (!el) {
-      setAlturaNominaHeader(0);
-      return;
-    }
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setAlturaNominaHeader(entry.contentRect.height);
-      }
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [activeTab]);
 
   // Real synced orders for photo lab and families
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
@@ -1727,7 +1723,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     su altura real (medida con ResizeObserver) como offset. Sólo las filas de la
                     tabla (tbody) se desplazan por detrás. */}
                 <div
-                  ref={nominaHeaderRef}
                   className="sticky z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 pb-3 bg-white space-y-3 border-b border-slate-200"
                   style={{ top: alturaBarraSuperior }}
                 >
@@ -1829,26 +1824,53 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     </button>
                   )}
                 </div>
+
+                {/* Encabezado de columnas: es una tabla aparte (sólo colgroup + thead), no
+                    "position: sticky" dentro del contenedor con scroll horizontal de la tabla de
+                    abajo (eso rompe el sticky, ver nota más arriba). Vive dentro de esta misma
+                    franja fija, así queda pegado justo debajo del título y los filtros. Usa las
+                    mismas proporciones de columna (colgroup) que la tabla de filas para que
+                    ambas queden alineadas. */}
+                <div className="rounded-t-2xl border border-b-0 border-slate-200 bg-white overflow-hidden">
+                  <table className="w-full table-fixed text-left text-xs">
+                    <colgroup>
+                      <col style={{ width: '6%' }} />
+                      <col style={{ width: '7%' }} />
+                      <col style={{ width: '30%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '15%' }} />
+                    </colgroup>
+                    <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-3 text-center">✓</th>
+                        <th className="py-2.5 px-3 text-slate-400">#</th>
+                        <th className="py-2.5 px-4 font-bold text-slate-800">Apellido y Nombre</th>
+                        <th className="py-2.5 px-4">Grado</th>
+                        <th className="py-2.5 px-4">Turno</th>
+                        <th className="py-2.5 px-4">División</th>
+                        <th className="py-2.5 px-4 text-center">Estado Foto</th>
+                      </tr>
+                    </thead>
+                  </table>
+                </div>
                 </div>
                 {/* fin franja fija de nómina (título, filtros, encabezado de tabla) */}
 
-                {/* Table */}
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                  <table className="w-full text-left text-xs">
-                    <thead
-                      className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200 sticky z-10"
-                      style={{ top: alturaBarraSuperior + alturaNominaHeader }}
-                    >
-                      <tr>
-                        <th className="py-2.5 px-3 w-10 text-center bg-slate-50">✓</th>
-                        <th className="py-2.5 px-3 w-12 text-slate-400 bg-slate-50">#</th>
-                        <th className="py-2.5 px-4 font-bold text-slate-800 bg-slate-50">Apellido y Nombre</th>
-                        <th className="py-2.5 px-4 bg-slate-50">Grado</th>
-                        <th className="py-2.5 px-4 bg-slate-50">Turno</th>
-                        <th className="py-2.5 px-4 bg-slate-50">División</th>
-                        <th className="py-2.5 px-4 text-center bg-slate-50">Estado Foto</th>
-                      </tr>
-                    </thead>
+                {/* Table: sólo las filas (tbody) — se desplazan por detrás de la franja fija de
+                    arriba. Usa el mismo colgroup que el encabezado para quedar alineada. */}
+                <div className="rounded-b-2xl border border-t-0 border-slate-200 bg-white">
+                  <table className="w-full table-fixed text-left text-xs">
+                    <colgroup>
+                      <col style={{ width: '6%' }} />
+                      <col style={{ width: '7%' }} />
+                      <col style={{ width: '30%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '15%' }} />
+                    </colgroup>
                     <tbody className="divide-y divide-slate-100">
                       {alumnosFiltradosAdmin.length === 0 ? (
                         <tr>
