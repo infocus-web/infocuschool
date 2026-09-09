@@ -23,10 +23,12 @@ import {
   regenerarCodigoSeccionAdmin,
   actualizarCodigoSeccionAdmin
 } from '../services/codigosSeccionService';
-import { 
-  obtenerPedidosGuardados, 
-  guardarPedidosEnStorage, 
-  PedidoEscolarCompleto 
+import {
+  obtenerPedidosGuardados,
+  guardarPedidosEnStorage,
+  PedidoEscolarCompleto,
+  obtenerPedidosAdminDesdeSupabase,
+  combinarPedidosConLocal
 } from '../services/pedidosLabService';
 import {
   obtenerInscripcionesAdmin,
@@ -204,6 +206,18 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   // Id del pedido que se está eliminando (para deshabilitar el botón mientras se procesa)
   const [eliminandoPedidoId, setEliminandoPedidoId] = useState<string | null>(null);
 
+  // Auditoría 2026-09-09 (revisión a fondo): antes esta lista salía únicamente del localStorage
+  // del navegador — abrir el panel desde otra computadora mostraba "0 pedidos" aunque hubiera
+  // pedidos reales y pagados en Supabase. Ahora se trae la lista real del servidor y se combina
+  // con lo que haya en este navegador (por si algún pedido recién creado todavía no se refleja
+  // en una lectura posterior); Supabase manda como fuente de la verdad.
+  const sincronizarPedidosDesdeSupabase = async () => {
+    const [pedidosServidor, pedidosLocales] = [await obtenerPedidosAdminDesdeSupabase(), obtenerPedidosGuardados()];
+    const combinados = combinarPedidosConLocal(pedidosServidor, pedidosLocales);
+    setPedidosCompletos(combinados);
+    guardarPedidosEnStorage(combinados);
+  };
+
   const handleEliminarPedido = async (pedido: PedidoEscolarCompleto) => {
     const confirmado = window.confirm(
       `¿Eliminar el pedido ${pedido.id} de ${pedido.alumnoNombre}?\n\nEsta acción no se puede deshacer.`
@@ -238,6 +252,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   useEffect(() => {
     if (isOpen && isAuthenticated) {
       setPedidosCompletos(obtenerPedidosGuardados());
+      sincronizarPedidosDesdeSupabase();
       obtenerInscripcionesAdmin().then((inscriptos) => {
         setPendientesInscripcionCount(inscriptos.filter((i) => i.estado === 'pendiente').length);
       });

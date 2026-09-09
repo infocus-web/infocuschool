@@ -44,7 +44,7 @@ import {
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
-import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto } from '../services/pedidosLabService';
+import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto, buscarPedidoPorSeguimiento } from '../services/pedidosLabService';
 import { crearPreferenciaMercadoPago } from '../services/mercadoPagoService';
 import {
   obtenerFamiliaActiva,
@@ -632,8 +632,14 @@ export default function PortalFamiliasModal({
     }
   };
 
-  // Tracking query handler
-  const handleConsultarSeguimiento = (e?: FormEvent) => {
+  // Tracking query handler.
+  // Auditoría 2026-09-09 (revisión a fondo): antes esta búsqueda miraba únicamente el
+  // localStorage del navegador — una familia que consultara desde otro dispositivo (o que
+  // hubiera borrado los datos de este) no encontraba su pedido, aunque estuviera pagado y
+  // guardado en Supabase. Ahora se consulta primero al servidor (datos reales); el localStorage
+  // queda sólo como respaldo si la consulta al servidor falla (por ejemplo, sin conexión).
+  const [buscandoSeguimiento, setBuscandoSeguimiento] = useState(false);
+  const handleConsultarSeguimiento = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     setTrackingError('');
     const query = trackingQuery.trim().toUpperCase();
@@ -642,7 +648,45 @@ export default function PortalFamiliasModal({
       return;
     }
 
-    // Búsqueda de pedidos registrados
+    setBuscandoSeguimiento(true);
+    try {
+      const pedidoServidor = await buscarPedidoPorSeguimiento(query);
+      if (pedidoServidor) {
+        const infoEstado = {
+          pendiente_pago: { texto: 'En Espera de Procesamiento', paso: 2, descarga: false },
+          pagado: { texto: 'En Laboratorio Fotográfico', paso: 3, descarga: true },
+          entregado: { texto: 'Entregado en la Institución', paso: 4, descarga: true },
+          cancelado: { texto: 'Pedido Cancelado', paso: 0, descarga: false },
+        }[pedidoServidor.estado] || { texto: 'En Espera de Procesamiento', paso: 2, descarga: false };
+
+        setSearchedOrder({
+          id: pedidoServidor.id,
+          colegio: pedidoServidor.colegio,
+          alumno: `${pedidoServidor.alumno} (${pedidoServidor.grado} ${pedidoServidor.division})`,
+          tutor: pedidoServidor.tutor,
+          telefono: pedidoServidor.telefono,
+          kit: pedidoServidor.kit,
+          total: pedidoServidor.total,
+          fecha: pedidoServidor.fecha ? new Date(pedidoServidor.fecha).toLocaleDateString('es-AR') : '',
+          estado: pedidoServidor.estado,
+          estadoTexto: infoEstado.texto,
+          descripcionEstado:
+            pedidoServidor.estado === 'cancelado'
+              ? 'Este pedido fue cancelado. Si creés que es un error, contactanos por WhatsApp.'
+              : 'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.',
+          pasoActual: infoEstado.paso,
+          entregaEstimada: 'Entrega en el colegio coordinada con la dirección',
+          descargaLista: infoEstado.descarga,
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('Error al consultar el pedido en el servidor, se intenta con datos locales:', err);
+    } finally {
+      setBuscandoSeguimiento(false);
+    }
+
+    // Respaldo: búsqueda en los pedidos guardados en este navegador (por ejemplo, sin conexión)
     const pedidosRegistrados = obtenerPedidosGuardados();
     const cleanNumber = query.replace(/\D/g, '');
     const encontradoEnDb = pedidosRegistrados.find(
@@ -677,7 +721,7 @@ export default function PortalFamiliasModal({
       return;
     }
 
-    // Si no se encuentra en los pedidos registrados reales
+    // Si no se encuentra ni en el servidor ni en los pedidos guardados de este navegador
     setSearchedOrder(null);
     setTrackingError('No se encontró ningún pedido registrado con ese número o teléfono. Verificá los datos ingresados.');
   };
@@ -788,9 +832,10 @@ export default function PortalFamiliasModal({
                   </div>
                   <button
                     type="submit"
-                    className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all cursor-pointer shrink-0 shadow-xs"
+                    disabled={buscandoSeguimiento}
+                    className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl transition-all cursor-pointer shrink-0 shadow-xs disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    Consultar
+                    {buscandoSeguimiento ? 'Buscando...' : 'Consultar'}
                   </button>
                 </form>
 
