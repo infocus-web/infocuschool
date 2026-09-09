@@ -1,6 +1,5 @@
 import JSZip from 'jszip';
 import { FOTOS_MUESTRA } from '../data/colegiosData';
-import { getSupabase } from './supabaseClient';
 import { enviarFotosPorEmail } from './emailService';
 
 export interface ArchivoFotoLab {
@@ -457,40 +456,26 @@ export function registrarPedidoDesdePortal(params: {
   const listaActualizada = [nuevoPedido, ...currentPedidos];
   guardarPedidosEnStorage(listaActualizada);
 
-  // Sincronización asincrónica con Supabase en segundo plano
+  // Sincronización asincrónica con Supabase en segundo plano.
+  // Auditoría 2026-09-09: esto antes insertaba directo en 'familias' y 'pedidos' con la clave
+  // anónima del navegador — ambas tablas tenían políticas de RLS que permitían escribir (y, en
+  // 'familias', también LEER el listado completo de clientes) a cualquiera, sin login. Ahora
+  // pasa por el servidor (POST /api/pedidos/crear), que recalcula el total él mismo y nunca
+  // acepta un pedido que no nazca en "pendiente_pago". Ver comentario completo en server.ts.
   setTimeout(async () => {
     try {
-      const supabase = getSupabase();
-      if (!supabase) return;
-
-      let familiaId: string | null = null;
-      if (nuevoPedido.tutorNombre || nuevoPedido.tutorTelefono) {
-        const { data: famData } = await supabase
-          .from('familias')
-          .insert({
-            nombre: nuevoPedido.tutorNombre || `Familia de ${nuevoPedido.alumnoNombre}`,
-            whatsapp: nuevoPedido.tutorTelefono || '',
-          })
-          .select('id')
-          .single();
-        if (famData) {
-          familiaId = famData.id;
-        }
-      }
-
-      const tipoKit = nuevoPedido.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
-      const carpetas = (nuevoPedido.copiasExtras?.carpetasExtras || 0) + 1;
-
-      await supabase.from('pedidos').insert({
-        id: nuevoPedido.supabaseId,
-        familia_id: familiaId,
-        tipo_kit: tipoKit,
-        estado: 'pendiente_pago',
-        total: nuevoPedido.total,
-        carpetas_impresas: carpetas,
-        metodo_pago: nuevoPedido.metodoPago,
+      await fetch('/api/pedidos/crear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pedidoId: nuevoPedido.supabaseId,
+          kitId: nuevoPedido.kitId,
+          carpetasExtras: nuevoPedido.copiasExtras?.carpetasExtras || 0,
+          tutorNombre: nuevoPedido.tutorNombre,
+          tutorTelefono: nuevoPedido.tutorTelefono,
+          metodoPago: nuevoPedido.metodoPago,
+        }),
       });
-
       // El email de confirmación y fotos HD se despacha una vez aprobado el pago (vía webhook de Mercado Pago o confirmación admin)
     } catch (e) {
       console.warn('Sincronización en segundo plano con Supabase no completada:', e);
