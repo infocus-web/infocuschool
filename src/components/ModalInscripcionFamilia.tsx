@@ -312,7 +312,7 @@ export default function ModalInscripcionFamilia({
     setLoginError(null);
 
     if (!loginQuery.trim()) {
-      setLoginError('Ingresá tu código de acceso, teléfono o correo para ingresar.');
+      setLoginError('Ingresá tu código de acceso (o tu teléfono/correo para pedir el reenvío).');
       return;
     }
 
@@ -1162,20 +1162,24 @@ export default function ModalInscripcionFamilia({
                 )}
 
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+                  {/* Auditoría 2026-09-09: el texto de acá invitaba a escribir el WhatsApp o correo
+                      como si fuera un acceso directo — ya no lo es (ver seguridad más arriba), así
+                      que ahora el código va primero y el teléfono/correo se explica aparte, como lo
+                      que realmente hacen: pedir el reenvío por correo, nunca entrar directo. */}
                   <label className="block text-xs font-bold text-slate-700">
-                    Ingresá tu Código de Acceso, WhatsApp o Correo registrado
+                    Ingresá tu Código de Acceso
                   </label>
                   <div className="relative">
                     <input
                       type="text"
                       value={loginQuery}
                       onChange={(e) => setLoginQuery(e.target.value)}
-                      placeholder="11 2345-6789, tu-email@correo.com o tu código"
+                      placeholder="Ej: 88BU-M8TF"
                       className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                     />
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Si ya completaste la inscripción de tu hijo/a previamente, podés ingresar directamente con tu número, correo o código de acceso.
+                    ¿No tenés el código a mano? Escribí tu WhatsApp o correo registrado: si tu inscripción ya fue aprobada, te reenviamos el código por correo (por seguridad, nunca se muestra acá).
                   </p>
 
                   <button
