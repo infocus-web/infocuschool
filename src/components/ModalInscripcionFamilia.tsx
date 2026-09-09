@@ -180,9 +180,15 @@ export default function ModalInscripcionFamilia({
 
   // Refresh pending status
   const [verificandoEstado, setVerificandoEstado] = useState(false);
+  const [mensajeVerificacionEstado, setMensajeVerificacionEstado] = useState<string | null>(null);
 
   // Form errors
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Auditoría 2026-09-09: el código real ya no viaja en `familiaCreada` cuando la inscripción se
+  // aprueba automáticamente — guardamos acá sólo si se pudo mandar el correo con el código y a
+  // qué dirección, para poder mostrárselo a la familia sin exponer el código en pantalla.
+  const [envioCodigoInfo, setEnvioCodigoInfo] = useState<{ enviado: boolean; destino: string | null } | null>(null);
 
   // Al abrir el modal, si esta familia ya tiene una inscripción activa en este navegador,
   // precargamos sus datos en el formulario (así "Cambiar datos" edita lo que ya cargó,
@@ -296,6 +302,7 @@ export default function ModalInscripcionFamilia({
       return;
     }
 
+    setEnvioCodigoInfo({ enviado: Boolean(resultado.emailEnviado), destino: resultado.emailDestino || null });
     setFamiliaCreada(resultado.inscripcion);
     setPaso('resultado');
   };
@@ -310,13 +317,26 @@ export default function ModalInscripcionFamilia({
     }
 
     setVerificandoLogin(true);
-    const encontrada = await buscarMiInscripcion(loginQuery);
+    // Auditoría 2026-09-09 (hallazgo reportado por Pablo): esta pestaña aceptaba un teléfono o
+    // email en vez del código y, si coincidía con una familia ya aprobada, mostraba su código
+    // real de inmediato — el teléfono de un padre empadronado no es secreto. Ahora el servidor
+    // sólo devuelve la familia completa si lo que se escribió ES el código real; si se escribió
+    // un teléfono/email de una familia ya aprobada, el servidor reenvía el código por correo
+    // pero no lo entrega acá.
+    const resultado = await buscarMiInscripcion(loginQuery);
     setVerificandoLogin(false);
 
-    if (encontrada) {
-      guardarFamiliaActiva(encontrada);
-      setFamiliaCreada(encontrada);
+    if (resultado.inscripcion) {
+      guardarFamiliaActiva(resultado.inscripcion);
+      setEnvioCodigoInfo(null); // se encontró por el código real: se muestra directo, no hace falta el aviso de "revisá tu correo"
+      setFamiliaCreada(resultado.inscripcion);
       setPaso('resultado');
+    } else if (resultado.yaRegistrado) {
+      setLoginError(
+        resultado.emailReenviado
+          ? `Por seguridad no mostramos el código escribiendo el teléfono o email. Ya te lo reenviamos a ${resultado.emailDestino || 'tu correo registrado'} — copialo desde ahí.`
+          : 'Encontramos tu inscripción, pero no pudimos reenviarte el código por correo ahora. Contactá al equipo fotográfico para que te lo reenvíen desde el panel.'
+      );
     } else {
       setLoginError('No encontramos una inscripción con ese código, teléfono o correo. Verificá los datos o completá la pestaña "Inscribirme".');
     }
@@ -325,12 +345,19 @@ export default function ModalInscripcionFamilia({
   const handleVerificarEstado = async () => {
     if (!familiaCreada) return;
     setVerificandoEstado(true);
+    setMensajeVerificacionEstado(null);
     const query = familiaCreada.email || familiaCreada.telefonoWhatsApp;
-    const actualizada = await buscarMiInscripcion(query);
+    const resultado = await buscarMiInscripcion(query);
     setVerificandoEstado(false);
-    if (actualizada) {
-      setFamiliaCreada(actualizada);
-      guardarFamiliaActiva(actualizada);
+    if (resultado.inscripcion) {
+      setFamiliaCreada(resultado.inscripcion);
+      guardarFamiliaActiva(resultado.inscripcion);
+    } else if (resultado.yaRegistrado && resultado.emailReenviado) {
+      // Ya fue aprobada mientras tanto: por seguridad el código no llega acá, se reenvió por
+      // correo — se lo hacemos saber a la familia en vez de dejar el botón sin efecto visible.
+      setMensajeVerificacionEstado(`¡Tu inscripción ya fue aprobada! Te reenviamos el código a ${resultado.emailDestino || 'tu correo registrado'}. Revisá tu bandeja de entrada (y spam).`);
+    } else {
+      setMensajeVerificacionEstado('Todavía sigue pendiente de revisión por el equipo fotográfico.');
     }
   };
 
@@ -515,52 +542,79 @@ export default function ModalInscripcionFamilia({
                       <h4 className="text-lg font-black text-slate-900 font-['Outfit']">
                         ¡Tu Código de Acceso ya está activo!
                       </h4>
+                      {/* Auditoría 2026-09-09: por seguridad, el código real ya no se muestra acá salvo
+                          que la propia familia lo haya escrito ella misma (pestaña "Ya me inscribí" con
+                          el código real) — cuando la aprobación es automática, sólo avisamos que se
+                          mandó por correo, nunca lo mostramos ni lo entregamos por acá. */}
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Verificamos tus datos contra el padrón del colegio. Te despachamos tu <strong>Código de Acceso</strong> por WhatsApp al <strong>{familiaCreada.telefonoWhatsApp}</strong> y por correo a <strong>{familiaCreada.email}</strong>.
+                        Verificamos tus datos contra el padrón del colegio y ya te despachamos tu <strong>Código de Acceso</strong> por correo a <strong>{familiaCreada.email}</strong>.
                       </p>
                     </div>
                   </div>
 
-                  {/* Highlighted Code Box */}
-                  <div className="p-4 bg-emerald-500/10 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                      <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-900 block">
-                        Tu Código de Acceso para todos tus hijos:
-                      </span>
-                      <span className="text-2xl sm:text-3xl font-black font-mono tracking-widest text-emerald-950">
-                        {familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar}
-                      </span>
-                      <span className="text-[11px] text-emerald-800 font-medium block mt-0.5">
-                        Acceso unificado para todos tus hijos en {colegioDisplay}
-                      </span>
+                  {(familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar) ? (
+                    /* Se llegó acá escribiendo el código real (pestaña "Ya me inscribí"): ya lo tiene, es seguro mostrarlo */
+                    <div className="p-4 bg-emerald-500/10 border-2 border-emerald-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-900 block">
+                          Tu Código de Acceso para todos tus hijos:
+                        </span>
+                        <span className="text-2xl sm:text-3xl font-black font-mono tracking-widest text-emerald-950">
+                          {familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar}
+                        </span>
+                        <span className="text-[11px] text-emerald-800 font-medium block mt-0.5">
+                          Acceso unificado para todos tus hijos en {colegioDisplay}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
+                            navigator.clipboard.writeText(code);
+                            setMensajeCopiado(true);
+                            setTimeout(() => setMensajeCopiado(false), 2000);
+                          }}
+                          className="px-3.5 py-2.5 bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          {mensajeCopiado ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                          <span>{mensajeCopiado ? 'Copiado' : 'Copiar código'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
+                            onInscripcionExitosa(familiaCreada, code);
+                          }}
+                          className="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                        >
+                          <span>Ingresar a ver fotos</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                  ) : (
+                    /* Aprobación recién hecha por este mismo envío: por seguridad no se muestra el
+                       código acá — se mandó únicamente por correo al email ya validado contra el padrón. */
+                    <div className="p-4 bg-emerald-500/10 border-2 border-emerald-300 rounded-2xl space-y-3">
+                      <div className="flex items-start gap-2.5">
+                        <Mail className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                        <p className="text-xs sm:text-sm text-emerald-900 font-semibold leading-relaxed">
+                          {envioCodigoInfo?.enviado
+                            ? <>Por seguridad no mostramos el código acá: te lo mandamos por correo a <strong>{envioCodigoInfo.destino || familiaCreada.email}</strong>. Revisá tu bandeja de entrada (y la carpeta de spam).</>
+                            : <>Tu inscripción quedó aprobada, pero no pudimos enviarte el código por correo en este momento. Contactá al equipo fotográfico para que te lo reenvíen.</>}
+                        </p>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
-                          navigator.clipboard.writeText(code);
-                          setMensajeCopiado(true);
-                          setTimeout(() => setMensajeCopiado(false), 2000);
-                        }}
-                        className="px-3.5 py-2.5 bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        onClick={() => onInscripcionExitosa(familiaCreada)}
+                        className="w-full px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                       >
-                        {mensajeCopiado ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
-                        <span>{mensajeCopiado ? 'Copiado' : 'Copiar código'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
-                          onInscripcionExitosa(familiaCreada, code);
-                        }}
-                        className="flex-1 sm:flex-initial px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-                      >
-                        <span>Ingresar a ver fotos</span>
+                        <span>Ya tengo mi código, ingresar</span>
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     </div>
-                  </div>
+                  )}
                 </div>
               ) : (
                 <div className="bg-gradient-to-b from-amber-50/90 via-white to-amber-50/50 border-2 border-amber-400/90 rounded-3xl p-5 sm:p-6 space-y-4 shadow-sm">
@@ -638,6 +692,13 @@ export default function ModalInscripcionFamilia({
                       <span>Consultar por WhatsApp</span>
                     </a>
                   </div>
+
+                  {mensajeVerificacionEstado && (
+                    <div className="flex items-start gap-2 p-3 bg-sky-50 border border-sky-200 rounded-xl text-xs font-semibold text-sky-900">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{mensajeVerificacionEstado}</span>
+                    </div>
+                  )}
                 </div>
               )}
 

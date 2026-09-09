@@ -412,7 +412,24 @@ export default function PortalFamiliasModal({
     // Este es el ÚNICO camino que desbloquea fotos reales: `famFound.codigoAsignado` es el
     // código real y secreto de la sección (ver `codigos_seccion` en server.ts), no una fórmula
     // adivinable a partir de grado/turno/división.
-    const famFound = await buscarMiInscripcion(clean);
+    // Auditoría 2026-09-09 (hallazgo reportado por Pablo): este cuadro aceptaba también un
+    // teléfono o email en vez del código, y si coincidía con una familia ya aprobada, la
+    // desbloqueaba directo — el teléfono de un padre empadronado no es secreto. Ahora el
+    // servidor sólo devuelve la familia completa si lo que se escribió ES el código real; si se
+    // escribió un teléfono/email de una familia que ya tiene código, el servidor lo reenvía por
+    // correo pero no lo entrega acá (ver `buscarMiInscripcion`).
+    const resultadoBusqueda = await buscarMiInscripcion(clean);
+    if (resultadoBusqueda.yaRegistrado) {
+      setCodigoErrorMsg(
+        resultadoBusqueda.emailReenviado
+          ? `Por seguridad no mostramos el código acá escribiendo el teléfono o email. Ya te lo reenviamos a ${resultadoBusqueda.emailDestino || 'tu correo registrado'} — copialo desde ahí y pegalo en este casillero.`
+          : 'Encontramos tu inscripción, pero no pudimos reenviarte el código por correo en este momento. Contactá al equipo fotográfico para que te lo reenvíen desde el panel.'
+      );
+      setCodigoValidadoMsg(null);
+      setCodigoSeccionValidado(null);
+      return false;
+    }
+    const famFound = resultadoBusqueda.inscripcion;
     if (famFound && famFound.estado === 'pendiente') {
       setCodigoErrorMsg('Tu inscripción todavía está pendiente de validación por el equipo fotográfico. Te avisaremos por WhatsApp y Email en cuanto tengas tu código de acceso.');
       setCodigoValidadoMsg(null);
