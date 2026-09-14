@@ -361,6 +361,10 @@ export default function PortalFamiliasModal({
         if (fam.codigoFamiliar) {
           setCodigoAcceso(fam.codigoFamiliar);
           setCodigoValidadoMsg(`Código Familiar activo: ${fam.codigoFamiliar}`);
+          // Al reabrir el portal, restaurar también la llave usada por la consulta de
+          // galería. Antes sólo se completaba el campo visible y la pantalla quedaba
+          // falsamente en "Esperando fotos" aunque el curso ya tuviera imágenes.
+          setCodigoSeccionValidado(fam.codigoAsignado || fam.codigoFamiliar);
         }
         if (fam.colegioId) {
           const col = colegios.find((c) => c.id === fam.colegioId);
