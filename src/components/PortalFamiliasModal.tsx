@@ -30,7 +30,6 @@ import {
   AlertCircle,
   Mail,
   FolderCheck,
-  FileCode,
   Printer,
   Copy,
   Plus,
@@ -2500,59 +2499,6 @@ export default function PortalFamiliasModal({
                       <p className="text-amber-800 mt-0.5">
                         El sistema generó automáticamente el juego completo duplicado de fotos rotulado para el minilab y la carpeta conmemorativa adicional armada para familiares.
                       </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Photo Lab File Renaming & Student Folder Information */}
-                {pedidoGenerado && (
-                  <div className="p-3.5 rounded-xl bg-slate-900 text-white text-xs space-y-2">
-                    <div className="flex items-center justify-between pb-1 border-b border-slate-800">
-                      <div className="flex items-center gap-1.5 text-amber-400 font-bold">
-                        <FolderCheck className="w-4 h-4" />
-                        <span>Carpeta del Alumno para Laboratorio:</span>
-                      </div>
-                      <span className="font-mono text-[11px] bg-slate-800 px-2 py-0.5 rounded text-amber-300">
-                        {pedidoGenerado.codigoAlumno}
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] text-slate-400">
-                      Tus fotos elegidas se organizaron y renombraron con el código único del alumno para que el minilab fotográfico imprima su nombre en el dorso:
-                    </p>
-
-                    <div className="space-y-1 font-mono text-[10px] bg-slate-950/80 p-2.5 rounded-lg border border-slate-800">
-                      {pedidoGenerado.archivosParaLaboratorio.map((archivo, idx) => (
-                        <div
-                          key={idx}
-                          className={`flex items-center justify-between gap-1.5 p-1 rounded ${
-                            archivo.esCopiaExtra
-                              ? 'bg-amber-950/70 border border-amber-500/40 text-amber-300 font-bold'
-                              : 'text-slate-300'
-                          }`}
-                        >
-                          <div className="flex items-center gap-1.5 truncate">
-                            <FileCode
-                              className={`w-3.5 h-3.5 shrink-0 ${
-                                archivo.esCopiaExtra ? 'text-amber-400' : 'text-emerald-400'
-                              }`}
-                            />
-                            <span className="text-slate-400 capitalize">
-                              {archivo.tipo} ({archivo.tamanoImpresion}):
-                            </span>
-                            <span className={archivo.esCopiaExtra ? 'text-amber-200 truncate' : 'text-emerald-300 font-semibold truncate'}>
-                              {archivo.nombreArchivoLab}
-                            </span>
-                          </div>
-                          {archivo.esCopiaExtra ? (
-                            <span className="text-[9px] bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded font-black uppercase shrink-0">
-                              Copia Extra Duplicada
-                            </span>
-                          ) : (
-                            <span className="text-[9px] text-slate-500 uppercase shrink-0">Original</span>
-                          )}
-                        </div>
-                      ))}
                     </div>
                   </div>
                 )}
