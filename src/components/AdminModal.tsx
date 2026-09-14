@@ -697,7 +697,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const idsSeccionesPrimaria = useMemo(() => new Set(seccionesPrimaria.map((s) => s.id)), [seccionesPrimaria]);
   const idsSeccionesSecundaria = useMemo(() => new Set(seccionesSecundaria.map((s) => s.id)), [seccionesSecundaria]);
 
-  const toggleCheckAlumno = (id: string) => {
+  const toggleCheckAlumno = (id: string, nombreAlumno: string) => {
+    if (checkedAlumnos[id]) {
+      const confirmado = window.confirm(
+        `¿Querés quitar la marca de "Fotografiado" a ${nombreAlumno}?`
+      );
+      if (!confirmado) return;
+    }
     setCheckedAlumnos(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
@@ -1845,7 +1851,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           return (
                             <tr
                               key={alu.id}
-                              onClick={() => toggleCheckAlumno(alu.id)}
+                              onClick={() => toggleCheckAlumno(alu.id, alu.nombre)}
                               className={`cursor-pointer transition-colors ${
                                 isChecked ? 'bg-amber-50/50 hover:bg-amber-50' : 'hover:bg-slate-50'
                               }`}
@@ -1854,7 +1860,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                 <input
                                   type="checkbox"
                                   checked={isChecked}
-                                  onChange={() => toggleCheckAlumno(alu.id)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={() => toggleCheckAlumno(alu.id, alu.nombre)}
                                   className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 cursor-pointer"
                                 />
                               </td>
