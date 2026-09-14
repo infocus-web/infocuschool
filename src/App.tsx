@@ -8,7 +8,6 @@ import ContactoSection from './components/ContactoSection';
 import Footer from './components/Footer';
 import PortalFamiliasModal from './components/PortalFamiliasModal';
 import ModalInscripcionFamilia from './components/ModalInscripcionFamilia';
-import WhatsAppFloating from './components/WhatsAppFloating';
 import AdminModal from './components/AdminModal';
 import { InscripcionFamilia } from './services/inscripcionesService';
 
@@ -100,8 +99,6 @@ export default function App() {
         onOpenAdmin={() => setAdminModalOpen(true)}
       />
 
-      {/* Floating Interactive WhatsApp Widget */}
-      <WhatsAppFloating />
 
       {/* Interactive Family Portal Modal ("InFocus Schools") */}
       <PortalFamiliasModal
