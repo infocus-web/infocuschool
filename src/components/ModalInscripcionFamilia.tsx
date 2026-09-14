@@ -1236,19 +1236,6 @@ export default function ModalInscripcionFamilia({
             </div>
           )}
         </div>
-
-        {/* Footer info */}
-        <div className="p-4 bg-slate-50 border-t border-slate-200 text-center text-[11px] text-slate-500">
-          ¿Tenés dudas o necesitás asistencia? Contactanos por{' '}
-          <a
-            href={`https://wa.me/${configWhatsApp.numeroTelefono}?text=Hola%20Retrato%20Escolar,%20necesito%20ayuda%20con%20la%20inscripción`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-emerald-600 font-bold hover:underline"
-          >
-            WhatsApp al {configWhatsApp.numeroFormateado}
-          </a>
-        </div>
       </div>
     </div>
   );
