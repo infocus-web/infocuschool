@@ -126,6 +126,7 @@ export default function PortalFamiliasModal({
   const [fotoSeleccionadaIndividual, setFotoSeleccionadaIndividual] = useState<string>('');
   const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('');
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('');
+  const [fotosSueltasSeleccionadas, setFotosSueltasSeleccionadas] = useState<string[]>([]);
   const [modalFotoPreview, setModalFotoPreview] = useState<Foto | null>(null);
   const [errorSeleccionFotos, setErrorSeleccionFotos] = useState('');
 
@@ -153,6 +154,8 @@ export default function PortalFamiliasModal({
     setFotoSeleccionadaIndividual((actual) => inds.some((f) => f.id === actual) ? actual : '');
     setFotoSeleccionadaGrupal((actual) => grups.some((f) => f.id === actual) ? actual : '');
     setFotoSeleccionadaDocente((actual) => docs.some((f) => f.id === actual) ? actual : '');
+    setFotosSueltasSeleccionadas((actuales) => actuales.filter((id) => fotosDisponibles.some((f) => f.id === id && f.categoria === 'patio')));
+    if (!fotosDisponibles.some((f) => f.categoria === 'patio')) setCategoriaActiva('individual');
     setErrorSeleccionFotos('');
   }, [fotosDisponibles]);
 
@@ -513,10 +516,11 @@ export default function PortalFamiliasModal({
 
   // Calculate Total
   const PRECIO_CARPETA_EXTRA = 15000;
+  const PRECIO_FOTO_EVENTO = 5000;
   const precioBase = selectedKit.precio;
   const totalCopiasExtrasCantidad = extraCarpetas;
   const precioCopiasExtras = extraCarpetas * PRECIO_CARPETA_EXTRA;
-  const total = precioBase + precioCopiasExtras;
+  const total = precioBase + precioCopiasExtras + (fotosSueltasSeleccionadas.length * PRECIO_FOTO_EVENTO);
 
   // Cuántas de las 3 fotos del pack están realmente elegidas (es decir, la selección apunta a una
   // foto que existe de verdad en esta galería, no sólo un ID que quedó de otra galería/curso). El
@@ -528,6 +532,7 @@ export default function PortalFamiliasModal({
   const fotoGrupalSeleccionadaValida = Boolean(fotoGrupalSeleccionada);
   const fotoIndividualSeleccionadaValida = Boolean(fotoIndividualSeleccionada);
   const fotoDocenteSeleccionadaValida = Boolean(fotoDocenteSeleccionada);
+  const hayFotosDeEventos = fotosDisponibles.some((f) => f.categoria === 'patio');
   const cantidadFotosPackSeleccionadas = [fotoGrupalSeleccionadaValida, fotoIndividualSeleccionadaValida, fotoDocenteSeleccionadaValida].filter(Boolean).length;
 
   const handleContinuarAlKit = () => {
@@ -591,6 +596,10 @@ export default function PortalFamiliasModal({
   };
 
   const handleCompletarPago = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tutorEmail.trim())) {
+      setPagoError('Ingresá un email válido para recibir el comprobante, las fotos y los avisos del pedido.');
+      return;
+    }
     setIsProcessingPayment(true);
     setPagoError(null);
     setMpRedirectUrl(null);
@@ -620,13 +629,14 @@ export default function PortalFamiliasModal({
         individualId: fotoSeleccionadaIndividual,
         grupalId: fotoSeleccionadaGrupal,
         docenteId: fotoSeleccionadaDocente,
+        otrasIds: fotosSueltasSeleccionadas,
       },
       copiasExtras: {
         carpetasExtras: extraCarpetas,
         individual15x21: extraCarpetas,
         grupal20x30: extraCarpetas,
         docente15x21: extraCarpetas,
-        otras15x21: 0,
+        otras15x21: fotosSueltasSeleccionadas.length,
       },
       fotosDisponibles,
     });
@@ -1497,7 +1507,7 @@ export default function PortalFamiliasModal({
                   {/* Slot 4: Otras Fotos — mismo tamaño y lugar que los 3 del pack (antes era un
                       botón aparte, más chico y menos visible), pero con estilo distinto (punteado,
                       sin check) para que se note que NO forma parte de las 3 fotos incluidas. */}
-                  <div
+                  {hayFotosDeEventos && <div
                     onClick={() => setCategoriaActiva('patio')}
                     className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border border-dashed ${
                       categoriaActiva === 'patio' ? 'border-amber-400 ring-1 ring-amber-400/40 bg-slate-800/70' : 'border-slate-600 hover:border-slate-500'
@@ -1511,11 +1521,11 @@ export default function PortalFamiliasModal({
                         Opcional, aparte del pack
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        Otras Fotos
+                        Otras Fotos {fotosSueltasSeleccionadas.length > 0 ? `(${fotosSueltasSeleccionadas.length})` : ''}
                       </p>
                       <span className="text-[10px] text-slate-400">Actos, eventos, salidas...</span>
                     </div>
-                  </div>
+                  </div>}
                 </div>
               </div>
 
@@ -1543,12 +1553,18 @@ export default function PortalFamiliasModal({
                   const isSelected =
                     foto.id === fotoSeleccionadaIndividual ||
                     foto.id === fotoSeleccionadaGrupal ||
-                    foto.id === fotoSeleccionadaDocente;
+                    foto.id === fotoSeleccionadaDocente ||
+                    fotosSueltasSeleccionadas.includes(foto.id);
 
                   const handleSelectThisFoto = () => {
                     if (foto.categoria === 'individual') setFotoSeleccionadaIndividual(foto.id);
                     if (foto.categoria === 'grupal') setFotoSeleccionadaGrupal(foto.id);
                     if (foto.categoria === 'docente') setFotoSeleccionadaDocente(foto.id);
+                    if (foto.categoria === 'patio') {
+                      setFotosSueltasSeleccionadas((actuales) =>
+                        actuales.includes(foto.id) ? actuales.filter((id) => id !== foto.id) : [...actuales, foto.id]
+                      );
+                    }
                     setErrorSeleccionFotos('');
                   };
 
@@ -1583,7 +1599,7 @@ export default function PortalFamiliasModal({
                           <div className="absolute top-2.5 left-2.5">
                             <span className="px-2.5 py-1 rounded-md bg-amber-400 text-slate-950 text-[11px] font-extrabold flex items-center gap-1 shadow-md">
                               <Check className="w-3.5 h-3.5 stroke-[3]" />
-                              <span>En el Pack Oficial</span>
+                              <span>{foto.categoria === 'patio' ? 'Adicional elegida' : 'En el Pack Oficial'}</span>
                             </span>
                           </div>
                         )}
@@ -1604,12 +1620,12 @@ export default function PortalFamiliasModal({
                         <div>
                           <h5 className="text-xs font-bold text-slate-900 truncate">{foto.titulo}</h5>
                           <span className="text-[10px] text-slate-500">
-                            {foto.categoria === 'grupal' ? 'Formato 20x30 cm' : 'Formato 15x21 cm'}
+                            {foto.categoria === 'patio' ? 'Archivo Digital HD' : foto.categoria === 'grupal' ? 'Formato 20x30 cm' : 'Formato 15x21 cm'}
                           </span>
                         </div>
 
                         {/* Primary Pack selection button */}
-                        {foto.categoria !== 'patio' && (
+                        {foto.categoria !== 'patio' ? (
                           <button
                             type="button"
                             onClick={handleSelectThisFoto}
@@ -1627,6 +1643,14 @@ export default function PortalFamiliasModal({
                             ) : (
                               <span>Elegir</span>
                             )}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleSelectThisFoto}
+                            className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
+                          >
+                            {isSelected ? 'Agregada · Quitar' : `Agregar · $${PRECIO_FOTO_EVENTO.toLocaleString('es-AR')}`}
                           </button>
                         )}
                       </div>
@@ -1783,9 +1807,9 @@ export default function PortalFamiliasModal({
                 </p>
               </div>
 
-              {/* Kits 3 cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {KITS_DISPONIBLES.map((kit) => {
+              {/* Las fotos de eventos son adicionales y nunca reemplazan el kit de tres fotos. */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-3xl mx-auto">
+                {KITS_DISPONIBLES.filter((kit) => kit.id !== 'kit-evento-suelto').map((kit) => {
                   const isSelected = selectedKit.id === kit.id;
                   return (
                     <div
@@ -2010,8 +2034,8 @@ export default function PortalFamiliasModal({
                 <h3 className="text-2xl font-extrabold text-slate-900 font-['Outfit']">
                   Confirmación y Pago Seguro
                 </h3>
-                <p className="text-xs text-slate-500">
-                  Ingresá el WhatsApp donde querés recibir el link de descarga y el comprobante del pedido.
+                <p className="text-sm text-slate-600">
+                  Revisá las fotos elegidas. El comprobante y los avisos se enviarán por email.
                 </p>
               </div>
 
@@ -2035,35 +2059,14 @@ export default function PortalFamiliasModal({
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                      Número de WhatsApp (con código de área)
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-2 text-xs font-bold text-slate-500">
-                        +54 9
-                      </span>
-                      <input
-                        type="text"
-                        value={tutorWhatsapp}
-                        onChange={(e) => setTutorWhatsapp(e.target.value)}
-                        placeholder="11 1234-5678"
-                        className="w-full pl-16 pr-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
-                      />
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-1">
-                      Te enviaremos aquí el link de descarga HD y avisos de entrega.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                      Correo Electrónico
+                    <label className="text-sm font-semibold text-slate-700 block mb-1.5">
+                      Email para comprobante, descarga y avisos
                     </label>
                     <input
                       type="email"
                       value={tutorEmail}
                       onChange={(e) => setTutorEmail(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                      className="w-full px-3 py-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                     />
                   </div>
 
@@ -2140,6 +2143,39 @@ export default function PortalFamiliasModal({
                       </p>
                     </div>
 
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Fotos elegidas</p>
+                      {[
+                        { foto: fotoGrupalSeleccionada, tipo: 'Grupal', medida: '20x30 cm' },
+                        { foto: fotoIndividualSeleccionada, tipo: 'Individual', medida: '15x21 cm' },
+                        { foto: fotoDocenteSeleccionada, tipo: 'Con docente', medida: '15x21 cm' },
+                      ].map(({ foto, tipo, medida }) => foto && (
+                        <div key={tipo} className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2.5">
+                          <img src={foto.thumbnail} alt={`${tipo} elegida`} className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-bold text-white">{tipo}</p>
+                            <p className="text-xs text-slate-300">
+                              {selectedKit.id === 'kit-clasico'
+                                ? `${medida} · ${1 + extraCarpetas} copia${extraCarpetas > 0 ? 's' : ''}`
+                                : 'Digital HD · 1 archivo'}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                      {fotosSueltasSeleccionadas.map((id) => {
+                        const foto = fotosDisponibles.find((item) => item.id === id);
+                        return foto ? (
+                          <div key={id} className="flex items-center gap-3 rounded-xl border border-emerald-700/60 bg-emerald-950/30 p-2.5">
+                            <img src={foto.thumbnail} alt="Foto suelta elegida" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-bold text-white">Foto suelta / evento</p>
+                              <p className="text-xs text-emerald-300">Digital HD · 1 archivo · $5.000</p>
+                            </div>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+
                     <div className="space-y-2 text-xs text-slate-300">
                       <div className="flex justify-between">
                         <span>{selectedKit.nombre}</span>
@@ -2149,6 +2185,12 @@ export default function PortalFamiliasModal({
                         <div className="flex justify-between text-amber-300 font-semibold">
                           <span>Carpeta Escolar Extra Completa (x{extraCarpetas})</span>
                           <span>+${(extraCarpetas * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}</span>
+                        </div>
+                      )}
+                      {fotosSueltasSeleccionadas.length > 0 && (
+                        <div className="flex justify-between text-emerald-300 font-semibold">
+                          <span>Fotos sueltas / eventos (x{fotosSueltasSeleccionadas.length})</span>
+                          <span>+${(fotosSueltasSeleccionadas.length * PRECIO_FOTO_EVENTO).toLocaleString('es-AR')}</span>
                         </div>
                       )}
                       <div className="flex justify-between text-emerald-400 font-medium">

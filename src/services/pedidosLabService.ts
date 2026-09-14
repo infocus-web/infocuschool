@@ -51,6 +51,7 @@ export interface PedidoEscolarCompleto {
     individualId: string;
     grupalId: string;
     docenteId?: string;
+    otrasIds?: string[];
   };
   copiasExtras?: CopiasExtrasConfig;
   archivosParaLaboratorio: ArchivoFotoLab[];
@@ -188,7 +189,7 @@ export function generarArchivosParaLaboratorio(
   cursoCodigo: string,
   numLista: number,
   alumnoNombre: string,
-  fotosSeleccionadas: { individualId: string; grupalId: string; docenteId?: string },
+  fotosSeleccionadas: { individualId: string; grupalId: string; docenteId?: string; otrasIds?: string[] },
   copiasExtras?: CopiasExtrasConfig,
   fotosDisponibles: Foto[] = FOTOS_MUESTRA
 ): ArchivoFotoLab[] {
@@ -386,13 +387,12 @@ export function generarArchivosParaLaboratorio(
     }
   }
 
-  // Generación automática de archivos para el laboratorio (Copia Extra 15x21 Otras Fotos)
-  if (copiasExtras?.otras15x21 && copiasExtras.otras15x21 > 0) {
-    const patioFoto = FOTOS_MUESTRA.find(f => f.categoria === 'patio') || FOTOS_MUESTRA[0];
-    for (let c = 1; c <= copiasExtras.otras15x21; c++) {
-      const numCopia = c;
+  // Fotos digitales sueltas de eventos elegidas expresamente por la familia.
+  for (const [indice, fotoId] of (fotosSeleccionadas.otrasIds || []).entries()) {
+    const fotoEvento = fotosDisponibles.find((foto) => foto.id === fotoId && foto.categoria === 'patio');
+    if (fotoEvento) {
       archivosLab.push({
-        id: `arch-${Date.now()}-extra-otras-${c}`,
+        id: `arch-${Date.now()}-evento-${indice + 1}`,
         tipo: 'individual',
         nombreArchivoOriginal: 'OTRAS_HD.jpg',
         nombreArchivoLab: generarNombreArchivoLab(
@@ -402,13 +402,13 @@ export function generarArchivosParaLaboratorio(
           'OTRAS',
           '15x21',
           true,
-          numCopia + 1
+          indice + 1
         ),
         tamanoImpresion: '15x21',
-        urlMuestra: patioFoto.thumbnail,
-        urlOriginalHD: patioFoto.url,
+        urlMuestra: fotoEvento.thumbnail,
+        urlOriginalHD: fotoEvento.url,
         esCopiaExtra: true,
-        numeroCopia: numCopia
+        numeroCopia: indice + 1
       });
     }
   }
@@ -439,6 +439,7 @@ export async function registrarPedidoDesdePortal(params: {
     individualId: string;
     grupalId: string;
     docenteId?: string;
+    otrasIds?: string[];
   };
   copiasExtras?: CopiasExtrasConfig;
   fotosDisponibles?: Foto[];
