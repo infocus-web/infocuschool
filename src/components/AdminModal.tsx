@@ -1038,19 +1038,19 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
   const pestanasAdmin = [
-    { id: 'inscriptos', label: pendientesInscripcionCount > 0 ? `Inscriptos (${pendientesInscripcionCount} pendientes)` : 'Inscriptos y envío de códigos' },
-    { id: 'padron', label: 'Padrón autorizado' },
-    { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes de código (${pendientesSolicitudesCodigoCount})` : 'Solicitudes de código' },
-    { id: 'laboratorio', label: 'Laboratorio y ensobrado' },
-    { id: 'pedidos', label: `Pedidos de familias (${pedidosCompletos.length})` },
     { id: 'subir', label: 'Cargar fotos del curso' },
-    { id: 'codigos', label: 'Códigos y difusión' },
-    { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})` },
-    { id: 'importar-alumnos', label: 'Importar alumnos' },
-    { id: 'estado-pagos', label: 'Estado de pagos por curso' },
-    { id: 'colegios', label: 'Colegios y códigos' },
     { id: 'cerrar-anio', label: 'Cerrar año' },
+    { id: 'codigos', label: 'Códigos y difusión' },
+    { id: 'colegios', label: 'Colegios y códigos' },
     { id: 'whatsapp', label: 'Configuración de WhatsApp' },
+    { id: 'estado-pagos', label: 'Estado de pagos por curso' },
+    { id: 'importar-alumnos', label: 'Importar alumnos' },
+    { id: 'inscriptos', label: pendientesInscripcionCount > 0 ? `Inscriptos (${pendientesInscripcionCount} pendientes)` : 'Inscriptos y envío de códigos' },
+    { id: 'laboratorio', label: 'Laboratorio y ensobrado' },
+    { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})` },
+    { id: 'padron', label: 'Padrón autorizado' },
+    { id: 'pedidos', label: `Pedidos de familias (${pedidosCompletos.length})` },
+    { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes de código (${pendientesSolicitudesCodigoCount})` : 'Solicitudes de código' },
   ] as const;
   const pestanaActiva = pestanasAdmin.find((pestana) => pestana.id === activeTab);
 
