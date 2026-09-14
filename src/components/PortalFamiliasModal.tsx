@@ -42,7 +42,7 @@ import {
   Send,
   Images,
 } from 'lucide-react';
-import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
+import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto, buscarPedidoPorSeguimiento } from '../services/pedidosLabService';
@@ -123,19 +123,17 @@ export default function PortalFamiliasModal({
 
   // Step 2: Gallery
   const [categoriaActiva, setCategoriaActiva] = useState<'individual' | 'grupal' | 'docente' | 'patio'>('individual');
-  const [fotoSeleccionadaIndividual, setFotoSeleccionadaIndividual] = useState<string>('foto-ind-1');
-  const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('foto-grup-1');
-  const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('foto-doc-1');
+  const [fotoSeleccionadaIndividual, setFotoSeleccionadaIndividual] = useState<string>('');
+  const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('');
+  const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('');
   const [modalFotoPreview, setModalFotoPreview] = useState<Foto | null>(null);
 
-  // Dynamic photos for this course (real photos uploaded to Supabase, o las de muestra si todavía no hay)
-  const [fotosDisponibles, setFotosDisponibles] = useState<Foto[]>(FOTOS_MUESTRA);
+  // Sólo fotos reales del curso cargadas en Supabase; nunca se muestran fotos genéricas.
+  const [fotosDisponibles, setFotosDisponibles] = useState<Foto[]>([]);
 
   useEffect(() => {
     let cancelado = false;
-    // Sin un código real y validado, sólo se muestran las fotos de muestra (ver comentario
-    // en `codigoSeccionValidado` y en `obtenerGaleriaPublica`) — elegir grado/turno/división
-    // del desplegable ya no alcanza para traer fotos reales de ningún curso.
+    // Sin un código real y validado no se expone ninguna galería.
     obtenerGaleriaPublica({ codigo: codigoSeccionValidado }).then((resultado) => {
       if (!cancelado) setFotosDisponibles(resultado.fotos);
     });
@@ -150,15 +148,9 @@ export default function PortalFamiliasModal({
     const grups = fotosDisponibles.filter((f) => f.categoria === 'grupal');
     const docs = fotosDisponibles.filter((f) => f.categoria === 'docente');
 
-    if (inds.length > 0 && !inds.some((f) => f.id === fotoSeleccionadaIndividual)) {
-      setFotoSeleccionadaIndividual(inds[0].id);
-    }
-    if (grups.length > 0 && !grups.some((f) => f.id === fotoSeleccionadaGrupal)) {
-      setFotoSeleccionadaGrupal(grups[0].id);
-    }
-    if (docs.length > 0 && !docs.some((f) => f.id === fotoSeleccionadaDocente)) {
-      setFotoSeleccionadaDocente(docs[0].id);
-    }
+    setFotoSeleccionadaIndividual((actual) => inds.some((f) => f.id === actual) ? actual : (inds[0]?.id || ''));
+    setFotoSeleccionadaGrupal((actual) => grups.some((f) => f.id === actual) ? actual : (grups[0]?.id || ''));
+    setFotoSeleccionadaDocente((actual) => docs.some((f) => f.id === actual) ? actual : (docs[0]?.id || ''));
   }, [fotosDisponibles]);
 
   // Step 3: Kit & Extras
@@ -715,6 +707,7 @@ export default function PortalFamiliasModal({
           pasoActual: infoEstado.paso,
           entregaEstimada: 'Entrega en el colegio coordinada con la dirección',
           descargaLista: infoEstado.descarga,
+          linkDescargaHD: pedidoServidor.linkDescargaHD,
         });
         return;
       }
@@ -755,6 +748,7 @@ export default function PortalFamiliasModal({
         pasoActual: 3,
         entregaEstimada: 'Entrega en el colegio coordinada con la dirección',
         descargaLista: true,
+        linkDescargaHD: encontradoEnDb.linkDescargaHD,
       });
       return;
     }
@@ -965,9 +959,9 @@ export default function PortalFamiliasModal({
 
                   {/* Actions */}
                   <div className="pt-2 flex flex-col sm:flex-row gap-3 items-center justify-between border-t border-slate-100">
-                    {searchedOrder.descargaLista && (
+                    {searchedOrder.descargaLista && searchedOrder.linkDescargaHD && (
                       <a
-                        href={FOTOS_MUESTRA[0].url}
+                        href={searchedOrder.linkDescargaHD}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-2"
@@ -1336,7 +1330,7 @@ export default function PortalFamiliasModal({
                 <div className="flex items-center gap-3">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-900 border border-amber-300/80 text-[11px] font-bold">
                     <Lock className="w-3.5 h-3.5 text-amber-700" />
-                    <span>Muestras protegidas con marca de agua</span>
+                    <span>{fotosDisponibles.length > 0 ? 'Fotos protegidas con marca de agua' : 'Esperando fotos del curso'}</span>
                   </span>
 
                   <button
@@ -1347,6 +1341,31 @@ export default function PortalFamiliasModal({
                   </button>
                 </div>
               </div>
+
+              {fotosDisponibles.length === 0 ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-6 py-10 text-center shadow-xs">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-amber-700 shadow-xs ring-1 ring-amber-200">
+                    <Mail className="h-6 w-6" />
+                  </div>
+                  <h3 className="font-['Outfit'] text-xl font-extrabold text-slate-900">
+                    Tus fotos todavía no fueron ingresadas
+                  </h3>
+                  <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">
+                    Apenas estén disponibles online, te enviaremos un email a{' '}
+                    <strong className="text-slate-900">{tutorEmail || familiaActiva?.email || 'la dirección que registraste'}</strong>.
+                    No necesitás volver a registrarte ni revisar la página todos los días.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="mt-6 inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Volver
+                  </button>
+                </div>
+              ) : (
+                <>
 
               {/* 3 Fotos Incluidas Top Panel */}
               <div className="bg-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-md border border-slate-800">
@@ -1385,7 +1404,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'grupal')?.thumbnail || FOTOS_MUESTRA[3].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'grupal')?.thumbnail}
                         alt="Foto grupal"
                         className="w-full h-full object-cover"
                       />
@@ -1413,7 +1432,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'individual')?.thumbnail || FOTOS_MUESTRA[0].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'individual')?.thumbnail}
                         alt="Retrato individual"
                         className="w-full h-full object-cover"
                       />
@@ -1441,7 +1460,7 @@ export default function PortalFamiliasModal({
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'docente')?.thumbnail || FOTOS_MUESTRA.find(f => f.categoria === 'docente')?.thumbnail || FOTOS_MUESTRA[0].thumbnail}
+                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'docente')?.thumbnail}
                         alt="Con docente"
                         className="w-full h-full object-cover"
                       />
@@ -1725,6 +1744,8 @@ export default function PortalFamiliasModal({
                   </button>
                 </div>
               </div>
+                </>
+              )}
             </div>
           )}
 
@@ -2176,7 +2197,7 @@ export default function PortalFamiliasModal({
           {/* STEP 5: Success & Download */}
           {step === 5 && (
             <div className="max-w-xl mx-auto py-4 text-center space-y-6 animate-in zoom-in-95 duration-200">
-              {pedidoGenerado?.estadoPago === 'aprobado' ? (
+              {pedidoGenerado?.estadoPago === 'aprobado' && pedidoGenerado.linkDescargaHD ? (
                 <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-md">
                   <CheckCircle2 className="w-9 h-9" />
                 </div>
@@ -2467,7 +2488,7 @@ export default function PortalFamiliasModal({
                     </p>
                   </div>
                   <a
-                    href={FOTOS_MUESTRA[0].url}
+                    href={pedidoGenerado.linkDescargaHD}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"

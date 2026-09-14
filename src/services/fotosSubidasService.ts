@@ -1,5 +1,4 @@
 import { Foto, CategoriaFoto } from '../types';
-import { FOTOS_MUESTRA } from '../data/colegiosData';
 import { eliminarFotoDeStorage } from './supabaseClient';
 import { fetchAdminAutenticado } from './adminAuthService';
 
@@ -56,6 +55,8 @@ export interface DatosFotoParaRegistrar {
 export interface ResultadoRegistrarFotos {
   success: boolean;
   registradas?: number;
+  emailsEnviados?: number;
+  warning?: string;
   error?: string;
 }
 
@@ -71,7 +72,7 @@ export async function registrarFotosAdmin(fotos: DatosFotoParaRegistrar[]): Prom
     if (!res.ok || !data.success) {
       return { success: false, error: data.error || 'No se pudieron registrar las fotos.' };
     }
-    return { success: true, registradas: data.registradas };
+    return { success: true, registradas: data.registradas, emailsEnviados: data.emailsEnviados, warning: data.warning };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Error de red al registrar las fotos.' };
   }
@@ -228,7 +229,7 @@ export interface SeccionGaleria {
 
 export interface ResultadoGaleriaPublica {
   fotos: Foto[];
-  /** Sección real confirmada por el servidor a partir del código (null si se usó FOTOS_MUESTRA). */
+  /** Sección real confirmada por el servidor a partir del código. */
   seccion: SeccionGaleria | null;
 }
 
@@ -242,12 +243,12 @@ export interface ResultadoGaleriaPublica {
  * opciones del desplegable. Ahora la ÚNICA llave es el código secreto de la sección: el
  * servidor lo valida contra `codigos_seccion` y es quien decide a qué grado/turno/división
  * corresponde — nunca se confía en lo que mande el navegador. Sin un código válido, se
- * devuelven las fotos de muestra (para poder mostrar una vista previa antes de inscribirse).
+ * se devuelve una galería vacía. Nunca se mezclan fotos genéricas con las reales.
  */
 export async function obtenerGaleriaPublica(params: { codigo?: string | null }): Promise<ResultadoGaleriaPublica> {
   const codigo = (params.codigo || '').trim();
   if (!codigo) {
-    return { fotos: FOTOS_MUESTRA, seccion: null };
+    return { fotos: [], seccion: null };
   }
   try {
     const query = new URLSearchParams();
@@ -256,7 +257,7 @@ export async function obtenerGaleriaPublica(params: { codigo?: string | null }):
     const res = await fetch(`/api/fotos?${query.toString()}`);
     const data = await res.json();
     if (!res.ok || !data.success) {
-      return { fotos: FOTOS_MUESTRA, seccion: null };
+      return { fotos: [], seccion: null };
     }
 
     const seccion: SeccionGaleria | null = data.seccion
@@ -269,7 +270,7 @@ export async function obtenerGaleriaPublica(params: { codigo?: string | null }):
       : null;
 
     if (!Array.isArray(data.fotos) || data.fotos.length === 0) {
-      return { fotos: FOTOS_MUESTRA, seccion };
+      return { fotos: [], seccion };
     }
 
     const fotos = data.fotos.map((row: any): Foto => {
@@ -298,6 +299,6 @@ export async function obtenerGaleriaPublica(params: { codigo?: string | null }):
     return { fotos, seccion };
   } catch (err) {
     console.error('Error al obtener la galería de fotos:', err);
-    return { fotos: FOTOS_MUESTRA, seccion: null };
+    return { fotos: [], seccion: null };
   }
 }

@@ -684,6 +684,7 @@ export interface PedidoSeguimiento {
   total: number;
   fecha: string;
   estado: 'pendiente_pago' | 'pagado' | 'entregado' | 'cancelado';
+  linkDescargaHD?: string;
 }
 
 /**

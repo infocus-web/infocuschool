@@ -470,10 +470,15 @@ export default function AdminLoteFotosTab() {
     }
 
     // Registrar en Supabase, en un solo lote, las fotos subidas con éxito
+    let emailsEnviados = 0;
+    let avisoEmail: string | undefined;
     if (fotosParaRegistrar.length > 0) {
       const resultadoRegistro = await registrarFotosAdmin(fotosParaRegistrar);
       if (!resultadoRegistro.success) {
         setErrorMessage(resultadoRegistro.error || 'Las fotos se subieron a Storage pero no se pudieron registrar en el catálogo.');
+      } else {
+        emailsEnviados = resultadoRegistro.emailsEnviados || 0;
+        avisoEmail = resultadoRegistro.warning;
       }
     }
 
@@ -492,7 +497,7 @@ export default function AdminLoteFotosTab() {
     } else if (fallidas > 0) {
       setErrorMessage(`Se subieron ${exitosas} fotos. ${fallidas} fotos fallaron. Revisá el diagnóstico de arriba (puede ser la sesión de admin vencida) y volvé a intentar.`);
     } else {
-      setStatusMessage(`¡${exitosas} foto(s) subidas y vinculadas con éxito a Supabase Pro para ${cursoSeleccionado}! Ya están disponibles en el Portal de Familias.`);
+      setStatusMessage(`¡${exitosas} foto(s) subidas y vinculadas con éxito a Supabase Pro para ${cursoSeleccionado}! Ya están disponibles en el Portal de Familias.${emailsEnviados > 0 ? ` Se enviaron ${emailsEnviados} aviso(s) por email.` : ''}${avisoEmail ? ` ${avisoEmail}` : ''}`);
       setTimeout(() => setStatusMessage(null), 6000);
       // Remover de la cola las subidas exitosamente
       setFotosLote(prev => prev.filter(f => f.estado !== 'subida'));

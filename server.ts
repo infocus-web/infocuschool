@@ -750,10 +750,44 @@ app.post('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respons
       return res.status(400).json({ success: false, error: 'Ninguna foto tiene los datos mínimos (ruta, categoría, grado y turno)' });
     }
 
+    const seccionesDelLote = Array.from(new Map(filas.map((fila: any) => [
+      `${fila.colegio_id}|${fila.codigo_curso}`,
+      { colegioId: fila.colegio_id, codigoCurso: fila.codigo_curso, grado: fila.grado, turno: fila.turno, division: fila.division },
+    ])).values()) as Array<{ colegioId: string; codigoCurso: string; grado: string; turno: string; division: string }>;
+
+    // El aviso se dispara únicamente cuando el curso pasa de cero fotos a tener su primera
+    // galería real. Así, una carga posterior no vuelve a contactar a todas las familias.
+    const seccionesNuevas: typeof seccionesDelLote = [];
+    for (const seccion of seccionesDelLote) {
+      const { count, error: errorConteo } = await supabase
+        .from('fotos')
+        .select('id', { count: 'exact', head: true })
+        .eq('colegio_id', seccion.colegioId)
+        .eq('codigo_curso', seccion.codigoCurso);
+      if (errorConteo) throw errorConteo;
+      if ((count || 0) === 0) seccionesNuevas.push(seccion);
+    }
+
     const { data, error } = await supabase.from('fotos').insert(filas).select();
     if (error) throw error;
 
-    return res.json({ success: true, registradas: data?.length || 0 });
+    let emailsEnviados = 0;
+    const erroresAviso: string[] = [];
+    for (const seccion of seccionesNuevas) {
+      try {
+        emailsEnviados += await avisarFotosDisponiblesASeccion(supabase, seccion);
+      } catch (errorAviso: any) {
+        console.error('[fotos] No se pudo enviar el aviso automático:', errorAviso);
+        erroresAviso.push(errorAviso?.message || 'Error desconocido');
+      }
+    }
+
+    return res.json({
+      success: true,
+      registradas: data?.length || 0,
+      emailsEnviados,
+      warning: erroresAviso.length > 0 ? 'Las fotos se publicaron, pero algunos avisos por email no pudieron enviarse.' : undefined,
+    });
   } catch (err: any) {
     console.error('Error al registrar fotos:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al registrar las fotos' });
@@ -3064,6 +3098,66 @@ function escapeHtml(valor: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+type SeccionFotosDisponible = { colegioId: string; codigoCurso: string; grado: string; turno: string; division: string };
+
+function mismoDatoSeccion(a: unknown, b: unknown): boolean {
+  const normalizar = (valor: unknown) => String(valor ?? '').trim().toLocaleLowerCase('es-AR')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+  return normalizar(a) === normalizar(b);
+}
+
+async function avisarFotosDisponiblesASeccion(supabase: SupabaseClient, seccion: SeccionFotosDisponible): Promise<number> {
+  const resend = getResendClient();
+  if (!resend) throw new Error('RESEND_API_KEY no está configurada; no se enviaron los avisos de galería.');
+
+  const { data: inscripciones, error } = await supabase
+    .from('inscripciones')
+    .select('id,email,padre_nombre,alumno_nombre,colegio_nombre,grado,turno,division,hermanos')
+    .eq('colegio_id', seccion.colegioId)
+    .eq('estado', 'aceptado');
+  if (error) throw error;
+
+  const destinatarios = new Map<string, { id: string; email: string; tutor: string; alumno: string; colegio: string }>();
+  for (const inscripcion of inscripciones || []) {
+    const alumnos = [
+      { nombre: inscripcion.alumno_nombre, grado: inscripcion.grado, turno: inscripcion.turno, division: inscripcion.division },
+      ...(Array.isArray(inscripcion.hermanos) ? inscripcion.hermanos.map((h: any) => ({
+        nombre: h.alumnoNombre || h.alumno_nombre,
+        grado: h.grado,
+        turno: h.turno,
+        division: h.division,
+      })) : []),
+    ];
+    const alumnoDelCurso = alumnos.find((alumno) =>
+      mismoDatoSeccion(alumno.grado, seccion.grado)
+      && mismoDatoSeccion(alumno.turno, seccion.turno)
+      && mismoDatoSeccion(alumno.division, seccion.division)
+    );
+    const email = String(inscripcion.email || '').trim().toLowerCase();
+    if (!alumnoDelCurso || !email.includes('@') || destinatarios.has(email)) continue;
+    destinatarios.set(email, {
+      id: String(inscripcion.id),
+      email,
+      tutor: inscripcion.padre_nombre || 'Familia',
+      alumno: alumnoDelCurso.nombre || 'el alumno/a',
+      colegio: inscripcion.colegio_nombre || 'la institución',
+    });
+  }
+
+  const resultados = await Promise.allSettled(Array.from(destinatarios.values()).map((destinatario) =>
+    resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+      to: [destinatario.email],
+      subject: `Las fotos de ${destinatario.alumno} ya están online`,
+      html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">¡Las fotos ya están online!</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(destinatario.tutor)}</strong>,</p><p style="line-height:1.6">Las fotografías de <strong>${escapeHtml(destinatario.alumno)}</strong>, de ${escapeHtml(seccion.grado)} "${escapeHtml(seccion.division)}" · Turno ${escapeHtml(seccion.turno)}, ya están disponibles para ver y elegir.</p><div style="margin:24px 0;text-align:center"><a href="https://retratoescolar.com.ar" style="display:inline-block;background:#fbbf24;color:#0f172a;text-decoration:none;font-weight:800;padding:13px 22px;border-radius:10px">Ver mis fotos</a></div><p style="font-size:12px;color:#64748b">Ingresá con el mismo código de acceso que recibiste al aprobarse tu inscripción en ${escapeHtml(destinatario.colegio)}.</p></div></div></body></html>`,
+    }, { headers: { 'Idempotency-Key': `fotos-online-${seccion.codigoCurso}-${destinatario.id}` } })
+  ));
+
+  const fallidos = resultados.filter((resultado) => resultado.status === 'rejected' || (resultado.status === 'fulfilled' && resultado.value.error));
+  if (fallidos.length > 0) console.error(`[fotos] Fallaron ${fallidos.length} de ${resultados.length} avisos automáticos.`);
+  return resultados.length - fallidos.length;
+}
+
 interface DatosCorreoFotosHD {
   to: string;
   tutorNombre?: string;
@@ -3923,7 +4017,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 *
       return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
     }
 
-    const columnas = 'id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, familias(nombre, whatsapp)';
+    const columnas = 'id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, familias(nombre, whatsapp)';
     let fila: any = null;
 
     if (query.length >= 4) {
@@ -3939,7 +4033,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 *
     if (!fila && soloDigitos.length >= 6) {
       const { data, error } = await supabase
         .from('pedidos')
-        .select('id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, familias!inner(nombre, whatsapp)')
+        .select('id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, familias!inner(nombre, whatsapp)')
         .ilike('familias.whatsapp', `%${soloDigitos}%`)
         .order('created_at', { ascending: false })
         .limit(1);
@@ -3965,6 +4059,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 *
         total: fila.total,
         fecha: fila.created_at,
         estado: fila.estado,
+        linkDescargaHD: fila.link_descarga_hd || null,
       },
     });
   } catch (err: any) {
