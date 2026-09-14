@@ -370,6 +370,25 @@ export default function PortalFamiliasModal({
           const col = colegios.find((c) => c.id === fam.colegioId);
           if (col) setSelectedColegio(col);
         }
+      } else {
+        // El modal permanece montado cuando se cierra. Si ya no existe una sesión familiar,
+        // eliminar todo dato sensible retenido por la instancia anterior antes de mostrarlo.
+        setFamiliaActiva(null);
+        setHijoSeleccionadoId('principal');
+        setCodigoAcceso('');
+        setCodigoValidadoMsg(null);
+        setCodigoErrorMsg(null);
+        setCodigoSeccionValidado(null);
+        setFotosDisponibles([]);
+        setFotoSeleccionadaIndividual('');
+        setFotoSeleccionadaGrupal('');
+        setFotoSeleccionadaDocente('');
+        setFotosSueltasSeleccionadas([]);
+        setNombreAlumno('');
+        setTutorNombre('');
+        setTutorWhatsapp('');
+        setTutorEmail('');
+        setStep(1);
       }
     }
   }, [isOpen, colegios]);
@@ -1262,10 +1281,21 @@ export default function PortalFamiliasModal({
                           onClick={() => {
                             cerrarSesionFamilia();
                             setFamiliaActiva(null);
+                            setHijoSeleccionadoId('principal');
+                            setCodigoAcceso('');
+                            setCodigoValidadoMsg(null);
+                            setCodigoErrorMsg(null);
+                            setCodigoSeccionValidado(null);
+                            setFotosDisponibles([]);
+                            setFotoSeleccionadaIndividual('');
+                            setFotoSeleccionadaGrupal('');
+                            setFotoSeleccionadaDocente('');
+                            setFotosSueltasSeleccionadas([]);
                             setTutorNombre('');
                             setTutorWhatsapp('');
                             setTutorEmail('');
                             setNombreAlumno('');
+                            setStep(1);
                           }}
                           className="text-[11px] text-rose-600 hover:text-rose-800 underline font-semibold cursor-pointer"
                           title="Cerrar sesión de esta familia"

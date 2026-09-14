@@ -11,6 +11,7 @@ interface HeroProps {
 
 export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchError, setSearchError] = useState('');
   const [familiaActiva, setFamiliaActiva] = useState<InscripcionFamilia | null>(null);
   const { colegios } = useColegiosLista();
 
@@ -40,6 +41,11 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
   const handleSearchSubmit = (e: FormEvent) => {
     e.preventDefault();
     const term = searchTerm.trim();
+    if (!term) {
+      setSearchError('Ingresá tu Código Familiar o código de curso para ver las fotos.');
+      return;
+    }
+    setSearchError('');
     if (filteredColegios.length > 0) {
       onOpenFamilias(filteredColegios[0].id, term || undefined);
     } else {
@@ -181,7 +187,10 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       id="input-buscar-colegio-hero"
                       type="text"
                       value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
+                      onChange={(e) => {
+                        setSearchTerm(e.target.value);
+                        if (searchError) setSearchError('');
+                      }}
                       placeholder="Ingresá tu Código Familiar (ej: FAM-4821) o código de curso..."
                       className="w-full pl-11 pr-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent border-0 focus:outline-hidden focus:ring-0"
                     />
@@ -204,6 +213,11 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </form>
+                {searchError && (
+                  <p role="alert" className="px-3 pt-2 text-sm font-semibold text-rose-700">
+                    {searchError}
+                  </p>
+                )}
               </div>
             )}
 
