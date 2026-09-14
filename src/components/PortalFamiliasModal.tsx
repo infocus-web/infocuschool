@@ -456,6 +456,9 @@ export default function PortalFamiliasModal({
       );
       setCodigoErrorMsg(null);
       setCodigoSeccionValidado(famFound.codigoAsignado);
+      setSolicitudCodigoEnviada(false);
+      setSolicitudCodigoMensaje('');
+      setMostrarFormSolicitudCodigo(false);
       return true;
     }
 
@@ -476,6 +479,9 @@ export default function PortalFamiliasModal({
       setCodigoValidadoMsg(`Institución reconocida: ${colFound.nombre}. Para ver las fotos reales, ingresá el código de acceso de tu curso.`);
       setCodigoErrorMsg(null);
       setCodigoSeccionValidado(null);
+      setSolicitudCodigoEnviada(false);
+      setSolicitudCodigoMensaje('');
+      setMostrarFormSolicitudCodigo(false);
       return true;
     }
 
