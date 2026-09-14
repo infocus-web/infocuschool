@@ -1,5 +1,4 @@
-import { Camera, Heart, ShieldCheck, PhoneCall, Mail, MapPin, Lock } from 'lucide-react';
-import { useWhatsAppConfig, formatearNumeroVisual } from '../services/configuracionService';
+import { Camera, Heart, ShieldCheck, Mail, MapPin, Lock } from 'lucide-react';
 import RetratoEscolarLogo from './RetratoEscolarLogo';
 
 interface FooterProps {
@@ -9,10 +8,6 @@ interface FooterProps {
 }
 
 export default function Footer({ onOpenFamilias, onScrollTo, onOpenAdmin }: FooterProps) {
-  const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
-  const displayNum = formatearNumeroVisual(whatsappNum);
-
   return (
     <footer className="bg-slate-900 text-slate-400 text-xs border-t border-slate-800 pt-16 pb-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -105,15 +100,6 @@ export default function Footer({ onOpenFamilias, onScrollTo, onOpenAdmin }: Foot
                 <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                 <span>Buenos Aires, Argentina</span>
               </p>
-              <a
-                href={`https://wa.me/${whatsappNum}?text=Hola%20Retrato%20Escolar,%20tengo%20una%20consulta%20sobre%20las%20fotos%20de%20mi%20hijo/a`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 hover:text-emerald-400 transition-colors"
-              >
-                <PhoneCall className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>WhatsApp: {displayNum}</span>
-              </a>
               <a
                 href="mailto:infocusfotografiayvideo@gmail.com"
                 className="flex items-center gap-2 hover:text-sky-400 transition-colors"

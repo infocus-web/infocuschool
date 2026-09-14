@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Camera, Search, Menu, X, PhoneCall, Lock, Sparkles, UserPlus } from 'lucide-react';
-import { useWhatsAppConfig } from '../services/configuracionService';
+import { Camera, Search, Menu, X, Mail, Lock, Sparkles, UserPlus } from 'lucide-react';
 import RetratoEscolarLogo from './RetratoEscolarLogo';
 
 interface HeaderProps {
@@ -17,8 +16,6 @@ export default function Header({
   onOpenInscripcion,
 }: HeaderProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
 
   const handleNavClick = (id: string) => {
     onScrollTo(id);
@@ -48,13 +45,11 @@ export default function Header({
               </>
             )}
             <a
-              href={`https://wa.me/${whatsappNum}?text=Hola%20Retrato%20Escolar,%20quisiera%20hacer%20una%20consulta%20sobre%20las%20fotos%20de%20mi%20hijo/a`}
-              target="_blank"
-              rel="noopener noreferrer"
+              href="mailto:infocusfotografiayvideo@gmail.com"
               className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition-colors"
             >
-              <PhoneCall className="w-3.5 h-3.5" />
-              <span>Atención Familias por WhatsApp</span>
+              <Mail className="w-3.5 h-3.5" />
+              <span>Atención Familias por Email</span>
             </a>
           </div>
         </div>

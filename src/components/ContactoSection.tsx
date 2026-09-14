@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { MapPin, Phone, Mail, Clock, Send, CheckCircle2, MessageCircle } from 'lucide-react';
-import { useWhatsAppConfig, formatearNumeroVisual } from '../services/configuracionService';
+import { MapPin, Mail, Clock, Send, CheckCircle2 } from 'lucide-react';
 
 export default function ContactoSection() {
   const [nombre, setNombre] = useState('');
@@ -9,9 +8,6 @@ export default function ContactoSection() {
   const [asunto, setAsunto] = useState('Consulta general');
   const [mensaje, setMensaje] = useState('');
   const [enviado, setEnviado] = useState(false);
-  const { config } = useWhatsAppConfig();
-  const whatsappNum = config.whatsappFlotante || config.whatsappSolicitudCodigo || '5491128625916';
-  const displayNum = formatearNumeroVisual(whatsappNum);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -38,30 +34,17 @@ export default function ContactoSection() {
 
             <div className="space-y-4 pt-2">
               <div className="flex items-start gap-3 p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
-                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
-                  <MessageCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-900">WhatsApp Oficial</p>
-                  <p className="text-xs text-slate-600 mt-0.5">{displayNum}</p>
-                  <a
-                    href={`https://wa.me/${whatsappNum}?text=Hola%20Retrato%20Escolar,%20quisiera%20hacer%20una%20consulta%20desde%20retratoescolar.com.ar`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] font-bold text-emerald-700 hover:underline block mt-1"
-                  >
-                    Chatear ahora por WhatsApp ›
-                  </a>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-3 p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
                 <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
                   <Mail className="w-5 h-5" />
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-900">Correo Electrónico</p>
-                  <p className="text-xs text-slate-600 mt-0.5 font-medium">infocusfotografiayvideo@gmail.com</p>
+                  <a
+                    href="mailto:infocusfotografiayvideo@gmail.com"
+                    className="text-xs text-slate-600 mt-0.5 font-medium hover:text-amber-700 hover:underline block"
+                  >
+                    infocusfotografiayvideo@gmail.com
+                  </a>
                   <p className="text-[11px] text-slate-400">Respuesta promedio en menos de 2 hs</p>
                 </div>
               </div>
@@ -107,7 +90,7 @@ export default function ContactoSection() {
                 </div>
                 <h4 className="text-lg font-bold text-slate-900">¡Mensaje enviado con éxito!</h4>
                 <p className="text-xs text-slate-600">
-                  Muchas gracias por comunicarte con Retrato Escolar. Te escribiremos pronto a tu email o WhatsApp.
+                  Muchas gracias por comunicarte con Retrato Escolar. Te responderemos pronto a tu email.
                 </p>
                 <button
                   onClick={() => setEnviado(false)}
@@ -135,7 +118,7 @@ export default function ContactoSection() {
 
                   <div>
                     <label className="text-xs font-semibold text-slate-700 block mb-1">
-                      Teléfono / WhatsApp
+                      Teléfono (opcional)
                     </label>
                     <input
                       required
