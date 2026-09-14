@@ -209,10 +209,50 @@
 
   /* FAMILY JOURNEY */
   .family-journey{background:var(--paper);}
-  .journey-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:24px; margin-bottom:52px;}
-  .journey-grid .step .num{font-size:34px;}
-  @media(max-width:1150px){.journey-grid{grid-template-columns:repeat(3,1fr); row-gap:36px;}}
-  @media(max-width:640px){.journey-grid{grid-template-columns:1fr;}}
+  .walkthrough{display:grid; grid-template-columns:1fr 1fr; gap:26px; margin-bottom:36px;}
+  .demo-step{border:1px solid var(--line); border-radius:20px; padding:24px; background:#fff; box-shadow:0 14px 34px -28px rgba(35,76,125,.5);}
+  .demo-step-head{display:flex; gap:14px; align-items:flex-start; margin-bottom:18px;}
+  .demo-number{width:38px; height:38px; border-radius:12px; background:var(--accent); color:var(--accent-ink); display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; font-weight:700; flex-shrink:0;}
+  .demo-step h3{font-size:19px; margin-bottom:4px;}
+  .demo-step-head p{font-size:13.5px; color:var(--ink-soft);}
+  .ui-window{border:1px solid #CBD8E8; border-radius:14px; overflow:hidden; background:#F8FBFF; font-size:12px;}
+  .ui-top{background:#14213D; color:#fff; padding:10px 13px; display:flex; justify-content:space-between; align-items:center; font-weight:700;}
+  .ui-top span{color:#F7B801; font-size:10px; text-transform:uppercase; letter-spacing:.04em;}
+  .ui-body{padding:15px;}
+  .ui-label{font-size:10px; color:#60748C; text-transform:uppercase; font-weight:700; letter-spacing:.05em; margin-bottom:5px;}
+  .ui-row{display:flex; gap:9px; align-items:center; margin-top:10px;}
+  .ui-input{flex:1; background:#fff; border:1px solid #BFCFE1; border-radius:9px; padding:9px 11px; color:#263A52; font-family:monospace; font-weight:700;}
+  .ui-button{background:var(--accent); color:var(--accent-ink); border-radius:9px; padding:9px 13px; font-weight:800; white-space:nowrap;}
+  .ui-success{margin-top:11px; padding:10px; border-radius:9px; background:#E8FBF3; border:1px solid #8DDFC0; color:#176B52; line-height:1.4;}
+  .photo-choice-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px;}
+  .photo-choice{background:#fff; border:1px solid #CBD8E8; border-radius:10px; overflow:hidden;}
+  .photo-art{height:74px; display:flex; align-items:center; justify-content:center; background:linear-gradient(145deg,#DDEAFF,#FFEAB8); color:#365A7C; font-size:25px; position:relative;}
+  .photo-art::after{content:'MUESTRA · RETRATO ESCOLAR'; position:absolute; transform:rotate(-18deg); font-size:7px; letter-spacing:.06em; color:rgba(20,33,61,.45); font-weight:800;}
+  .photo-choice div:last-child{padding:8px; font-size:10px; font-weight:700;}
+  .photo-choice.selected{border:2px solid var(--accent);}
+  .photo-choice.selected div:last-child::after{content:' ✓'; color:#14805E;}
+  .selection-count{margin-top:10px; color:#176B52; font-weight:800; text-align:right;}
+  .extra-box{background:#FFF9E7; border:1px solid #F0C84D; border-radius:11px; padding:13px;}
+  .extra-controls{display:flex; align-items:center; justify-content:space-between; margin-top:10px; padding-top:10px; border-top:1px solid #EAD99E;}
+  .counter{display:flex; align-items:center; gap:9px; font-weight:800;}
+  .counter b{width:27px; height:27px; border-radius:8px; display:flex; align-items:center; justify-content:center; background:var(--accent); color:var(--accent-ink); font-size:17px;}
+  .kit-mini-grid{display:grid; grid-template-columns:1fr 1fr; gap:9px;}
+  .kit-mini{background:#fff; border:1px solid #CBD8E8; border-radius:10px; padding:12px; min-height:116px;}
+  .kit-mini.selected{border:2px solid var(--accent); background:#FFFDF5;}
+  .kit-mini strong{display:block; font-size:13px; margin-bottom:5px;}
+  .kit-price{font-family:'Fraunces',serif; font-size:21px; color:var(--ink); font-weight:700; margin-top:9px;}
+  .review-list{display:grid; gap:7px;}
+  .review-item{display:grid; grid-template-columns:34px 1fr auto; gap:9px; align-items:center; padding:8px; border:1px solid #CBD8E8; border-radius:9px; background:#fff;}
+  .review-thumb{height:34px; border-radius:7px; background:linear-gradient(145deg,#DDEAFF,#FFEAB8); display:flex; align-items:center; justify-content:center;}
+  .review-item small{color:var(--ink-soft); display:block;}
+  .payment-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:11px;}
+  .payment-option{border:1px solid #CBD8E8; border-radius:9px; padding:9px; background:#fff; font-weight:700;}
+  .payment-option.selected{border:2px solid #2BADEB; background:#F0FAFF;}
+  .confirmation{text-align:center; padding:20px 15px;}
+  .confirmation-icon{width:48px; height:48px; margin:0 auto 10px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:#E8FBF3; color:#15805E; font-size:24px;}
+  .order-number{margin:13px auto 0; max-width:250px; padding:10px; border-radius:9px; background:#fff; border:1px solid #CBD8E8; font-family:monospace; font-weight:800;}
+  @media(max-width:850px){.walkthrough{grid-template-columns:1fr;}}
+  @media(max-width:520px){.demo-step{padding:17px}.photo-choice-grid{grid-template-columns:1fr}.photo-art{height:58px}.kit-mini-grid,.payment-grid{grid-template-columns:1fr}}
   .journey-note{
     background:var(--bg-alt); border:1px solid var(--line); border-radius:14px;
     padding:16px 20px; font-size:13.5px; color:var(--ink-soft); margin-bottom:36px;
@@ -564,55 +604,43 @@
 <section class="family-journey" id="experiencia-familias">
   <div class="wrap">
     <div class="section-head">
-      <div class="eyebrow">Experiencia de las familias</div>
-      <h2>Así vive cada familia el proceso, de principio a fin</h2>
-      <p>Desde que reciben el aviso por email hasta que tienen sus fotos — todo se gestiona en RetratoEscolar.com.ar, en cinco pasos simples.</p>
+      <div class="eyebrow">Así funciona RetratoEscolar.com.ar</div>
+      <h2>El proceso completo, explicado paso a paso</h2>
+      <p>Esta demostración recrea lo que verá cada familia. Los nombres, códigos, fotos y correos son ficticios.</p>
+    </div>
+    <div class="walkthrough">
+      <article class="demo-step">
+        <div class="demo-step-head"><div class="demo-number">1</div><div><h3>Ingresá con tu código</h3><p>El código familiar llega al email registrado y protege la galería del curso.</p></div></div>
+        <div class="ui-window"><div class="ui-top">RetratoEscolar <span>Acceso para familias</span></div><div class="ui-body"><div class="ui-label">Código familiar o del curso</div><div class="ui-row"><div class="ui-input">FAM-7K2P</div><div class="ui-button">Validar</div></div><div class="ui-success">✓ Código verificado · Familia García<br><small>Sofía García · Sala de 5 “A” · Turno Mañana</small></div></div></div>
+      </article>
+
+      <article class="demo-step">
+        <div class="demo-step-head"><div class="demo-number">2</div><div><h3>Elegí las tres fotos del pack</h3><p>Una grupal, una individual y una con docente. Ninguna queda elegida por defecto.</p></div></div>
+        <div class="ui-window"><div class="ui-top">Galería protegida <span>0 de 3 elegidas</span></div><div class="ui-body"><div class="photo-choice-grid"><div class="photo-choice selected"><div class="photo-art">👥</div><div>Grupal 20×30 cm</div></div><div class="photo-choice selected"><div class="photo-art">👧</div><div>Individual 15×21 cm</div></div><div class="photo-choice selected"><div class="photo-art">🧑‍🏫</div><div>Con docente 15×21 cm</div></div></div><div class="selection-count">✓ 3 de 3 fotos seleccionadas</div></div></div>
+      </article>
+
+      <article class="demo-step">
+        <div class="demo-step-head"><div class="demo-number">3</div><div><h3>Decidí si querés una carpeta extra</h3><p>Es opcional y sirve para regalar el mismo juego completo a abuelos o familiares.</p></div></div>
+        <div class="ui-window"><div class="ui-top">Adicional opcional <span>Para familiares</span></div><div class="ui-body"><div class="extra-box"><strong>Carpeta escolar extra completa</strong><br><small>Incluye las mismas tres fotografías seleccionadas.</small><div class="extra-controls"><strong>+$15.000</strong><div class="counter"><span>−</span><span>1 carpeta</span><b>+</b></div></div></div></div></div>
+      </article>
+
+      <article class="demo-step">
+        <div class="demo-step-head"><div class="demo-number">4</div><div><h3>Seleccioná el formato</h3><p>Podés elegir el kit impreso con descarga HD o recibir únicamente las fotos digitales.</p></div></div>
+        <div class="ui-window"><div class="ui-top">Elegí tu kit <span>Compra opcional</span></div><div class="ui-body"><div class="kit-mini-grid"><div class="kit-mini selected"><strong>Kit Impreso + Digital</strong><small>3 fotos impresas, carpeta y descarga HD.</small><div class="kit-price">$30.000</div></div><div class="kit-mini"><strong>Solo Digital HD</strong><small>Las mismas 3 fotos en máxima resolución.</small><div class="kit-price">$15.000</div></div></div></div></div>
+      </article>
+
+      <article class="demo-step">
+        <div class="demo-step-head"><div class="demo-number">5</div><div><h3>Revisá todo antes de pagar</h3><p>Vas a ver cada foto, su tamaño, la cantidad de copias, los adicionales y el total.</p></div></div>
+        <div class="ui-window"><div class="ui-top">Resumen del pedido <span>Pago seguro</span></div><div class="ui-body"><div class="review-list"><div class="review-item"><div class="review-thumb">👥</div><div><strong>Grupal</strong><small>20×30 cm</small></div><b>2 copias</b></div><div class="review-item"><div class="review-thumb">👧</div><div><strong>Individual</strong><small>15×21 cm</small></div><b>2 copias</b></div><div class="review-item"><div class="review-thumb">🧑‍🏫</div><div><strong>Con docente</strong><small>15×21 cm</small></div><b>2 copias</b></div></div><div class="payment-grid"><div class="payment-option selected">▣ Mercado Pago</div><div class="payment-option">▤ Transferencia</div></div><div class="ui-row"><div><strong>Total del ejemplo</strong><br><small>Comprobante a familia.garcia@correo.com</small></div><div class="ui-button">Pagar $45.000</div></div></div></div>
+      </article>
+
+      <article class="demo-step">
+        <div class="demo-step-head"><div class="demo-number">6</div><div><h3>Recibí la confirmación</h3><p>El pedido queda registrado. Los avisos, el comprobante y la descarga HD llegan por email.</p></div></div>
+        <div class="ui-window"><div class="ui-top">Pedido confirmado <span>Seguimiento activo</span></div><div class="confirmation"><div class="confirmation-icon">✓</div><h3>¡Gracias por tu pedido, Familia García!</h3><p>Te avisaremos cuando esté en producción y cuando puedas retirarlo.</p><div class="order-number">Pedido RE-2026-1048</div></div></div>
+      </article>
     </div>
 
-    <div class="journey-grid">
-      <div class="step">
-        <div class="num">01</div>
-        <h4>Ingresan a RetratoEscolar.com.ar</h4>
-        <p>Reciben por email el aviso y acceden con su código de curso o código familiar. Si lo olvidan, pueden solicitarlo nuevamente por email.</p>
-      </div>
-      <div class="step">
-        <div class="num">02</div>
-        <h4>Vista previa con marca de agua</h4>
-        <p>Entran a la galería privada y miran todas las fotos del evento en baja calidad, con la marca "INFOCUS · MUESTRA", sin costo ni apuro.</p>
-      </div>
-      <div class="step">
-        <div class="num">03</div>
-        <h4>Eligen sus 3 fotos</h4>
-        <p>Seleccionan la grupal (20x30cm), la individual (15x21cm) y la que es con el/la docente (15x21cm): el kit completo del acto.</p>
-      </div>
-      <div class="step">
-        <div class="num">04</div>
-        <h4>Pagan con Mercado Pago</h4>
-        <p>Eligen Kit Impreso + Digital o Solo Digital HD, y pagan online — sin sobres, sin efectivo y sin que el colegio intervenga.</p>
-      </div>
-      <div class="step">
-        <div class="num">05</div>
-        <h4>Reciben sus fotos en HD</h4>
-        <p>Al confirmarse el pago, la web envía el pedido: las 3 fotos en alta resolución llegan por email, listas para guardar.</p>
-      </div>
-    </div>
-
-    <div class="journey-note">
-      <span class="check-badge" style="flex-shrink:0;">✓</span>
-      <div><strong>Antes de pagar, nunca se puede descargar una foto sin marca de agua.</strong> Recién al confirmarse el pago por Mercado Pago se libera la versión en alta resolución de esas 3 fotos.</div>
-    </div>
-
-    <div class="outcome-head">Y según lo que compraron, así llegan sus fotos en HD</div>
-    <div class="delivery-row">
-      <div class="delivery-card">
-        <div class="d-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="8" width="18" height="13" rx="1.5" stroke="currentColor" stroke-width="1.8"/><path d="M3 8h18M12 8v13" stroke="currentColor" stroke-width="1.8"/><path d="M12 8c-1.2-4-6-4.3-6-1.3S9.3 8 12 8zm0 0c1.2-4 6-4.3 6-1.3S14.7 8 12 8z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></div>
-        <div><h5>Compraron el Kit Impreso + Digital</h5><p>Retiran sus 3 fotos impresas en el colegio, y además reciben por email las mismas 3 fotos en HD sin marca de agua — de regalo, adjuntas o por link de descarga.</p></div>
-      </div>
-      <div class="delivery-card">
-        <div class="d-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div><h5>Compraron Solo Digital HD</h5><p>Reciben únicamente el email con sus 3 fotos en alta resolución — adjuntas si el peso lo permite, o con un link de descarga privado.</p></div>
-      </div>
-    </div>
+    <div class="journey-note"><span class="check-badge" style="flex-shrink:0;">✓</span><div><strong>Las vistas previas siempre tienen marca de agua.</strong> Las fotos HD sin marca se habilitan únicamente después de confirmar el pago.</div></div>
   </div>
 </section>
 
