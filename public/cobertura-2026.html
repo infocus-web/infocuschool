@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="robots" content="noindex, nofollow">
 <title>Infocus Producciones — Propuesta de Cobertura Fotográfica Institucional</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -255,7 +254,6 @@
   }
   .diff-card h4{font-size:17px; margin-bottom:10px;}
   .diff-card p{font-size:14.5px; color:var(--ink-soft);}
-  .diff-card.highlight{background:var(--accent); border-color:var(--accent);}
 
   .compare{margin-top:56px; background:var(--paper); border:1px solid var(--line); border-radius:18px; overflow:hidden;}
   .compare-row{display:grid; grid-template-columns:1.5fr 1fr 1fr;}
@@ -278,9 +276,6 @@
     .compare-row .col-us{padding-bottom:16px;}
     .cell-label{display:block; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-soft); margin-right:8px; flex-shrink:0; width:60px;}
   }
-  .diff-card.highlight h4, .diff-card.highlight p{color:#fff;}
-  .diff-card.highlight p{color:#3A3221;}
-  .diff-card.highlight .icon{background:rgba(255,255,255,0.2); color:#fff;}
 
   /* PRICING */
   .pricing{background:var(--bg-alt);}
@@ -318,20 +313,6 @@
     padding:20px 24px; font-size:14px; color:var(--ink-soft);
   }
   .benchmark strong{color:var(--accent-dark);}
-  .coop-note{
-    margin-top:24px; background:var(--ink); border-radius:16px; padding:22px 26px;
-    display:flex; align-items:center; gap:22px; flex-wrap:wrap;
-  }
-  .coop-note .coop-icon{
-    width:44px; height:44px; border-radius:50%; background:var(--gold); color:var(--ink);
-    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:18px;
-  }
-  .coop-note .coop-text{flex:1; min-width:220px; color:#E3E5E7; font-size:14.5px;}
-  .coop-note .coop-text strong{color:#fff;}
-  .coop-note .coop-figures{display:flex; gap:18px; flex-wrap:wrap;}
-  .coop-note .coop-fig{background:rgba(255,255,255,0.08); border-radius:10px; padding:10px 16px; text-align:center;}
-  .coop-note .coop-fig .n{font-family:'Fraunces',serif; font-size:20px; color:var(--gold); display:block;}
-  .coop-note .coop-fig .l{font-size:11.5px; color:#AFB1B5; display:block; margin-top:2px;}
 
   /* OPT-IN STRIP */
   .opt-in-strip{
@@ -417,26 +398,6 @@
   .faq-item[open] summary::after{transform:rotate(45deg);}
   .faq-item p{font-size:14.5px; color:var(--ink-soft); padding:0 0 18px; max-width:46ch;}
 
-  /* CTA FINAL */
-  .cta-final{background:var(--ink); color:#E3E5E7; text-align:center;}
-  .cta-final h2{color:#fff; font-size:clamp(28px,4vw,42px); max-width:680px; margin:0 auto 18px;}
-  .cta-final p{color:#BCBEC1; max-width:560px; margin:0 auto 36px; font-size:16.5px;}
-  .staff-gesture{
-    margin:-16px auto 36px; max-width:620px; background:rgba(255,255,255,0.06); border:1px solid rgba(210,163,51,0.4);
-    border-radius:16px; padding:20px 24px; display:flex; align-items:center; gap:16px; text-align:left;
-  }
-  .staff-gesture .icon{
-    width:40px; height:40px; border-radius:50%; background:var(--gold); color:var(--ink);
-    display:flex; align-items:center; justify-content:center; flex-shrink:0; font-size:17px;
-  }
-  .staff-gesture p{color:#A9ABAF; font-size:14.5px; margin:0; line-height:1.55;}
-  .staff-gesture strong{color:#fff;}
-  @media(max-width:600px){.staff-gesture{flex-direction:column; text-align:center;}}
-  .contact-row{display:flex; justify-content:center; gap:40px; flex-wrap:wrap; margin-top:56px; padding-top:36px; border-top:1px solid rgba(255,255,255,0.14);}
-  .contact-item{font-size:14px; color:#A9ABAF;}
-  .contact-item strong{display:block; font-family:'Fraunces',serif; font-size:16px; color:#fff; margin-bottom:4px; font-weight:600;}
-  .contact-link{color:#A9ABAF; text-decoration:none; border-bottom:1px solid rgba(169,171,175,0.35); transition:color .2s, border-color .2s;}
-  .contact-link:hover{color:#fff; border-color:#fff;}
 
   footer{background:#06070A; color:#787A7E; text-align:center; padding:32px; font-size:12.5px;}
   footer strong{color:#BCBEC1;}
@@ -462,7 +423,6 @@
     .gcell:nth-child(1){grid-column:span 2;}
     .gcell:nth-child(n){grid-column:span 1;}
     .nav-links{display:none;}
-    .contact-row{gap:24px;}
     .nav-inner{padding:14px 20px;}
     .logo{font-size:15.5px; white-space:nowrap;}
     .logo .mark{width:26px; height:26px;}
@@ -471,7 +431,7 @@
   }
 
   @media print{
-    header.nav, .hero-cta, .cta-final .btn{display:none;}
+    header.nav, .hero-cta{display:none;}
     section{padding:40px 0;}
     .hero{min-height:auto; padding:60px 0;}
   }
@@ -505,7 +465,7 @@
       <p class="lead">Cubrimos cada acto, cada logro y cada momento del calendario escolar — con un equipo profesional y sin que la institución tenga que gestionar nada.</p>
       <div class="hero-cta">
         <a href="#propuesta" class="btn">Ver la propuesta ↓</a>
-        <a href="#cta" class="btn ghost">Proponer prueba piloto</a>
+        <a href="https://wa.me/5491128625916?text=Hola%2C%20quiero%20coordinar%20una%20reuni%C3%B3n%20por%20la%20propuesta%20de%20cobertura%20fotogr%C3%A1fica" target="_blank" rel="noopener" class="btn ghost">Coordinar una reunión</a>
       </div>
       <div class="hero-meta">
         <div><strong>+8</strong>tipos de eventos cubiertos por año</div>
@@ -677,11 +637,6 @@
       <h2>No competimos por precio. Competimos por cobertura completa.</h2>
     </div>
     <div class="diff-grid">
-      <div class="diff-card highlight">
-        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 21s-7-4.35-9.5-8.5C.7 8.7 3 5 6.5 5c2 0 3.3 1.2 5.5 3.5C14.2 6.2 15.5 5 17.5 5 21 5 23.3 8.7 21.5 12.5 19 16.65 12 21 12 21z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></div>
-        <h4>Aporte a la cooperadora</h4>
-        <p>El 20% de cada venta se destina directamente a la cooperadora del colegio — un beneficio institucional, no solo un servicio.</p>
-      </div>
       <div class="diff-card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 4h16M12 4v9m0 0a4 4 0 01-4 4H6M12 13a4 4 0 004 4h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></div>
         <h4>Cobertura anual completa</h4>
@@ -736,11 +691,6 @@
         <div class="col-us"><span class="cell-label">Infocus</span>Cero: coordinamos, difundimos, cobramos y entregamos</div>
       </div>
       <div class="compare-row">
-        <div class="label">Aporte a la cooperadora</div>
-        <div class="col-them"><span class="cell-label">Hoy</span>No</div>
-        <div class="col-us"><span class="cell-label">Infocus</span>Sí, 20% de cada venta</div>
-      </div>
-      <div class="compare-row">
         <div class="label">Marco legal de uso de imagen</div>
         <div class="col-them"><span class="cell-label">Hoy</span>No especificado</div>
         <div class="col-us"><span class="cell-label">Infocus</span>Gestionado conforme a la Ley 25.326</div>
@@ -784,7 +734,7 @@
           <li><span class="tick">✓</span>1 carpeta de presentación con diseño exclusivo</li>
           <li><span class="tick">✓</span>🎁 Descarga en alta resolución (HD), de regalo</li>
         </ul>
-        <a href="#cta" class="btn" style="justify-content:center; background:var(--gold); color:#1C1505; box-shadow:none;">Elegir esta opción</a>
+        <a href="https://wa.me/5491128625916?text=Hola%2C%20quiero%20coordinar%20una%20reuni%C3%B3n%20por%20la%20propuesta%20de%20cobertura%20fotogr%C3%A1fica" target="_blank" rel="noopener" class="btn" style="justify-content:center; background:var(--gold); color:#1C1505; box-shadow:none;">Elegir esta opción</a>
       </div>
       <div class="price-card">
         <h3>Solo Digital HD</h3>
@@ -797,16 +747,7 @@
           <li><span class="tick">✓</span>Acceso inmediato desde el celular</li>
           <li><span class="tick">✓</span>Pueden sumar el kit impreso después, si lo prefieren</li>
         </ul>
-        <a href="#cta" class="btn" style="justify-content:center;">Elegir esta opción</a>
-      </div>
-    </div>
-
-    <div class="coop-note">
-      <div class="coop-icon">🎓</div>
-      <div class="coop-text"><strong>El 20% de cada venta queda para la cooperadora del colegio</strong>, sin que el colegio administre cobros ni gestione nada — se calcula y se rinde automáticamente por evento.</div>
-      <div class="coop-figures">
-        <div class="coop-fig"><span class="n">$6.000</span><span class="l">por Kit Impreso+Digital</span></div>
-        <div class="coop-fig"><span class="n">$3.000</span><span class="l">por Solo Digital HD</span></div>
+        <a href="https://wa.me/5491128625916?text=Hola%2C%20quiero%20coordinar%20una%20reuni%C3%B3n%20por%20la%20propuesta%20de%20cobertura%20fotogr%C3%A1fica" target="_blank" rel="noopener" class="btn" style="justify-content:center;">Elegir esta opción</a>
       </div>
     </div>
 
@@ -890,10 +831,6 @@
           <summary>¿Cómo se maneja el uso de imagen de los alumnos?</summary>
           <p>Gestionamos la autorización correspondiente conforme a la Ley 25.326 de Protección de Datos Personales, coordinado junto con el colegio.</p>
         </details>
-        <details class="faq-item">
-          <summary>¿Podemos probar antes de comprometernos a todo el año?</summary>
-          <p>Sí. Proponemos cubrir un primer evento sin cargo, para que el equipo directivo y las familias conozcan la calidad del trabajo antes de definir la cobertura anual completa.</p>
-        </details>
       </div>
       <div class="faq-track">
         <h3>Para las familias</h3>
@@ -915,24 +852,6 @@
           <p>No hay ningún problema. No es obligatorio, y no comprar no afecta el acceso del alumno a ningún otro evento o servicio del colegio.</p>
         </details>
       </div>
-    </div>
-  </div>
-</section>
-
-<section class="cta-final" id="cta">
-  <div class="wrap">
-    <div class="eyebrow" style="color:#E5BF6D;">Próximo paso</div>
-    <h2>Empecemos con una prueba piloto</h2>
-    <p>Proponemos cubrir un evento sin cargo para que el equipo directivo y las familias conozcan la calidad del trabajo, antes de comprometerse a la cobertura anual completa.</p>
-    <div class="staff-gesture">
-      <div class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="2" stroke="currentColor" stroke-width="1.8"/><path d="M3 16l4.5-3.5L11 15l3-3 7 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <p><strong>Un gesto para el equipo docente.</strong> Como parte de la prueba piloto, ofrecemos retratos individuales gratuitos a un grupo reducido del personal del colegio (dirección y algunos docentes) — sin cargo, a modo de muestra de nuestro trabajo.</p>
-    </div>
-    <a href="https://wa.me/5491128625916?text=Hola%2C%20quiero%20coordinar%20una%20reuni%C3%B3n%20por%20la%20propuesta%20de%20cobertura%20fotogr%C3%A1fica" target="_blank" rel="noopener" class="btn">Coordinar una reunión</a>
-    <div class="contact-row">
-      <div class="contact-item"><strong>Email</strong><a href="mailto:infocusfotografiayvideo@gmail.com" class="contact-link">infocusfotografiayvideo@gmail.com</a></div>
-      <div class="contact-item"><strong>WhatsApp</strong><a href="https://wa.me/5491128625916" target="_blank" rel="noopener" class="contact-link">+54 9 11 2862-5916</a></div>
-      <div class="contact-item"><strong>Instagram</strong><a href="https://instagram.com/somos.infocus" target="_blank" rel="noopener" class="contact-link">@somos.infocus</a></div>
     </div>
   </div>
 </section>
