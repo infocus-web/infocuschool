@@ -550,7 +550,11 @@ export default function PortalFamiliasModal({
         turno: turno || undefined,
       });
       if (resultado.success) {
-        setSolicitudCodigoMensaje(resultado.mensaje || 'Recibimos tu solicitud. Te contactaremos cuando podamos confirmar tus datos.');
+        setSolicitudCodigoMensaje(
+          resultado.envioAutomatico
+            ? `Te enviamos por email a ${solicitudContacto.trim()} tu código. Si no lo encontrás, revisá la bandeja de Spam. Si aun así no aparece, comunicate con los directivos o docentes y te lo enviaremos a la brevedad.`
+            : (resultado.mensaje || 'Recibimos tu solicitud. Te contactaremos cuando podamos confirmar tus datos.')
+        );
         setSolicitudCodigoEnviada(true);
       } else {
         setSolicitudCodigoError(resultado.error || 'No se pudo enviar la solicitud.');
