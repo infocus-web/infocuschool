@@ -2,8 +2,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Camera, Upload, CheckCircle2,
   Trash2, RefreshCw, ShieldCheck, Check,
-  AlertCircle, Database, Copy, HardDrive, Key,
-  Sliders, Image as ImageIcon, Sparkles, User,
+  AlertCircle, Database, Copy, HardDrive,
+  Image as ImageIcon, Sparkles, User,
   X, CheckSquare, Square, Wand2
 } from 'lucide-react';
 import {
@@ -17,17 +17,12 @@ import {
   uploadFotoWeb, 
   uploadFotoHD,
   testSupabaseConnection,
-  limpiarStorageBucket,
-  SupabaseDiagnosticResult,
-  getSupabaseConfig,
-  saveSupabaseConfig,
-  resetSupabaseConfig
+  SupabaseDiagnosticResult
 } from '../services/supabaseClient';
 import {
   registrarFotosAdmin,
   obtenerFotosActivasAdmin,
   eliminarFotoActivaAdmin,
-  limpiarTodasLasFotosAdmin,
   regenerarMiniaturasAdmin,
   regenerarMarcaAguaAdmin,
   FotoRegistrada
@@ -92,13 +87,10 @@ export default function AdminLoteFotosTab() {
   // Supabase Diagnostics & Settings
   const [diagnostico, setDiagnostico] = useState<SupabaseDiagnosticResult | null>(null);
   const [isTestingSupabase, setIsTestingSupabase] = useState(false);
-  const [mostrarConfigSupabase, setMostrarConfigSupabase] = useState(false);
   const [mostrarSqlHelper, setMostrarSqlHelper] = useState(false);
   const [sqlCopiado, setSqlCopiado] = useState(false);
 
   // Form config
-  const [configUrl, setConfigUrl] = useState(() => getSupabaseConfig().url);
-  const [configKey, setConfigKey] = useState(() => getSupabaseConfig().anonKey);
 
   // Colegio actualmente seleccionado, para leer sus grados/turnos/divisiones configurados
   const colegioActualObj = useMemo(
@@ -504,30 +496,6 @@ export default function AdminLoteFotosTab() {
     }
   };
 
-  const handleLimpiarSupabaseCompleto = async () => {
-    const confirmar = window.confirm(
-      '¿Estás seguro de vaciar el almacenamiento de Supabase y eliminar las fotos subidas?\n\nEsta acción dejará los buckets "fotos-web" y "fotos-hd" limpios.'
-    );
-    if (!confirmar) return;
-
-    setIsProcessing(true);
-    try {
-      const resWeb = await limpiarStorageBucket('fotos-web');
-      const resHD = await limpiarStorageBucket('fotos-hd');
-      await limpiarTodasLasFotosAdmin();
-      setFotosLote([]);
-      await recargarFotosActivas();
-
-      setStatusMessage(`¡Supabase Storage limpiado con éxito! Se eliminaron ${resWeb.eliminados + resHD.eliminados} archivos. Listo para la subida de fotos escolares.`);
-      setTimeout(() => setStatusMessage(null), 5000);
-      handleEjecutarDiagnostico();
-    } catch (err: any) {
-      setErrorMessage('Error al limpiar Supabase: ' + (err?.message || 'Error desconocido'));
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   // Migración: fotos que ya estaban subidas antes de separar la miniatura limpia de la
   // versión con marca de agua. Genera la miniatura faltante a partir del original guardado,
   // sin tener que volver a subir nada. Se llama al endpoint en bucle porque el servidor
@@ -693,31 +661,6 @@ export default function AdminLoteFotosTab() {
     }
   };
 
-  const handleGuardarConfiguracion = (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = saveSupabaseConfig(configUrl, configKey);
-    if (!res.ok) {
-      setErrorMessage(res.error || 'Clave de Supabase rechazada por seguridad.');
-      setTimeout(() => setErrorMessage(null), 5000);
-      return;
-    }
-    setMostrarConfigSupabase(false);
-    setStatusMessage('Configuración de Supabase actualizada con éxito.');
-    setTimeout(() => setStatusMessage(null), 3000);
-    handleEjecutarDiagnostico();
-  };
-
-  const handleRestaurarConfiguracion = () => {
-    resetSupabaseConfig();
-    const def = getSupabaseConfig();
-    setConfigUrl(def.url);
-    setConfigKey(def.anonKey);
-    setMostrarConfigSupabase(false);
-    setStatusMessage('Configuración restaurada a los valores predeterminados.');
-    setTimeout(() => setStatusMessage(null), 3000);
-    handleEjecutarDiagnostico();
-  };
-
   // Auditoría 2026-09-09: este script antes dejaba política pública de INSERT en fotos-web,
   // e INSERT + SELECT + "FOR ALL" (o sea, también UPDATE/DELETE) públicas en fotos-hd — eso es
   // lo que permitía a cualquier visitante (sin PIN, sin login) descargar gratis todas las
@@ -802,9 +745,7 @@ USING (bucket_id = 'fotos-web');
                   Activo
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5 truncate max-w-md font-mono">
-                {getSupabaseConfig().url}
-              </p>
+              <p className="text-xs text-slate-400 mt-0.5">Estado del almacenamiento de fotografías</p>
             </div>
           </div>
 
@@ -817,14 +758,6 @@ USING (bucket_id = 'fotos-web');
             >
               <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${isTestingSupabase ? 'animate-spin' : ''}`} />
               <span>Probar Conexión</span>
-            </button>
-            <button
-              onClick={() => setMostrarConfigSupabase(!mostrarConfigSupabase)}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-              title="Configurar credenciales Anon de Supabase"
-            >
-              <Sliders className="w-3.5 h-3.5 text-slate-300" />
-              <span>Ajustes</span>
             </button>
             <button
               onClick={handleRegenerarMiniaturas}
@@ -852,20 +785,11 @@ USING (bucket_id = 'fotos-web');
                   : 'Aliviar Marca de Agua'}
               </span>
             </button>
-            <button
-              onClick={handleLimpiarSupabaseCompleto}
-              disabled={isProcessing}
-              className="px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-bold rounded-xl transition-all border border-rose-800/60 flex items-center gap-1.5 cursor-pointer"
-              title="Vaciar buckets y dejar listo para producción"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-              <span>Limpiar Supabase</span>
-            </button>
           </div>
         </div>
 
         {/* Diagnostic Status Chips */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
             <span className="text-slate-400 text-[11px] block">Bucket Público (Muestras):</span>
             <div className="flex items-center gap-2 mt-1 font-mono font-bold">
@@ -910,70 +834,7 @@ USING (bucket_id = 'fotos-web');
             </div>
           </div>
 
-          <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-            <span className="text-slate-400 text-[11px] block">Tipo de Clave Configurada:</span>
-            <div className="flex items-center gap-2 mt-1 font-semibold">
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-slate-200">
-                {diagnostico?.keyType === 'publishable_anon'
-                  ? 'Anon Publishable'
-                  : diagnostico?.keyType === 'custom'
-                  ? 'Anon Personalizada'
-                  : 'Sin Clave'}
-              </span>
-            </div>
-          </div>
         </div>
-
-        {/* Expandable Configuration Form */}
-        {mostrarConfigSupabase && (
-          <form onSubmit={handleGuardarConfiguracion} className="bg-slate-800/90 p-4 rounded-xl border border-slate-700 space-y-3">
-            <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider">
-              Configurar Clave Pública Anon de Supabase
-            </h4>
-            <p className="text-[11px] text-slate-300">
-              Podés ingresar tu <strong>Anon Key / Publishable Key</strong> pública de Supabase. Por seguridad, la Service Role Key está deshabilitada en el cliente y solo se ejecuta del lado del servidor.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="space-y-1">
-                <label className="text-slate-300 font-bold">Supabase URL</label>
-                <input
-                  type="text"
-                  required
-                  value={configUrl}
-                  onChange={e => setConfigUrl(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-slate-300 font-bold">Supabase Anon Key (Clave Pública)</label>
-                <input
-                  type="password"
-                  required
-                  value={configKey}
-                  onChange={e => setConfigKey(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs"
-                  placeholder="sb_publishable_... o anon key"
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={handleRestaurarConfiguracion}
-                className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs font-bold rounded-lg cursor-pointer"
-              >
-                Restaurar por Defecto
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-lg cursor-pointer shadow"
-              >
-                Guardar y Conectar
-              </button>
-            </div>
-          </form>
-        )}
 
         {/* Expandable SQL RLS Helper */}
         {mostrarSqlHelper && (
