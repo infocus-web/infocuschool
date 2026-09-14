@@ -2999,6 +2999,50 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
 
+    // Si escribió el mismo email con el que se registró, el código sólo se reenvía a esa
+    // dirección. No se devuelve en la respuesta pública ni se revela si pertenece a otra persona.
+    if (contactoLimpio.includes('@')) {
+      let inscripcionesQuery = supabase
+        .from('inscripciones')
+        .select('id,email,padre_nombre,colegio_nombre,codigo_asignado,alumno_nombre,alumno_apellido,grado,division,turno,hermanos,solicita_foto_hermanos')
+        .eq('estado', 'aceptado')
+        .ilike('email', contactoLimpio)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (colegioId) inscripcionesQuery = inscripcionesQuery.eq('colegio_id', colegioId);
+
+      const { data: coincidencias, error: errorBusqueda } = await inscripcionesQuery;
+      if (errorBusqueda) throw errorBusqueda;
+      const inscripcion = coincidencias?.[0];
+      if (inscripcion?.codigo_asignado && inscripcion.email) {
+        const alumnos = [
+          { nombre: inscripcion.alumno_nombre, apellido: inscripcion.alumno_apellido || '', grado: inscripcion.grado, division: inscripcion.division, turno: inscripcion.turno },
+          ...(Array.isArray(inscripcion.hermanos) ? inscripcion.hermanos : []).map((h: any) => ({
+            nombre: h.alumnoNombre || h.alumno_nombre,
+            apellido: h.alumnoApellido || h.alumno_apellido || '',
+            grado: h.grado,
+            division: h.division,
+            turno: h.turno,
+          })),
+        ];
+        const resultadoEmail = await enviarCorreoCodigoAcceso({
+          to: inscripcion.email,
+          padreNombre: inscripcion.padre_nombre,
+          colegioNombre: inscripcion.colegio_nombre,
+          codigo: inscripcion.codigo_asignado,
+          alumnos,
+          solicitaFotoHermanos: Boolean(inscripcion.solicita_foto_hermanos),
+        });
+        if (!resultadoEmail.success) throw new Error(resultadoEmail.error || 'No se pudo reenviar el código por email');
+
+        return res.json({
+          success: true,
+          envioAutomatico: true,
+          mensaje: 'Te enviamos tu Código Familiar al correo registrado. Revisá también la carpeta Spam o Correo no deseado.',
+        });
+      }
+    }
+
     const { data, error } = await supabase
       .from('solicitudes_codigo')
       .insert({
@@ -3016,7 +3060,12 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 
       .single();
     if (error) throw error;
 
-    return res.json({ success: true, solicitud: data });
+    return res.json({
+      success: true,
+      solicitud: data,
+      envioAutomatico: false,
+      mensaje: 'Recibimos tu solicitud. Revisaremos los datos y te contactaremos a la brevedad.',
+    });
   } catch (err: any) {
     console.error('Error al guardar solicitud de código:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al enviar la solicitud' });

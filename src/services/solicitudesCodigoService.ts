@@ -54,7 +54,7 @@ function mapearFilaSupabaseASolicitud(row: any): SolicitudCodigo {
 /** Portal público: la familia deja sus datos para que el fotógrafo le facilite el código */
 export async function enviarSolicitudCodigo(
   datos: DatosSolicitudCodigo
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; mensaje?: string; envioAutomatico?: boolean; error?: string }> {
   try {
     const res = await fetch('/api/solicitudes-codigo', {
       method: 'POST',
@@ -65,7 +65,7 @@ export async function enviarSolicitudCodigo(
     if (!res.ok || !data.success) {
       return { success: false, error: data.error || 'No se pudo enviar la solicitud.' };
     }
-    return { success: true };
+    return { success: true, mensaje: data.mensaje, envioAutomatico: Boolean(data.envioAutomatico) };
   } catch (err: any) {
     console.error('Error al enviar solicitud de código:', err);
     return { success: false, error: 'Error de conexión con el servidor.' };

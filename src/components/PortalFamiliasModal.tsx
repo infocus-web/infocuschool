@@ -119,6 +119,7 @@ export default function PortalFamiliasModal({
   const [solicitudContacto, setSolicitudContacto] = useState('');
   const [enviandoSolicitudCodigo, setEnviandoSolicitudCodigo] = useState(false);
   const [solicitudCodigoEnviada, setSolicitudCodigoEnviada] = useState(false);
+  const [solicitudCodigoMensaje, setSolicitudCodigoMensaje] = useState('');
   const [solicitudCodigoError, setSolicitudCodigoError] = useState<string | null>(null);
 
   // Step 2: Gallery
@@ -546,6 +547,7 @@ export default function PortalFamiliasModal({
         turno: turno || undefined,
       });
       if (resultado.success) {
+        setSolicitudCodigoMensaje(resultado.mensaje || 'Recibimos tu solicitud. Te contactaremos cuando podamos confirmar tus datos.');
         setSolicitudCodigoEnviada(true);
       } else {
         setSolicitudCodigoError(resultado.error || 'No se pudo enviar la solicitud.');
@@ -1089,9 +1091,9 @@ export default function PortalFamiliasModal({
                     <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-start gap-2.5">
                       <CheckCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-xs font-bold text-emerald-950">¡Listo, recibimos tu consulta!</p>
+                        <p className="text-xs font-bold text-emerald-950">¡Listo!</p>
                         <p className="text-[11px] text-emerald-800 mt-0.5">
-                          Te vamos a contactar a la brevedad con tu código de curso.
+                          {solicitudCodigoMensaje}
                         </p>
                       </div>
                     </div>
