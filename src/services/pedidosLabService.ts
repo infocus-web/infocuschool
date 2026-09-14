@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { FOTOS_MUESTRA } from '../data/colegiosData';
 import { enviarFotosPorEmail } from './emailService';
 import { fetchAdminAutenticado } from './adminAuthService';
+import { Foto } from '../types';
 
 export interface ArchivoFotoLab {
   id: string;
@@ -188,11 +189,17 @@ export function generarArchivosParaLaboratorio(
   numLista: number,
   alumnoNombre: string,
   fotosSeleccionadas: { individualId: string; grupalId: string; docenteId?: string },
-  copiasExtras?: CopiasExtrasConfig
+  copiasExtras?: CopiasExtrasConfig,
+  fotosDisponibles: Foto[] = FOTOS_MUESTRA
 ): ArchivoFotoLab[] {
-  const individualFoto = FOTOS_MUESTRA.find(f => f.id === fotosSeleccionadas.individualId) || FOTOS_MUESTRA.find(f => f.categoria === 'individual') || FOTOS_MUESTRA[0];
-  const grupalFoto = FOTOS_MUESTRA.find(f => f.id === fotosSeleccionadas.grupalId) || FOTOS_MUESTRA.find(f => f.categoria === 'grupal') || FOTOS_MUESTRA[0];
-  const docenteFoto = fotosSeleccionadas.docenteId ? (FOTOS_MUESTRA.find(f => f.id === fotosSeleccionadas.docenteId) || FOTOS_MUESTRA.find(f => f.categoria === 'docente')) : undefined;
+  const buscarFoto = (id: string | undefined, categoria: Foto['categoria']): Foto | undefined =>
+    fotosDisponibles.find((foto) => foto.id === id)
+    || FOTOS_MUESTRA.find((foto) => foto.id === id)
+    || FOTOS_MUESTRA.find((foto) => foto.categoria === categoria);
+
+  const individualFoto = buscarFoto(fotosSeleccionadas.individualId, 'individual') || FOTOS_MUESTRA[0];
+  const grupalFoto = buscarFoto(fotosSeleccionadas.grupalId, 'grupal') || FOTOS_MUESTRA[0];
+  const docenteFoto = fotosSeleccionadas.docenteId ? buscarFoto(fotosSeleccionadas.docenteId, 'docente') : undefined;
 
   const archivosLab: ArchivoFotoLab[] = [
     {
@@ -434,6 +441,7 @@ export async function registrarPedidoDesdePortal(params: {
     docenteId?: string;
   };
   copiasExtras?: CopiasExtrasConfig;
+  fotosDisponibles?: Foto[];
 }): Promise<ResultadoRegistroPedido> {
   const currentPedidos = obtenerPedidosGuardados();
   const numPedido = `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -445,7 +453,8 @@ export async function registrarPedidoDesdePortal(params: {
     numLista,
     params.alumnoNombre,
     params.fotosSeleccionadas,
-    params.copiasExtras
+    params.copiasExtras,
+    params.fotosDisponibles
   );
 
   const now = new Date();
@@ -562,7 +571,7 @@ export async function registrarPedidoDesdePortal(params: {
  * pedidos reales aunque se abra desde un navegador o dispositivo distinto al de la familia que
  * compró (auditoría 2026-09-09, revisión a fondo).
  */
-export function construirPedidoCompletoDesdeFila(fila: any): PedidoEscolarCompleto {
+export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Foto[] = FOTOS_MUESTRA): PedidoEscolarCompleto {
   const fotosSeleccionadas = (fila.fotos_seleccionadas && typeof fila.fotos_seleccionadas === 'object')
     ? fila.fotos_seleccionadas
     : { individualId: '', grupalId: '' };
@@ -573,7 +582,7 @@ export function construirPedidoCompletoDesdeFila(fila: any): PedidoEscolarComple
   const cursoCodigo = fila.curso_codigo || '';
   const alumnoNombre = fila.alumno_nombre || 'Alumno';
 
-  const archivosLab = generarArchivosParaLaboratorio(cursoCodigo, numLista, alumnoNombre, fotosSeleccionadas, copiasExtras);
+  const archivosLab = generarArchivosParaLaboratorio(cursoCodigo, numLista, alumnoNombre, fotosSeleccionadas, copiasExtras, fotosDisponibles);
 
   // La tabla real sólo tiene un único "estado" (pendiente_pago | pagado | entregado |
   // cancelado); se mapea a los dos campos más granulares que usa hoy la UI del panel.
@@ -628,11 +637,23 @@ export function construirPedidoCompletoDesdeFila(fila: any): PedidoEscolarComple
  */
 export async function obtenerPedidosAdminDesdeSupabase(): Promise<PedidoEscolarCompleto[]> {
   try {
-    const res = await fetchAdminAutenticado('/api/admin/pedidos');
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!data?.success || !Array.isArray(data.pedidos)) return [];
-    return data.pedidos.map(construirPedidoCompletoDesdeFila);
+    const [resPedidos, resFotos] = await Promise.all([
+      fetchAdminAutenticado('/api/admin/pedidos'),
+      fetchAdminAutenticado('/api/admin/fotos'),
+    ]);
+    if (!resPedidos.ok || !resFotos.ok) return [];
+    const [dataPedidos, dataFotos] = await Promise.all([resPedidos.json(), resFotos.json()]);
+    if (!dataPedidos?.success || !Array.isArray(dataPedidos.pedidos) || !dataFotos?.success || !Array.isArray(dataFotos.fotos)) return [];
+
+    const fotosDisponibles: Foto[] = dataFotos.fotos.map((foto: any) => ({
+      id: foto.id,
+      url: `/api/admin/fotos/${encodeURIComponent(foto.id)}/original`,
+      thumbnail: foto.thumb_path || foto.preview_path || '',
+      categoria: foto.categoria,
+      titulo: foto.alumno_nombre || `Foto ${foto.categoria}`,
+    }));
+
+    return dataPedidos.pedidos.map((fila: any) => construirPedidoCompletoDesdeFila(fila, fotosDisponibles));
   } catch (e) {
     console.warn('No se pudieron obtener los pedidos reales de Supabase:', e);
     return [];
@@ -838,7 +859,10 @@ export async function descargarLoteLaboratorioZip(
 
         // Descarga la imagen o genera JPEG válido nativo si hay restricción de CORS
         try {
-          const response = await fetch(foto.urlOriginalHD || foto.urlMuestra);
+          const urlFoto = foto.urlOriginalHD || foto.urlMuestra;
+          const response = urlFoto.startsWith('/api/admin/')
+            ? await fetchAdminAutenticado(urlFoto)
+            : await fetch(urlFoto);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const blob = await response.blob();
           targetFolder?.file(nombreJpg, blob);
@@ -869,7 +893,10 @@ export async function descargarLoteLaboratorioZip(
         const sufijoExtra = foto.esCopiaExtra ? `_COPIA${foto.numeroCopia || 2}` : '';
         const nombreJpg = `${codigoCliente}_${foto.tamanoImpresion}${sufijoExtra}.jpg`;
         try {
-          const response = await fetch(foto.urlOriginalHD || foto.urlMuestra);
+          const urlFoto = foto.urlOriginalHD || foto.urlMuestra;
+          const response = urlFoto.startsWith('/api/admin/')
+            ? await fetchAdminAutenticado(urlFoto)
+            : await fetch(urlFoto);
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const blob = await response.blob();
           zip.folder(carpetaAlumno)?.file(nombreJpg, blob);

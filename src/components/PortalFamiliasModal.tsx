@@ -601,6 +601,7 @@ export default function PortalFamiliasModal({
         docente15x21: extraCarpetas,
         otras15x21: 0,
       },
+      fotosDisponibles,
     });
 
     setNumeroPedido(nuevoPedido.id);

@@ -994,6 +994,40 @@ app.get('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response
   }
 });
 
+// Descarga protegida del original HD. El bucket permanece privado y el navegador sólo puede
+// acceder mientras conserva una sesión válida del panel de administración.
+app.get('/api/admin/fotos/:id/original', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+    }
+
+    const { data: foto, error: errorFoto } = await supabase
+      .from('fotos')
+      .select('storage_path')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (errorFoto) throw errorFoto;
+    if (!foto?.storage_path) {
+      return res.status(404).json({ success: false, error: 'Foto original no encontrada' });
+    }
+
+    const { data: archivo, error: errorDescarga } = await supabase.storage
+      .from('fotos-hd')
+      .download(foto.storage_path);
+    if (errorDescarga || !archivo) throw errorDescarga || new Error('No se pudo descargar el original');
+
+    const nombre = foto.storage_path.split('/').pop() || `${req.params.id}.jpg`;
+    res.setHeader('Content-Type', archivo.type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${nombre.replace(/["\\\r\n]/g, '_')}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.send(Buffer.from(await archivo.arrayBuffer()));
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al descargar la foto original' });
+  }
+});
+
 // Eliminar foto protegida
 app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
   try {
