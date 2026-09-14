@@ -5,7 +5,7 @@ import {
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
   FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe,
-  Pencil, Loader2, Link2, UploadCloud
+  Pencil, Loader2, Link2, UploadCloud, ChevronDown
 } from 'lucide-react';
 import {
   obtenerConfiguracionWhatsApp,
