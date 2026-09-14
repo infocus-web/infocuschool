@@ -619,6 +619,20 @@ app.get('/api/admin/pedidos', requireAdminAuth, async (req, res) => {
   }
 });
 
+app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Request, res: Response) => {
+  const tipo = req.body?.tipo as TipoActualizacionPedido;
+  const destinatarios = Array.isArray(req.body?.destinatarios) ? req.body.destinatarios.slice(0, 100) : [];
+  if (!['en_produccion', 'listo_retiro'].includes(tipo) || destinatarios.length === 0) return res.status(400).json({ success: false, error: 'Tipo de aviso o destinatarios inválidos.' });
+  let enviados = 0;
+  const errores: string[] = [];
+  for (const destinatario of destinatarios) {
+    if (!destinatario?.to?.includes('@') || !destinatario?.pedidoId) { errores.push(`${destinatario?.alumnoNombre || 'Cliente'}: email o pedido inválido.`); continue; }
+    try { await enviarCorreoActualizacionPedido({ tipo, ...destinatario }); enviados += 1; }
+    catch (error: any) { errores.push(`${destinatario.alumnoNombre || destinatario.to}: ${error?.message || 'falló el envío'}`); }
+  }
+  return res.status(enviados > 0 ? 200 : 502).json({ success: errores.length === 0, enviados, fallidos: errores.length, errores });
+});
+
 // Actualizar estado de pedido (Pago o Entrega)
 app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => {
   try {
@@ -3062,6 +3076,23 @@ interface DatosCorreoFotosHD {
   linkDescargaHD?: string;
   whatsappContacto?: string;
   esImpreso?: boolean;
+}
+
+type TipoActualizacionPedido = 'en_produccion' | 'listo_retiro';
+
+async function enviarCorreoActualizacionPedido(datos: { tipo: TipoActualizacionPedido; to: string; tutorNombre: string; alumnoNombre: string; colegioNombre: string; pedidoId: string }) {
+  const resend = getResendClient();
+  if (!resend) throw new Error('RESEND_API_KEY no está configurada.');
+  const esProduccion = datos.tipo === 'en_produccion';
+  const titulo = esProduccion ? 'Tu pedido está en producción' : 'Tu pedido está listo para retirar';
+  const mensaje = esProduccion ? `El pedido de fotografías de <strong>${escapeHtml(datos.alumnoNombre)}</strong> ya ingresó al laboratorio y se encuentra en producción.` : `El pedido de fotografías de <strong>${escapeHtml(datos.alumnoNombre)}</strong> ya está listo. Podés retirarlo en <strong>${escapeHtml(datos.colegioNombre)}</strong>.`;
+  const detalle = esProduccion ? 'Te enviaremos un nuevo aviso cuando esté disponible para retirar en el colegio.' : 'Consultá en la institución los días y horarios habilitados para la entrega.';
+  const resultado = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>', to: [datos.to], subject: `${titulo} — ${datos.alumnoNombre}`,
+    html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">${titulo}</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(datos.tutorNombre || 'Familia')}</strong>,</p><p style="line-height:1.6">${mensaje}</p><div style="margin:22px 0;padding:16px;background:${esProduccion ? '#eef2ff' : '#ecfdf5'};border-radius:12px;line-height:1.5">${detalle}</div><p style="font-size:12px;color:#64748b">Pedido: <strong>${escapeHtml(datos.pedidoId)}</strong></p></div></div></body></html>`,
+  }, { headers: { 'Idempotency-Key': `estado-${datos.tipo}-${datos.pedidoId}-${new Date().toISOString().slice(0, 10)}` } });
+  if (resultado.error) throw new Error(resultado.error.message);
+  return resultado;
 }
 
 async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {

@@ -15,7 +15,9 @@ import {
   enviarFotosPorEmail, 
   consultarEstadoResend, 
   enviarEmailPruebaResend, 
-  EstadoResend 
+  EstadoResend,
+  enviarActualizacionPedidos,
+  TipoActualizacionPedido,
 } from '../services/emailService';
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
 import ModalPlanillaExcelLab from './ModalPlanillaExcelLab';
@@ -37,6 +39,8 @@ export default function AdminLaboratorioTab({
   const [isDescargandoZip, setIsDescargandoZip] = useState<boolean>(false);
   const [zipFeedbackMsg, setZipFeedbackMsg] = useState<string | null>(null);
   const [emailFeedbackMsg, setEmailFeedbackMsg] = useState<string | null>(null);
+  const [pedidosSeleccionados, setPedidosSeleccionados] = useState<Set<string>>(new Set());
+  const [enviandoActualizacion, setEnviandoActualizacion] = useState<TipoActualizacionPedido | null>(null);
   const [modalExcelAbierto, setModalExcelAbierto] = useState<boolean>(false);
   const [resendEstado, setResendEstado] = useState<EstadoResend | null>(null);
   const [testEmailInput, setTestEmailInput] = useState<string>('alderpol@gmail.com');
@@ -131,6 +135,59 @@ export default function AdminLaboratorioTab({
       return matchCurso && matchBusqueda;
     });
   }, [pedidosAprobados, cursoFiltro, busquedaAlumno]);
+
+  const pedidosFiltradosConEmail = useMemo(
+    () => pedidosFiltrados.filter((pedido) => pedido.tutorEmail?.includes('@')),
+    [pedidosFiltrados]
+  );
+  const todosSeleccionados = pedidosFiltradosConEmail.length > 0
+    && pedidosFiltradosConEmail.every((pedido) => pedidosSeleccionados.has(pedido.id));
+
+  const alternarSeleccionPedido = (pedidoId: string) => {
+    setPedidosSeleccionados((actuales) => {
+      const siguientes = new Set(actuales);
+      if (siguientes.has(pedidoId)) siguientes.delete(pedidoId);
+      else siguientes.add(pedidoId);
+      return siguientes;
+    });
+  };
+
+  const alternarSeleccionTodos = () => {
+    setPedidosSeleccionados((actuales) => {
+      const siguientes = new Set(actuales);
+      pedidosFiltradosConEmail.forEach((pedido) => {
+        if (todosSeleccionados) siguientes.delete(pedido.id);
+        else siguientes.add(pedido.id);
+      });
+      return siguientes;
+    });
+  };
+
+  const handleEnviarActualizacion = async (tipo: TipoActualizacionPedido) => {
+    const seleccionados = pedidos.filter(
+      (pedido) => pedidosSeleccionados.has(pedido.id) && pedido.tutorEmail?.includes('@')
+    );
+    if (seleccionados.length === 0) {
+      setEmailFeedbackMsg('Seleccioná al menos un cliente con email válido.');
+      return;
+    }
+    setEnviandoActualizacion(tipo);
+    setEmailFeedbackMsg(`Enviando ${seleccionados.length} email${seleccionados.length === 1 ? '' : 's'}...`);
+    const resultado = await enviarActualizacionPedidos(tipo, seleccionados.map((pedido) => ({
+      pedidoId: pedido.supabaseId || pedido.id,
+      to: pedido.tutorEmail,
+      tutorNombre: pedido.tutorNombre,
+      alumnoNombre: pedido.alumnoNombre,
+      colegioNombre: pedido.colegioNombre,
+    })));
+    setEnviandoActualizacion(null);
+    if (resultado.success) {
+      setEmailFeedbackMsg(`✅ Se enviaron ${resultado.enviados} email${resultado.enviados === 1 ? '' : 's'} correctamente.`);
+      setPedidosSeleccionados(new Set());
+    } else {
+      setEmailFeedbackMsg(`⚠️ Se enviaron ${resultado.enviados}; fallaron ${resultado.fallidos}. ${resultado.error || resultado.errores?.[0] || ''}`);
+    }
+  };
 
   // Statistics calculation
   const totalCopias15x21 = useMemo(() => {
@@ -695,12 +752,31 @@ export default function AdminLaboratorioTab({
         </div>
       </div>
 
+      <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold text-sky-950">Avisos de estado por email</p>
+          <p className="text-[11px] text-sky-700 mt-0.5">{pedidosSeleccionados.size} cliente{pedidosSeleccionados.size === 1 ? '' : 's'} seleccionado{pedidosSeleccionados.size === 1 ? '' : 's'}.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 text-xs font-bold text-sky-800 cursor-pointer">
+            {todosSeleccionados ? 'Quitar selección' : 'Seleccionar todos'}
+          </button>
+          <button type="button" onClick={() => handleEnviarActualizacion('en_produccion')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+            {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Enviar “En producción”
+          </button>
+          <button type="button" onClick={() => handleEnviarActualizacion('listo_retiro')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+            {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Enviar “Listo para retirar”
+          </button>
+        </div>
+      </div>
+
       {/* Orders & Lab Files Table */}
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200 text-[10px] tracking-wider">
               <tr>
+                <th className="py-3 px-3 w-12 text-center"><input type="checkbox" checked={todosSeleccionados} onChange={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0} aria-label="Seleccionar todos los clientes visibles" className="w-4 h-4 accent-sky-600 cursor-pointer" /></th>
                 <th className="py-3 px-3 w-12 text-center">N°</th>
                 <th className="py-3 px-4">Alumno & Código Escolar</th>
                 <th className="py-3 px-4">Curso & Turno</th>
@@ -712,7 +788,7 @@ export default function AdminLaboratorioTab({
             <tbody className="divide-y divide-slate-100">
               {pedidosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-slate-400 space-y-2">
+                  <td colSpan={7} className="py-10 text-center text-slate-400 space-y-2">
                     <AlertCircle className="w-6 h-6 mx-auto text-slate-300" />
                     <p className="text-xs">No se encontraron pedidos con los filtros aplicados.</p>
                   </td>
@@ -720,7 +796,8 @@ export default function AdminLaboratorioTab({
               ) : (
                 pedidosFiltrados.map((pedido) => {
                   return (
-                    <tr key={pedido.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr key={pedido.id} className={`hover:bg-slate-50/80 transition-colors ${pedidosSeleccionados.has(pedido.id) ? 'bg-sky-50/70' : ''}`}>
+                      <td className="py-3.5 px-3 text-center"><input type="checkbox" checked={pedidosSeleccionados.has(pedido.id)} onChange={() => alternarSeleccionPedido(pedido.id)} disabled={!pedido.tutorEmail?.includes('@') || Boolean(enviandoActualizacion)} aria-label={`Seleccionar a ${pedido.alumnoNombre}`} title={pedido.tutorEmail?.includes('@') ? 'Seleccionar cliente' : 'Este pedido no tiene un email válido'} className="w-4 h-4 accent-sky-600 cursor-pointer disabled:cursor-not-allowed" /></td>
                       <td className="py-3.5 px-3 text-center font-mono font-bold text-slate-400">
                         #{String(pedido.alumnoNumeroLista).padStart(2, '0')}
                       </td>

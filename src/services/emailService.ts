@@ -36,6 +36,44 @@ export interface EstadoResend {
   domain: string;
 }
 
+export type TipoActualizacionPedido = 'en_produccion' | 'listo_retiro';
+
+export interface DestinatarioActualizacionPedido {
+  pedidoId: string;
+  to: string;
+  tutorNombre: string;
+  alumnoNombre: string;
+  colegioNombre: string;
+}
+
+export interface ResultadoActualizacionPedidos {
+  success: boolean;
+  enviados: number;
+  fallidos: number;
+  errores?: string[];
+  error?: string;
+}
+
+export async function enviarActualizacionPedidos(
+  tipo: TipoActualizacionPedido,
+  destinatarios: DestinatarioActualizacionPedido[]
+): Promise<ResultadoActualizacionPedidos> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/pedidos/notificar-estado', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipo, destinatarios }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { success: false, enviados: 0, fallidos: destinatarios.length, error: data.error || 'No se pudieron enviar los emails.' };
+    }
+    return data;
+  } catch (error: any) {
+    return { success: false, enviados: 0, fallidos: destinatarios.length, error: error?.message || 'Error de red al enviar los emails.' };
+  }
+}
+
 /**
  * Consulta el estado de configuración de Resend en el servidor. Requiere sesión de
  * administrador desde la auditoría 2026-09-09 (revisión a fondo): esta ruta devolvía un
