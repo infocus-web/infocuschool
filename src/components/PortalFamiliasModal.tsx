@@ -112,8 +112,7 @@ export default function PortalFamiliasModal({
   // desplegable ya NO alcanza para verlas (antes sí, y ahí estaba el problema de seguridad).
   const [codigoSeccionValidado, setCodigoSeccionValidado] = useState<string | null>(null);
 
-  // "No encuentro mi código de curso": en vez de abrir WhatsApp, la solicitud queda
-  // guardada para que el fotógrafo la vea en el panel admin sin recibir un WhatsApp por cada una
+  // "No encuentro mi código de curso": recuperación y consultas únicamente por email.
   const [mostrarFormSolicitudCodigo, setMostrarFormSolicitudCodigo] = useState(false);
   const [solicitudNombre, setSolicitudNombre] = useState('');
   const [solicitudContacto, setSolicitudContacto] = useState('');
@@ -425,7 +424,7 @@ export default function PortalFamiliasModal({
     }
     const famFound = resultadoBusqueda.inscripcion;
     if (famFound && famFound.estado === 'pendiente') {
-      setCodigoErrorMsg('Tu inscripción todavía está pendiente de validación por el equipo fotográfico. Te avisaremos por WhatsApp y Email en cuanto tengas tu código de acceso.');
+      setCodigoErrorMsg('Tu inscripción todavía está pendiente de validación por el equipo fotográfico. Te avisaremos por email en cuanto tengas tu código de acceso.');
       setCodigoValidadoMsg(null);
       setCodigoSeccionValidado(null);
       return false;
@@ -530,7 +529,11 @@ export default function PortalFamiliasModal({
 
   const handleEnviarSolicitudCodigo = async () => {
     if (!solicitudNombre.trim() || !solicitudContacto.trim()) {
-      setSolicitudCodigoError('Completá tu nombre y un WhatsApp o email para poder responderte.');
+      setSolicitudCodigoError('Completá tu nombre y el email con el que te registraste.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(solicitudContacto.trim())) {
+      setSolicitudCodigoError('Ingresá un email válido.');
       return;
     }
     setEnviandoSolicitudCodigo(true);
@@ -1079,7 +1082,7 @@ export default function PortalFamiliasModal({
                     <div>
                       <p className="font-bold">{codigoErrorMsg}</p>
                       <p className="text-[11px] text-rose-700 mt-0.5">
-                        Si no recordás o no tenés tu código de curso, contactate por WhatsApp con la institución educativa para que te lo faciliten.
+                        Si no recordás tu código, solicitá el reenvío por email con el formulario de abajo.
                       </p>
                     </div>
                   </div>
@@ -1101,11 +1104,11 @@ export default function PortalFamiliasModal({
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div className="text-slate-700 text-xs space-y-0.5">
                         <p className="font-bold text-slate-900 flex items-center gap-1.5">
-                          <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <Mail className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                           <span>¿Aún no tenés tu Código de Curso?</span>
                         </p>
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          Dejanos tus datos y te facilitamos el código con el que podrás acceder a ver las fotos.
+                          Ingresá el email con el que te registraste y te enviaremos nuevamente tu código.
                         </p>
                       </div>
                       <button
@@ -1113,15 +1116,15 @@ export default function PortalFamiliasModal({
                         onClick={() => setMostrarFormSolicitudCodigo(true)}
                         className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 active:scale-98"
                       >
-                        <MessageCircle className="w-4 h-4" />
+                        <Mail className="w-4 h-4" />
                         <span>Solicitar mi Código</span>
                       </button>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
                       <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span>Dejanos tus datos y te contactamos con el código</span>
+                        <Mail className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Recibí tu código por email</span>
                       </p>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <input
@@ -1132,10 +1135,11 @@ export default function PortalFamiliasModal({
                           className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
                         />
                         <input
-                          type="text"
+                          type="email"
                           value={solicitudContacto}
                           onChange={(e) => setSolicitudContacto(e.target.value)}
-                          placeholder="Tu WhatsApp o email"
+                          placeholder="Email usado al registrarte"
+                          autoComplete="email"
                           className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
                         />
                       </div>
@@ -1153,7 +1157,7 @@ export default function PortalFamiliasModal({
                           className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                         >
                           <Send className="w-3.5 h-3.5" />
-                          <span>{enviandoSolicitudCodigo ? 'Enviando...' : 'Enviar solicitud'}</span>
+                          <span>{enviandoSolicitudCodigo ? 'Enviando...' : 'Enviar mi código'}</span>
                         </button>
                         <button
                           type="button"

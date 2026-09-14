@@ -2991,7 +2991,10 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 
     const nombre = String(nombreSolicitante || '').trim();
     const contactoLimpio = String(contacto || '').trim();
     if (!nombre || !contactoLimpio) {
-      return res.status(400).json({ success: false, error: 'Faltan tu nombre y un WhatsApp o email de contacto' });
+      return res.status(400).json({ success: false, error: 'Faltan tu nombre y el email con el que te registraste' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactoLimpio)) {
+      return res.status(400).json({ success: false, error: 'Ingresá un email válido' });
     }
 
     const supabase = getServerSupabase();
@@ -3001,7 +3004,7 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 
 
     // Si escribió el mismo email con el que se registró, el código sólo se reenvía a esa
     // dirección. No se devuelve en la respuesta pública ni se revela si pertenece a otra persona.
-    if (contactoLimpio.includes('@')) {
+    {
       let inscripcionesQuery = supabase
         .from('inscripciones')
         .select('id,email,padre_nombre,colegio_nombre,codigo_asignado,alumno_nombre,alumno_apellido,grado,division,turno,hermanos,solicita_foto_hermanos')

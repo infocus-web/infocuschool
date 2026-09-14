@@ -1,14 +1,13 @@
 /**
  * Servicio para las solicitudes de "no encuentro mi código de curso" que dejan las familias
- * desde el portal. Reemplaza el botón que antes abría WhatsApp directo al fotógrafo: ahora
- * la consulta queda guardada en Supabase y aparece listada en el panel admin.
+ * desde el portal. La recuperación y las consultas se gestionan exclusivamente por email.
  */
 import { fetchAdminAutenticado } from './adminAuthService';
 
 export interface SolicitudCodigo {
   id: string;
   nombreSolicitante: string;
-  contacto: string; // WhatsApp o email que dejó la familia para que le respondan
+  contacto: string; // Email registrado por la familia
   alumnoNombre?: string;
   colegioId?: string;
   colegioNombre?: string;
