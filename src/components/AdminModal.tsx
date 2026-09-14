@@ -1031,6 +1031,22 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   };
 
   const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
+  const pestanasAdmin = [
+    { id: 'inscriptos', label: pendientesInscripcionCount > 0 ? `Inscriptos (${pendientesInscripcionCount} pendientes)` : 'Inscriptos y envío de códigos' },
+    { id: 'padron', label: 'Padrón autorizado' },
+    { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes de código (${pendientesSolicitudesCodigoCount})` : 'Solicitudes de código' },
+    { id: 'laboratorio', label: 'Laboratorio y ensobrado' },
+    { id: 'pedidos', label: `Pedidos de familias (${pedidosCompletos.length})` },
+    { id: 'subir', label: 'Cargar fotos del curso' },
+    { id: 'codigos', label: 'Códigos y difusión' },
+    { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})` },
+    { id: 'importar-alumnos', label: 'Importar alumnos' },
+    { id: 'estado-pagos', label: 'Estado de pagos por curso' },
+    { id: 'colegios', label: 'Colegios y códigos' },
+    { id: 'cerrar-anio', label: 'Cerrar año' },
+    { id: 'whatsapp', label: 'Configuración de WhatsApp' },
+  ] as const;
+  const pestanaActiva = pestanasAdmin.find((pestana) => pestana.id === activeTab);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
@@ -1128,93 +1144,31 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 scroll (que tiene su propio padding) para que "top-0" pegue justo arriba. */}
             <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-white space-y-3 border-b border-slate-200">
 
-            {/* Navigation tabs: al inicio del panel, botones azul oscuro con letras
-                amarillas. Antes era una fila con scroll horizontal que escondía la
-                mayoría de las herramientas fuera de la vista. Ahora es una grilla que se
-                acomoda sola (flex-wrap) y muestra todas las pestañas de una sola vez. */}
-            <div className="flex flex-wrap gap-2 p-2 bg-slate-100/70 rounded-2xl">
-              {[
-                {
-                  id: 'inscriptos',
-                  label:
-                    pendientesInscripcionCount > 0
-                      ? `Inscriptos (${pendientesInscripcionCount} pendientes)`
-                      : 'Inscriptos & Envío Códigos',
-                  icon: UserCheck,
-                  badge: pendientesInscripcionCount > 0 ? pendientesInscripcionCount : undefined
-                },
-                { id: 'padron', label: 'Padrón Autorizado', icon: Link2 },
-                {
-                  id: 'solicitudes',
-                  label:
-                    pendientesSolicitudesCodigoCount > 0
-                      ? `Solicitudes de Código (${pendientesSolicitudesCodigoCount})`
-                      : 'Solicitudes de Código',
-                  icon: MessageSquare,
-                  badge: pendientesSolicitudesCodigoCount > 0 ? pendientesSolicitudesCodigoCount : undefined,
-                },
-                { id: 'laboratorio', label: 'Laboratorio & Ensobrado (ZIP)', icon: Printer },
-                { id: 'pedidos', label: `Pedidos Familias (${pedidosCompletos.length})`, icon: Package },
-                { id: 'subir', label: 'Cargar Fotos Curso (100GB Supabase)', icon: HardDrive },
-                { id: 'codigos', label: 'Códigos & Difusión WhatsApp', icon: Key },
-                { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})`, icon: Users },
-                { id: 'importar-alumnos', label: 'Importar Alumnos', icon: UploadCloud },
-                { id: 'estado-pagos', label: 'Estado de Pagos por Curso', icon: DollarSign },
-                { id: 'colegios', label: 'Colegios y Códigos', icon: School },
-                { id: 'cerrar-anio', label: 'Cerrar Año', icon: Trash2 },
-                { id: 'whatsapp', label: 'WhatsApp & Widget Flotante', icon: MessageSquare },
-              ].map(t => {
-                const Icon = t.icon;
-                const active = activeTab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setActiveTab(t.id as any)}
-                    className={`px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer bg-blue-950 text-amber-400 border ${
-                      active
-                        ? 'border-amber-400 shadow-md shadow-blue-950/30 ring-2 ring-amber-400/40 text-amber-300'
-                        : 'border-blue-900 hover:bg-blue-900 hover:text-amber-300'
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span>{t.label}</span>
-                    {t.badge && (
-                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-amber-500 text-slate-950">
-                        {t.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-xs">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-600">Sección activa</p>
+                <h3 className="truncate text-sm font-extrabold text-slate-950 font-['Outfit']">{pestanaActiva?.label}</h3>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 md:ml-auto">
+                <span>Recaudación <strong className="text-slate-950">${totalRecaudado.toLocaleString('es-AR')}</strong></span>
+                <span>Pedidos <strong className="text-slate-950">{pedidosCompletos.length}</strong></span>
+                <span>Colegios <strong className="text-slate-950">{colegiosList.length}</strong></span>
+              </div>
+
+              <label className="relative shrink-0">
+                <span className="sr-only">Funciones del panel</span>
+                <select
+                  value={activeTab}
+                  onChange={(event) => setActiveTab(event.target.value as typeof activeTab)}
+                  className="h-9 min-w-64 appearance-none rounded-lg border border-slate-300 bg-slate-950 pl-3 pr-9 text-xs font-bold text-white shadow-sm outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 cursor-pointer"
+                  aria-label="Funciones del panel"
+                >
+                  {pestanasAdmin.map((pestana) => <option key={pestana.id} value={pestana.id}>{pestana.label}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-amber-400" />
+              </label>
             </div>
-
-            {/* Top metrics: tarjetas compactas en una sola línea, para no ocupar
-                media pantalla mostrando 3 números. */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500 font-semibold">Recaudación Confirmada</span>
-                <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
-                  ${totalRecaudado.toLocaleString('es-AR')} <span className="text-[10px] font-normal text-slate-500">ARS</span>
-                </div>
-              </div>
-
-              <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500 font-semibold">Pedidos Totales</span>
-                <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
-                  {pedidosCompletos.length} pedidos
-                </div>
-              </div>
-
-              <div className="px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500 font-semibold">Colegios Activos</span>
-                <div className="text-sm font-black text-slate-900 font-['Outfit'] whitespace-nowrap">
-                  {colegiosList.length} instituciones
-                </div>
-              </div>
-            </div>
-
-            {/* SECCIÓN RESUMEN DE KITS SELECCIONADOS POR FAMILIAS (SUPABASE DB) */}
-            <AdminResumenKitsSection />
 
             </div>
             {/* fin barra superior fija */}
@@ -1249,6 +1203,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* TAB 1: PEDIDOS */}
             {activeTab === 'pedidos' && (
               <div className="space-y-4">
+                <AdminResumenKitsSection />
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-base font-bold text-slate-900">Listado de Pedidos de Familias</h3>
