@@ -1095,11 +1095,11 @@ export default function PortalFamiliasModal({
                 {/* Course Code Request Action: queda guardado para el panel admin, no abre WhatsApp */}
                 <div className="pt-3 border-t border-amber-200/80 text-left">
                   {solicitudCodigoEnviada ? (
-                    <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-start gap-2.5">
-                      <CheckCheck className="w-4.5 h-4.5 text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="p-4 sm:p-5 bg-emerald-50 border border-emerald-300 rounded-xl flex items-start gap-3">
+                      <CheckCheck className="w-6 h-6 text-emerald-700 shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-xs font-bold text-emerald-950">¡Listo!</p>
-                        <p className="text-[11px] text-emerald-800 mt-0.5">
+                        <p className="text-lg font-extrabold text-emerald-950">¡Listo!</p>
+                        <p className="text-base leading-7 text-emerald-950 mt-1.5 font-medium">
                           {solicitudCodigoMensaje}
                         </p>
                       </div>
