@@ -39,7 +39,7 @@ interface FotoLoteItem {
   previewUrl: string;
   watermarkedUrl: string;
   thumbUrl: string;
-  tipo: 'individual' | 'grupal' | 'docente';
+  tipo: 'individual' | 'grupal' | 'docente' | 'patio';
   nombreOriginal: string;
   estado: 'procesada' | 'subiendo' | 'subida' | 'error';
   errorMensaje?: string;
@@ -58,7 +58,7 @@ export default function AdminLoteFotosTab() {
   const [turnoSeleccionado, setTurnoSeleccionado] = useState<string>('');
   const [divisionSeleccionada, setDivisionSeleccionada] = useState<string>('');
   const [alumnosColegioActual, setAlumnosColegioActual] = useState<AlumnoNominaReal[]>([]);
-  const [tipoFotoLote, setTipoFotoLote] = useState<'individual' | 'grupal' | 'docente'>('individual');
+  const [tipoFotoLote, setTipoFotoLote] = useState<'individual' | 'grupal' | 'docente' | 'patio'>('individual');
   const [alumnoSeleccionadoId, setAlumnoSeleccionadoId] = useState<string>('');
 
   // Clean initial queue: ready for real student photos
@@ -79,7 +79,7 @@ export default function AdminLoteFotosTab() {
   const [borrandoSeleccionadas, setBorrandoSeleccionadas] = useState(false);
   // Filtro por categoría en "Fotos Activas": permite ver/seleccionar/borrar sólo una
   // categoría puntual (por ejemplo, sólo "Grupal") sin tocar el resto del curso.
-  const [filtroCategoriaActivas, setFiltroCategoriaActivas] = useState<'todas' | 'individual' | 'grupal' | 'docente'>('todas');
+  const [filtroCategoriaActivas, setFiltroCategoriaActivas] = useState<'todas' | 'individual' | 'grupal' | 'docente' | 'patio'>('todas');
 
   // Migración de miniaturas limpias para fotos subidas antes de este cambio
   const [regenerandoMiniaturas, setRegenerandoMiniaturas] = useState(false);
@@ -397,7 +397,7 @@ export default function AdminLoteFotosTab() {
     let fallidas = 0;
     let canceladaEn = -1;
     const colaActualizada = [...fotosLote];
-    const fotosParaRegistrar: { colegioId: string; categoria: 'individual' | 'grupal' | 'docente'; grado: string; turno: string; division: string; storagePathHD: string; storagePathWeb: string; storagePathThumb: string; alumnoNombre?: string }[] = [];
+    const fotosParaRegistrar: { colegioId: string; categoria: 'individual' | 'grupal' | 'docente' | 'patio'; grado: string; turno: string; division: string; storagePathHD: string; storagePathWeb: string; storagePathThumb: string; alumnoNombre?: string }[] = [];
 
     for (let i = 0; i < colaActualizada.length; i++) {
       if (cancelarSubidaRef.current) {
@@ -631,11 +631,12 @@ export default function AdminLoteFotosTab() {
   // Conteo de fotos activas por categoría (para las pestañas de filtro) y la lista ya
   // filtrada según la categoría elegida — "todas" muestra el curso completo, como antes.
   const conteoActivasPorCategoria = useMemo(() => {
-    const conteo = { individual: 0, grupal: 0, docente: 0 };
+    const conteo = { individual: 0, grupal: 0, docente: 0, patio: 0 };
     for (const f of fotosActivasCurso) {
       if (f.categoria === 'individual') conteo.individual++;
       else if (f.categoria === 'grupal') conteo.grupal++;
       else if (f.categoria === 'docente') conteo.docente++;
+      else if (f.categoria === 'patio') conteo.patio++;
     }
     return conteo;
   }, [fotosActivasCurso]);
@@ -1074,6 +1075,7 @@ USING (bucket_id = 'fotos-web');
               <option value="individual">Retratos Individuales (15x21)</option>
               <option value="grupal">Foto Grupal del Curso (20x30)</option>
               <option value="docente">Foto con Docente / Seño (15x21)</option>
+              <option value="patio">Fotos Sueltas / Eventos (Digital HD)</option>
             </select>
           </div>
 
@@ -1305,6 +1307,7 @@ USING (bucket_id = 'fotos-web');
               { id: 'individual' as const, label: 'Individual', cantidad: conteoActivasPorCategoria.individual },
               { id: 'grupal' as const, label: 'Grupal', cantidad: conteoActivasPorCategoria.grupal },
               { id: 'docente' as const, label: 'Docente', cantidad: conteoActivasPorCategoria.docente },
+              { id: 'patio' as const, label: 'Sueltas / Eventos', cantidad: conteoActivasPorCategoria.patio },
             ]).map(op => (
               <button
                 key={op.id}

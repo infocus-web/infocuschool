@@ -127,6 +127,7 @@ export default function PortalFamiliasModal({
   const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('');
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('');
   const [modalFotoPreview, setModalFotoPreview] = useState<Foto | null>(null);
+  const [errorSeleccionFotos, setErrorSeleccionFotos] = useState('');
 
   // Sólo fotos reales del curso cargadas en Supabase; nunca se muestran fotos genéricas.
   const [fotosDisponibles, setFotosDisponibles] = useState<Foto[]>([]);
@@ -142,15 +143,17 @@ export default function PortalFamiliasModal({
     };
   }, [codigoSeccionValidado]);
 
-  // Sincronizar selección predeterminada cuando las fotos cargan
+  // Al cambiar de galería se conservan únicamente elecciones que sigan existiendo.
+  // Nunca se elige automáticamente la primera foto: la decisión debe ser explícita.
   useEffect(() => {
     const inds = fotosDisponibles.filter((f) => f.categoria === 'individual');
     const grups = fotosDisponibles.filter((f) => f.categoria === 'grupal');
     const docs = fotosDisponibles.filter((f) => f.categoria === 'docente');
 
-    setFotoSeleccionadaIndividual((actual) => inds.some((f) => f.id === actual) ? actual : (inds[0]?.id || ''));
-    setFotoSeleccionadaGrupal((actual) => grups.some((f) => f.id === actual) ? actual : (grups[0]?.id || ''));
-    setFotoSeleccionadaDocente((actual) => docs.some((f) => f.id === actual) ? actual : (docs[0]?.id || ''));
+    setFotoSeleccionadaIndividual((actual) => inds.some((f) => f.id === actual) ? actual : '');
+    setFotoSeleccionadaGrupal((actual) => grups.some((f) => f.id === actual) ? actual : '');
+    setFotoSeleccionadaDocente((actual) => docs.some((f) => f.id === actual) ? actual : '');
+    setErrorSeleccionFotos('');
   }, [fotosDisponibles]);
 
   // Step 3: Kit & Extras
@@ -519,10 +522,27 @@ export default function PortalFamiliasModal({
   // foto que existe de verdad en esta galería, no sólo un ID que quedó de otra galería/curso). El
   // badge de "X de 3 fotos seleccionadas" mostraba siempre "3 de 3" fijo, sin importar si el curso
   // todavía no tenía cargada alguna de las 3 categorías.
-  const fotoGrupalSeleccionadaValida = fotosDisponibles.some((f) => f.id === fotoSeleccionadaGrupal && f.categoria === 'grupal');
-  const fotoIndividualSeleccionadaValida = fotosDisponibles.some((f) => f.id === fotoSeleccionadaIndividual && f.categoria === 'individual');
-  const fotoDocenteSeleccionadaValida = fotosDisponibles.some((f) => f.id === fotoSeleccionadaDocente && f.categoria === 'docente');
+  const fotoGrupalSeleccionada = fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal && f.categoria === 'grupal');
+  const fotoIndividualSeleccionada = fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual && f.categoria === 'individual');
+  const fotoDocenteSeleccionada = fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente && f.categoria === 'docente');
+  const fotoGrupalSeleccionadaValida = Boolean(fotoGrupalSeleccionada);
+  const fotoIndividualSeleccionadaValida = Boolean(fotoIndividualSeleccionada);
+  const fotoDocenteSeleccionadaValida = Boolean(fotoDocenteSeleccionada);
   const cantidadFotosPackSeleccionadas = [fotoGrupalSeleccionadaValida, fotoIndividualSeleccionadaValida, fotoDocenteSeleccionadaValida].filter(Boolean).length;
+
+  const handleContinuarAlKit = () => {
+    const faltantes = [
+      !fotoGrupalSeleccionadaValida ? 'una foto grupal' : null,
+      !fotoIndividualSeleccionadaValida ? 'un retrato individual' : null,
+      !fotoDocenteSeleccionadaValida ? 'una foto con docente' : null,
+    ].filter(Boolean);
+    if (faltantes.length > 0) {
+      setErrorSeleccionFotos(`Antes de continuar, elegí ${faltantes.join(', ').replace(/, ([^,]*)$/, ' y $1')}.`);
+      return;
+    }
+    setErrorSeleccionFotos('');
+    setStep(3);
+  };
 
   // Handlers
   const handleIngresarCodigo = async () => {
@@ -1419,23 +1439,16 @@ export default function PortalFamiliasModal({
                     }`}
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
-                      <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'grupal')?.thumbnail}
-                        alt="Foto grupal"
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                        <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
-                      </div>
+                      {fotoGrupalSeleccionada ? <><img src={fotoGrupalSeleccionada.thumbnail} alt="Foto grupal elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-[10px] font-bold text-amber-400 block uppercase tracking-wider">
                         Foto 1 de 3 (Grupal 20x30)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaGrupal)?.titulo?.split(' - ')[0] || 'Foto Grupal'}
+                        {fotoGrupalSeleccionada?.titulo?.split(' - ')[0] || 'Sin elegir'}
                       </p>
-                      <span className="text-[10px] text-slate-400">Clic para cambiar</span>
+                      <span className="text-[10px] text-slate-400">{fotoGrupalSeleccionada ? 'Clic para cambiar' : 'Elegí una toma'}</span>
                     </div>
                   </div>
 
@@ -1447,23 +1460,16 @@ export default function PortalFamiliasModal({
                     }`}
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
-                      <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'individual')?.thumbnail}
-                        alt="Retrato individual"
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                        <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
-                      </div>
+                      {fotoIndividualSeleccionada ? <><img src={fotoIndividualSeleccionada.thumbnail} alt="Retrato individual elegido" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-[10px] font-bold text-amber-400 block uppercase tracking-wider">
                         Foto 2 de 3 (Retrato 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaIndividual)?.titulo?.split(' - ')[0] || 'Retrato Individual'}
+                        {fotoIndividualSeleccionada?.titulo?.split(' - ')[0] || 'Sin elegir'}
                       </p>
-                      <span className="text-[10px] text-slate-400">Clic para cambiar toma</span>
+                      <span className="text-[10px] text-slate-400">{fotoIndividualSeleccionada ? 'Clic para cambiar toma' : 'Elegí una toma'}</span>
                     </div>
                   </div>
 
@@ -1475,23 +1481,16 @@ export default function PortalFamiliasModal({
                     }`}
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
-                      <img
-                        src={fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.thumbnail || fotosDisponibles.find(f => f.categoria === 'docente')?.thumbnail}
-                        alt="Con docente"
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                        <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
-                      </div>
+                      {fotoDocenteSeleccionada ? <><img src={fotoDocenteSeleccionada.thumbnail} alt="Foto con docente elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="text-[10px] font-bold text-amber-400 block uppercase tracking-wider">
                         Foto 3 de 3 (Con Seño 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
-                        {fotosDisponibles.find((f) => f.id === fotoSeleccionadaDocente)?.titulo || 'Con la Seño'}
+                        {fotoDocenteSeleccionada?.titulo || 'Sin elegir'}
                       </p>
-                      <span className="text-[10px] text-slate-400">Clic para cambiar</span>
+                      <span className="text-[10px] text-slate-400">{fotoDocenteSeleccionada ? 'Clic para cambiar' : 'Elegí una toma'}</span>
                     </div>
                   </div>
 
@@ -1550,6 +1549,7 @@ export default function PortalFamiliasModal({
                     if (foto.categoria === 'individual') setFotoSeleccionadaIndividual(foto.id);
                     if (foto.categoria === 'grupal') setFotoSeleccionadaGrupal(foto.id);
                     if (foto.categoria === 'docente') setFotoSeleccionadaDocente(foto.id);
+                    setErrorSeleccionFotos('');
                   };
 
                   return (
@@ -1727,6 +1727,12 @@ export default function PortalFamiliasModal({
               )}
 
               {/* Bottom Next Step Bar */}
+              {errorSeleccionFotos && (
+                <div role="alert" className="rounded-xl border-2 border-rose-300 bg-rose-50 p-4 text-base font-bold leading-6 text-rose-900 flex items-start gap-3">
+                  <AlertCircle className="h-6 w-6 shrink-0 text-rose-600" />
+                  <span>{errorSeleccionFotos}</span>
+                </div>
+              )}
               <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-xs text-slate-600 text-left">
                   <span className="font-bold text-slate-900">Fotos del pack: </span>
@@ -1747,10 +1753,10 @@ export default function PortalFamiliasModal({
                   </button>
                   <button
                     id="btn-continuar-kit"
-                    onClick={() => setStep(3)}
+                    onClick={handleContinuarAlKit}
                     className="px-6 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow-md shadow-amber-400/20 flex items-center gap-2 cursor-pointer transition-all active:scale-98"
                   >
-                    <span>Elegir Kit y Formato</span>
+                    <span>{cantidadFotosPackSeleccionadas === 3 ? 'Elegir Kit y Formato' : `Elegí las 3 fotos (${cantidadFotosPackSeleccionadas}/3)`}</span>
                     {totalCopiasExtrasCantidad > 0 && (
                       <span className="px-2 py-0.5 bg-slate-950 text-amber-300 rounded text-[11px] font-black">
                         ${total.toLocaleString('es-AR')}

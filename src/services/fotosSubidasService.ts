@@ -14,7 +14,7 @@ export interface FotoRegistrada {
   grado?: string | null;
   division?: string | null;
   turno?: string | null;
-  categoria: 'individual' | 'grupal' | 'docente';
+  categoria: 'individual' | 'grupal' | 'docente' | 'patio';
   alumnoNombre?: string | null;
   urlWeb: string;
   pathStorageWeb?: string | null;
@@ -41,7 +41,7 @@ function mapearFilaFoto(row: any): FotoRegistrada {
 
 export interface DatosFotoParaRegistrar {
   colegioId: string;
-  categoria: 'individual' | 'grupal' | 'docente';
+  categoria: 'individual' | 'grupal' | 'docente' | 'patio';
   grado: string;
   turno: string;
   division: string;
