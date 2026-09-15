@@ -26,16 +26,21 @@ interface AdminLaboratorioTabProps {
   pedidos: PedidoEscolarCompleto[];
   onActualizarPedidos: (pedidos: PedidoEscolarCompleto[]) => void;
   colegioNombre?: string;
+  // Nombre de alumno para arrancar con la búsqueda ya cargada — usado por "Ver en
+  // Laboratorio" desde la pestaña de Pedidos, para llevar directo al pedido en
+  // cuestión en vez de dejar al fotógrafo a buscarlo a mano entre todos (15/9).
+  busquedaInicial?: string;
 }
 
 export default function AdminLaboratorioTab({
   pedidos,
   onActualizarPedidos,
-  colegioNombre = 'Instituto Madre del Divino Pastor'
+  colegioNombre = 'Instituto Madre del Divino Pastor',
+  busquedaInicial = ''
 }: AdminLaboratorioTabProps) {
   const [cursoFiltro, setCursoFiltro] = useState<string>('todos');
   const [modoEstructuraCarpetas, setModoEstructuraCarpetas] = useState<'solo_2_carpetas_tamano' | 'por_alumno'>('solo_2_carpetas_tamano');
-  const [busquedaAlumno, setBusquedaAlumno] = useState<string>('');
+  const [busquedaAlumno, setBusquedaAlumno] = useState<string>(busquedaInicial);
   const [isDescargandoZip, setIsDescargandoZip] = useState<boolean>(false);
   const [zipFeedbackMsg, setZipFeedbackMsg] = useState<string | null>(null);
   const [emailFeedbackMsg, setEmailFeedbackMsg] = useState<string | null>(null);
@@ -88,6 +93,8 @@ export default function AdminLaboratorioTab({
     codigoCurso: string;
     tamano: string;
     tipo: string;
+    urlMuestra?: string;
+    sinFotoReal?: boolean;
   }>({
     nombreArchivo: '3ATT_FABRICIO_PEREZ.jpg',
     alumnoNombre: 'Fabricio Pérez',
@@ -684,20 +691,38 @@ export default function AdminLaboratorioTab({
           </div>
 
           {/* Minilab Inkjet dot matrix backprint stamping simulation */}
-          <div className="relative z-10 space-y-2 bg-white/70 backdrop-blur-xs p-4 rounded-lg border border-stone-300">
-            <div className="flex items-center justify-between text-[11px] text-stone-500 pb-1 border-b border-stone-200">
-              <span>REVERSO DEL PAPEL FOTOGRÁFICO 260g</span>
-              <span className="font-semibold text-emerald-700">NORITSU QSS-3701HD · LÍNEA 1</span>
+          <div className="relative z-10 flex flex-col sm:flex-row gap-4 bg-white/70 backdrop-blur-xs p-4 rounded-lg border border-stone-300">
+            {/* Foto real elegida por la familia (no es una simulación — es la imagen que se va a imprimir) */}
+            <div className="shrink-0 mx-auto sm:mx-0">
+              {fotoPreviewDorso.sinFotoReal || !fotoPreviewDorso.urlMuestra ? (
+                <div className="w-28 h-28 rounded-lg border-2 border-dashed border-red-300 bg-red-50 flex flex-col items-center justify-center gap-1 text-red-500">
+                  <AlertTriangle className="w-5 h-5" />
+                  <span className="text-[9px] font-bold uppercase text-center px-1">Falta foto real</span>
+                </div>
+              ) : (
+                <img
+                  src={fotoPreviewDorso.urlMuestra}
+                  alt={`Foto real: ${fotoPreviewDorso.nombreArchivo}`}
+                  className="w-28 h-28 object-cover rounded-lg border border-stone-300 shadow-xs bg-white"
+                />
+              )}
             </div>
 
-            <div className="py-2 px-3 bg-stone-900 text-emerald-400 rounded font-mono text-xs sm:text-sm font-black tracking-widest break-all shadow-inner border border-stone-800">
-              &gt; {fotoPreviewDorso.nombreArchivo} &lt;
-            </div>
+            <div className="flex-1 space-y-2 min-w-0">
+              <div className="flex items-center justify-between text-[11px] text-stone-500 pb-1 border-b border-stone-200">
+                <span>REVERSO DEL PAPEL FOTOGRÁFICO 260g</span>
+                <span className="font-semibold text-emerald-700">NORITSU QSS-3701HD · LÍNEA 1</span>
+              </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-stone-600 pt-1">
-              <span><strong>Alumno:</strong> {fotoPreviewDorso.alumnoNombre}</span>
-              <span><strong>Toma:</strong> {fotoPreviewDorso.tipo} ({fotoPreviewDorso.tamano})</span>
-              <span><strong>Curso:</strong> {fotoPreviewDorso.codigoCurso}</span>
+              <div className="py-2 px-3 bg-stone-900 text-emerald-400 rounded font-mono text-xs sm:text-sm font-black tracking-widest break-all shadow-inner border border-stone-800">
+                &gt; {fotoPreviewDorso.nombreArchivo} &lt;
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-stone-600 pt-1">
+                <span><strong>Alumno:</strong> {fotoPreviewDorso.alumnoNombre}</span>
+                <span><strong>Toma:</strong> {fotoPreviewDorso.tipo} ({fotoPreviewDorso.tamano})</span>
+                <span><strong>Curso:</strong> {fotoPreviewDorso.codigoCurso}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -832,7 +857,9 @@ export default function AdminLaboratorioTab({
                                   alumnoNombre: pedido.alumnoNombre,
                                   codigoCurso: pedido.cursoCodigo,
                                   tamano: archivo.tamanoImpresion,
-                                  tipo: archivo.tipo === 'individual' ? 'Retrato Individual' : archivo.tipo === 'grupal' ? 'Foto Grupal' : 'Foto Docente'
+                                  tipo: archivo.tipo === 'individual' ? 'Retrato Individual' : archivo.tipo === 'grupal' ? 'Foto Grupal' : 'Foto Docente',
+                                  urlMuestra: archivo.urlMuestra,
+                                  sinFotoReal: archivo.sinFotoReal
                                 })}
                                 className={`w-full text-left p-1.5 rounded-lg border text-[11px] font-mono flex items-center justify-between gap-2 transition-all cursor-pointer ${
                                   archivo.sinFotoReal
@@ -844,10 +871,19 @@ export default function AdminLaboratorioTab({
                                 title={archivo.sinFotoReal ? 'Falta la foto real elegida por la familia — revisar a mano' : 'Ver en simulador de dorso'}
                               >
                                 <div className="flex items-center gap-1.5 truncate">
-                                  {archivo.sinFotoReal ? (
-                                    <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                                  {/* Miniatura real de la foto — para poder confirmar de un vistazo
+                                      qué foto exacta se va a imprimir en cada archivo, sin tener
+                                      que abrir nada (pedido de Pablo, 15/9). */}
+                                  {archivo.sinFotoReal || !archivo.urlMuestra ? (
+                                    <div className="w-6 h-6 rounded border border-red-300 bg-red-100 flex items-center justify-center shrink-0">
+                                      <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                                    </div>
                                   ) : (
-                                    <FileCode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    <img
+                                      src={archivo.urlMuestra}
+                                      alt=""
+                                      className="w-6 h-6 rounded object-cover border border-slate-200 shrink-0 bg-white"
+                                    />
                                   )}
                                   <span className="truncate">
                                     {modoEstructuraCarpetas === 'solo_2_carpetas_tamano' ? (
