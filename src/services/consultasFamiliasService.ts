@@ -15,6 +15,17 @@ export interface ConsultaFamilia {
   origen: 'web' | 'email';
   createdAt: string;
   updatedAt: string;
+  mensajes: MensajeConsultaFamilia[];
+}
+
+export interface MensajeConsultaFamilia {
+  id: string;
+  direccion: 'saliente' | 'entrante';
+  remitente: string;
+  destinatario: string;
+  asunto?: string;
+  contenido: string;
+  createdAt: string;
 }
 
 export interface NuevaConsultaFamilia {
@@ -42,6 +53,17 @@ function mapearConsulta(row: any): ConsultaFamilia {
     origen: row.origen,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    mensajes: (row.consultas_familias_mensajes || [])
+      .map((mensaje: any) => ({
+        id: mensaje.id,
+        direccion: mensaje.direccion,
+        remitente: mensaje.remitente,
+        destinatario: mensaje.destinatario,
+        asunto: mensaje.asunto || undefined,
+        contenido: mensaje.contenido,
+        createdAt: mensaje.created_at,
+      }))
+      .sort((a: MensajeConsultaFamilia, b: MensajeConsultaFamilia) => a.createdAt.localeCompare(b.createdAt)),
   };
 }
 

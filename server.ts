@@ -17,6 +17,56 @@ const PORT = 3000;
 // req.protocol, como la URL de retorno que le mandamos a Mercado Pago más abajo.
 app.set('trust proxy', true);
 
+// Resend firma el cuerpo exacto del webhook. Esta ruta debe procesarse como texto
+// antes del parser JSON global para poder verificar que el evento sea auténtico.
+app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json' }), async (req: Request, res: Response) => {
+  try {
+    const resend = getResendClient();
+    const webhookSecret = process.env.RESEND_WEBHOOK_SECRET?.trim();
+    if (!resend || !webhookSecret) return res.status(503).json({ success: false });
+    const id = req.header('svix-id');
+    const timestamp = req.header('svix-timestamp');
+    const signature = req.header('svix-signature');
+    if (!id || !timestamp || !signature) return res.status(400).json({ success: false });
+
+    const evento = resend.webhooks.verify({
+      payload: String(req.body || ''),
+      headers: { id, timestamp, signature },
+      webhookSecret,
+    });
+    if (evento.type !== 'email.received') return res.json({ success: true });
+
+    const { data: email, error: emailError } = await resend.emails.receiving.get(evento.data.email_id);
+    if (emailError || !email) throw emailError || new Error('No se pudo obtener el correo recibido.');
+    const inboundDomain = (process.env.RESEND_INBOUND_DOMAIN || 'respuestas.retratoescolar.com.ar').toLowerCase();
+    const destinatarios = Array.isArray(email.to) ? email.to : [];
+    const direccionDestino = destinatarios.find((destino) => destino.toLowerCase().includes(`@${inboundDomain}`));
+    const consultaId = direccionDestino?.match(/consulta-([0-9a-f-]{36})@/i)?.[1];
+    if (!consultaId) return res.json({ success: true, ignored: true });
+
+    const contenido = String(email.text || '').trim() || String(email.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!contenido) return res.json({ success: true, ignored: true });
+    const supabase = getServerSupabase();
+    if (!supabase) throw new Error('Supabase no configurado.');
+    const { error: insertError } = await supabase.from('consultas_familias_mensajes').upsert({
+      consulta_id: consultaId,
+      direccion: 'entrante',
+      remitente: email.from,
+      destinatario: direccionDestino,
+      asunto: email.subject || null,
+      contenido: contenido.slice(0, 10000),
+      resend_email_id: email.id,
+      created_at: email.created_at,
+    }, { onConflict: 'resend_email_id', ignoreDuplicates: true });
+    if (insertError) throw insertError;
+    await supabase.from('consultas_familias').update({ estado: 'nueva', updated_at: new Date().toISOString() }).eq('id', consultaId);
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Resend Inbound] Webhook rechazado o no procesado:', err);
+    return res.status(400).json({ success: false });
+  }
+});
+
 app.use(express.json());
 
 // Límite de intentos básico, en memoria, para frenar fuerza bruta / spam en endpoints
@@ -3052,7 +3102,7 @@ app.get('/api/admin/consultas-familias', requireAdminAuth, async (req: Request, 
     const estado = String(req.query.estado || 'nueva');
     const estadosValidos = ['nueva', 'en_proceso', 'resuelta', 'todas'];
     if (!estadosValidos.includes(estado)) return res.status(400).json({ success: false, error: 'Estado inválido.' });
-    let query = supabase.from('consultas_familias').select('*').order('created_at', { ascending: false }).limit(500);
+    let query = supabase.from('consultas_familias').select('*, consultas_familias_mensajes(*)').order('created_at', { ascending: false }).limit(500);
     if (estado !== 'todas') query = query.eq('estado', estado);
     const { data, error } = await query;
     if (error) throw error;
@@ -3096,12 +3146,23 @@ app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async 
     if (!resend) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
     const resultado = await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
-      replyTo: resendReplyTo,
+      replyTo: `consulta-${consulta.id}@${process.env.RESEND_INBOUND_DOMAIN || 'respuestas.retratoescolar.com.ar'}`,
       to: [consulta.email],
       subject: `Re: ${consulta.asunto}`,
       html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(consulta.nombre)},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás continuar la conversación.</p></div>`,
     });
     if (resultado.error) throw resultado.error;
+
+    const { error: messageError } = await supabase.from('consultas_familias_mensajes').insert({
+      consulta_id: consulta.id,
+      direccion: 'saliente',
+      remitente: process.env.RESEND_FROM_EMAIL || 'fotos@retratoescolar.com.ar',
+      destinatario: consulta.email,
+      asunto: `Re: ${consulta.asunto}`,
+      contenido: mensaje,
+      resend_email_id: resultado.data?.id || null,
+    });
+    if (messageError) console.error('[Consultas] El correo se envió, pero no se guardó en el historial:', messageError);
 
     if (consulta.estado === 'nueva') {
       const { error: updateError } = await supabase

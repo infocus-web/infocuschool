@@ -71,10 +71,10 @@ export default function AdminConsultasFamiliasTab() {
     setError('');
     try {
       await responderConsultaFamiliaAdmin(consulta.id, respuesta);
-      setConsultas((actuales) => actuales.map((item) => item.id === consulta.id ? { ...item, estado: item.estado === 'nueva' ? 'en_proceso' : item.estado } : item));
       setRespuesta('');
       setRespondiendoId(null);
       setRespuestaEnviadaId(consulta.id);
+      await cargar();
     } catch (err: any) {
       setError(err?.message || 'No se pudo enviar la respuesta.');
     } finally {
@@ -139,6 +139,20 @@ export default function AdminConsultasFamiliasTab() {
                       {consulta.numeroPedido && <span>Pedido: {consulta.numeroPedido}</span>}
                       <span className="inline-flex items-center gap-1"><Clock3 className="w-3 h-3" />{new Date(consulta.createdAt).toLocaleString('es-AR')}</span>
                     </div>
+                    {consulta.mensajes.length > 0 && (
+                      <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Conversación</p>
+                        {consulta.mensajes.map((mensaje) => (
+                          <div key={mensaje.id} className={`max-w-3xl rounded-xl border p-3 ${mensaje.direccion === 'entrante' ? 'border-emerald-200 bg-emerald-50' : 'ml-auto border-sky-200 bg-sky-50'}`}>
+                            <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold">
+                              <span className={mensaje.direccion === 'entrante' ? 'text-emerald-700' : 'text-sky-700'}>{mensaje.direccion === 'entrante' ? 'Familia' : 'Retrato Escolar'}</span>
+                              <span className="font-normal text-slate-400">{new Date(mensaje.createdAt).toLocaleString('es-AR')}</span>
+                            </div>
+                            <p className="whitespace-pre-wrap break-words text-xs text-slate-700">{mensaje.contenido}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <button type="button" onClick={() => { setRespondiendoId(consulta.id); setRespuesta(''); setRespuestaEnviadaId(null); }} className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"><Mail className="w-3.5 h-3.5" />Responder</button>
