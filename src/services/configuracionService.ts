@@ -12,7 +12,7 @@ export interface ConfiguracionWhatsApp {
 }
 
 const STORAGE_KEY = 'infocus_config_whatsapp_v1';
-export const WHATSAPP_DEFECTO = '5491128625916';
+export const WHATSAPP_DEFECTO = ''; // Antes tenia el celular personal de Pablo hardcodeado; ahora sin config explicita no se muestra ningun numero.
 export const NOMBRE_CONTACTO_DEFECTO = 'Institución Educativa / Atención de Códigos';
 
 /**
