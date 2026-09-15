@@ -2151,13 +2151,19 @@ export default function PortalFamiliasModal({
                     <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs space-y-1">
                       <p className="font-bold text-amber-900">Datos bancarios para transferir:</p>
                       <p className="text-slate-700">
+                        <strong>Banco:</strong> Galicia
+                      </p>
+                      <p className="text-slate-700">
                         <strong>Alias:</strong> <span className="font-mono">RETRATO.ESCOLAR</span>
                       </p>
                       <p className="text-slate-700">
-                        <strong>CBU:</strong> <span className="font-mono">0070012345678901234567</span>
+                        <strong>CBU:</strong> <span className="font-mono">0070313830004052956749</span>
                       </p>
                       <p className="text-slate-700">
-                        <strong>Titular:</strong> Retrato Escolar Fotografía · CUIT 30-71829341-8
+                        <strong>Titular:</strong> Alderete Pablo Gabriel
+                      </p>
+                      <p className="text-slate-700">
+                        <strong>CUIT:</strong> 20-28306117-6
                       </p>
                     </div>
                   )}
@@ -2445,13 +2451,22 @@ export default function PortalFamiliasModal({
                       <strong>Monto total:</strong> ${total.toLocaleString('es-AR')} ARS
                     </p>
                     <p className="text-slate-700">
-                      <strong>Alias Galicia:</strong> <span className="font-mono font-bold">RETRATO.ESCOLAR</span>
+                      <strong>Banco:</strong> Galicia
                     </p>
                     <p className="text-slate-700">
-                      <strong>CBU:</strong> <span className="font-mono">0070012345678901234567</span>
+                      <strong>Titular:</strong> Alderete Pablo Gabriel
+                    </p>
+                    <p className="text-slate-700">
+                      <strong>CUIT:</strong> 20-28306117-6
+                    </p>
+                    <p className="text-slate-700">
+                      <strong>Alias:</strong> <span className="font-mono font-bold">RETRATO.ESCOLAR</span>
+                    </p>
+                    <p className="text-slate-700">
+                      <strong>CBU:</strong> <span className="font-mono">0070313830004052956749</span>
                     </p>
                     <p className="text-slate-500 text-[11px] mt-1">
-                      Una vez realizada, envianos el comprobante por WhatsApp con tu número de pedido ({numeroPedido}) para activar tu entrega y link de descarga HD.
+                      Una vez realizada, envianos el comprobante por email a fotos@retratoescolar.com.ar con tu número de pedido ({numeroPedido}) para activar tu entrega y link de descarga HD.
                     </p>
                   </div>
                 )}
