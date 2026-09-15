@@ -1055,6 +1055,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes de código (${pendientesSolicitudesCodigoCount})` : 'Solicitudes de código' },
   ] as const;
   const pestanaActiva = pestanasAdmin.find((pestana) => pestana.id === activeTab);
+  const accesosRapidos = [
+    { id: 'inscriptos', label: 'Inscriptos', icono: Users },
+    { id: 'pedidos', label: 'Pedidos', icono: Package },
+    { id: 'consultas', label: 'Consultas', icono: Mail },
+    { id: 'laboratorio', label: 'Laboratorio', icono: Printer },
+    { id: 'subir', label: 'Cargar fotos', icono: Upload },
+  ] as const;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
@@ -1150,7 +1157,28 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 activa (por ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding
                 negativos hacen que este bloque llegue hasta los bordes del contenedor con
                 scroll (que tiene su propio padding) para que "top-0" pegue justo arriba. */}
-            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-white space-y-3 border-b border-slate-200">
+            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-2 pb-3 bg-white space-y-2 border-b border-slate-200">
+
+            <nav aria-label="Accesos rápidos del panel" className="flex items-center gap-2 overflow-x-auto pb-0.5">
+              {accesosRapidos.map(({ id, label, icono: Icono }) => {
+                const activo = activeTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveTab(id)}
+                    aria-pressed={activo}
+                    className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition cursor-pointer ${activo
+                      ? 'border-amber-400 bg-amber-400 text-slate-950 shadow-sm'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50'
+                    }`}
+                  >
+                    <Icono className="h-3.5 w-3.5" />
+                    {label}
+                  </button>
+                );
+              })}
+            </nav>
 
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-xs">
               <div className="min-w-0">
