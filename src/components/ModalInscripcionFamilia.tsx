@@ -117,7 +117,7 @@ export default function ModalInscripcionFamilia({
   };
 
   const selectedColegio = colegios.find((c) => c.id === colegioId) || colegios[0];
-  const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
+    const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '';
 
   const divisionesDisponibles = selectedColegio?.divisiones && selectedColegio.divisiones.length > 0
     ? selectedColegio.divisiones
@@ -669,17 +669,31 @@ export default function ModalInscripcionFamilia({
                       )}
                       <span>Verificar si ya fue aprobada</span>
                     </button>
-                    <a
-                      href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
-                        `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 py-3 px-4 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-                    >
-                      <MessageCircle className="w-4 h-4 fill-white" />
-                      <span>Consultar por WhatsApp</span>
-                    </a>
+                                        {whatsappDestino ? (
+                      <a
+                        href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
+                          `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 py-3 px-4 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      >
+                        <MessageCircle className="w-4 h-4 fill-white" />
+                        <span>Consultar por WhatsApp</span>
+                      </a>
+                    ) : (
+                      <a
+                        href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
+                          `Consulta de inscripción - ${colegioDisplay}`
+                        )}&body=${encodeURIComponent(
+                          `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
+                        )}`}
+                        className="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                      >
+                        <Mail className="w-4 h-4" />
+                        <span>Escribinos por mail</span>
+                      </a>
+                    )}
                   </div>
 
                   {mensajeVerificacionEstado && (
