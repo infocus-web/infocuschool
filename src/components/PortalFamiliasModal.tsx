@@ -2564,15 +2564,15 @@ export default function PortalFamiliasModal({
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
                 <a
-                  href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20hice%20el%20pedido%20${numeroPedido}%20para%20${encodeURIComponent(
-                    nombreAlumno
+                  href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
+                    `Pedido ${numeroPedido} realizado`
+                  )}&body=${encodeURIComponent(
+                    `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`
                   )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
+                  className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
                 >
-                  <PhoneCall className="w-4 h-4" />
-                  <span>Avisar por WhatsApp</span>
+                  <Mail className="w-4 h-4" />
+                  <span>Avisar por email</span>
                 </a>
 
                 <button
