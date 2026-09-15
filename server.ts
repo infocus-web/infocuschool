@@ -3076,6 +3076,47 @@ app.patch('/api/admin/consultas-familias/:id/estado', requireAdminAuth, async (r
   }
 });
 
+app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const mensaje = String(req.body?.mensaje || '').trim();
+    if (mensaje.length < 2 || mensaje.length > 5000) {
+      return res.status(400).json({ success: false, error: 'La respuesta debe tener entre 2 y 5000 caracteres.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    const { data: consulta, error } = await supabase
+      .from('consultas_familias')
+      .select('id,nombre,email,asunto,estado')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !consulta) return res.status(404).json({ success: false, error: 'No encontramos la consulta.' });
+
+    const resend = getResendClient();
+    if (!resend) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
+    const resultado = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+      replyTo: resendReplyTo,
+      to: [consulta.email],
+      subject: `Re: ${consulta.asunto}`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(consulta.nombre)},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás continuar la conversación.</p></div>`,
+    });
+    if (resultado.error) throw resultado.error;
+
+    if (consulta.estado === 'nueva') {
+      const { error: updateError } = await supabase
+        .from('consultas_familias')
+        .update({ estado: 'en_proceso', updated_at: new Date().toISOString() })
+        .eq('id', consulta.id);
+      if (updateError) console.error('[Consultas] La respuesta se envió, pero no se actualizó el estado:', updateError);
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Consultas] Error al responder:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos enviar la respuesta. Intentá nuevamente.' });
+  }
+});
+
 // ==============================================================================
 // 4D. SOLICITUDES DE CÓDIGO DE CURSO (reemplaza el botón "Solicitar por WhatsApp")
 // Una familia que no encuentra su código deja sus datos acá en vez de escribirle

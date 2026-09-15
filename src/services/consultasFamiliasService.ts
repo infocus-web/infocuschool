@@ -77,3 +77,13 @@ export async function actualizarEstadoConsultaFamiliaAdmin(id: string, estado: E
   const data = await response.json();
   if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo actualizar la consulta.');
 }
+
+export async function responderConsultaFamiliaAdmin(id: string, mensaje: string) {
+  const response = await fetchAdminAutenticado(`/api/admin/consultas-familias/${encodeURIComponent(id)}/responder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mensaje }),
+  });
+  const data = await response.json();
+  if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo enviar la respuesta.');
+}

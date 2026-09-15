@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock3, ExternalLink, Inbox, Loader2, Mail, RefreshCw, Search } from 'lucide-react';
+import { CheckCircle2, Clock3, Inbox, Loader2, Mail, RefreshCw, Search, Send, X } from 'lucide-react';
 import {
   actualizarEstadoConsultaFamiliaAdmin,
   ConsultaFamilia,
   EstadoConsultaFamilia,
   obtenerConsultasFamiliasAdmin,
+  responderConsultaFamiliaAdmin,
 } from '../services/consultasFamiliasService';
 
 const etiquetasEstado: Record<EstadoConsultaFamilia, string> = {
@@ -20,6 +21,9 @@ export default function AdminConsultasFamiliasTab() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [procesandoId, setProcesandoId] = useState<string | null>(null);
+  const [respondiendoId, setRespondiendoId] = useState<string | null>(null);
+  const [respuesta, setRespuesta] = useState('');
+  const [respuestaEnviadaId, setRespuestaEnviadaId] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -57,6 +61,22 @@ export default function AdminConsultasFamiliasTab() {
       }
     } catch (err: any) {
       setError(err?.message || 'No se pudo actualizar la consulta.');
+    } finally {
+      setProcesandoId(null);
+    }
+  };
+
+  const enviarRespuesta = async (consulta: ConsultaFamilia) => {
+    setProcesandoId(consulta.id);
+    setError('');
+    try {
+      await responderConsultaFamiliaAdmin(consulta.id, respuesta);
+      setConsultas((actuales) => actuales.map((item) => item.id === consulta.id ? { ...item, estado: item.estado === 'nueva' ? 'en_proceso' : item.estado } : item));
+      setRespuesta('');
+      setRespondiendoId(null);
+      setRespuestaEnviadaId(consulta.id);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo enviar la respuesta.');
     } finally {
       setProcesandoId(null);
     }
@@ -121,7 +141,7 @@ export default function AdminConsultasFamiliasTab() {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
-                    <a href={`mailto:${consulta.email}?subject=${encodeURIComponent(asuntoRespuesta)}`} className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5"><ExternalLink className="w-3.5 h-3.5" />Responder</a>
+                    <button type="button" onClick={() => { setRespondiendoId(consulta.id); setRespuesta(''); setRespuestaEnviadaId(null); }} className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"><Mail className="w-3.5 h-3.5" />Responder</button>
                     <select value={consulta.estado} disabled={procesandoId === consulta.id} onChange={(event) => void cambiarEstado(consulta, event.target.value as EstadoConsultaFamilia)} className="px-3 py-2 border border-slate-200 rounded-xl bg-white text-xs font-bold disabled:opacity-50">
                       <option value="nueva">Nueva</option>
                       <option value="en_proceso">En proceso</option>
@@ -129,6 +149,24 @@ export default function AdminConsultasFamiliasTab() {
                     </select>
                   </div>
                 </div>
+                {respuestaEnviadaId === consulta.id && (
+                  <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-4 w-4" />Respuesta enviada correctamente.</p>
+                )}
+                {respondiendoId === consulta.id && (
+                  <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="text-xs font-bold text-sky-950">Responder a {consulta.email}</p>
+                      <button type="button" onClick={() => { setRespondiendoId(null); setRespuesta(''); }} className="rounded-lg p-1 text-slate-500 hover:bg-white cursor-pointer" aria-label="Cerrar respuesta"><X className="h-4 w-4" /></button>
+                    </div>
+                    <textarea autoFocus value={respuesta} onChange={(event) => setRespuesta(event.target.value)} minLength={2} maxLength={5000} rows={5} placeholder="Escribí la respuesta para la familia..." className="w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200" />
+                    <div className="mt-2 flex justify-end">
+                      <button type="button" disabled={respuesta.trim().length < 2 || procesandoId === consulta.id} onClick={() => void enviarRespuesta(consulta)} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer">
+                        {procesandoId === consulta.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        {procesandoId === consulta.id ? 'Enviando...' : 'Enviar respuesta'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </article>
             );
           })}
