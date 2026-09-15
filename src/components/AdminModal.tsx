@@ -203,6 +203,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
   const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'consultas' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
+  // Nombre de alumno con el que arrancar la búsqueda al entrar a Laboratorio desde
+  // "Ver en Laboratorio" en Pedidos — así el fotógrafo cae directo en el pedido que
+  // estaba viendo, en vez de tener que buscarlo a mano entre todos (15/9).
+  const [busquedaInicialLaboratorio, setBusquedaInicialLaboratorio] = useState('');
 
   // Auditoría 2026-09 (pedido de Pablo): en la pestaña "Nómina 2026", además de la barra
   // superior fija (pestañas + métricas + resumen de kits), también deben quedar fijos el
@@ -1248,6 +1252,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   guardarPedidosEnStorage(actualizados);
                 }}
                 colegioNombre={colegiosList[0]?.nombre}
+                busquedaInicial={busquedaInicialLaboratorio}
               />
             )}
 
@@ -1371,7 +1376,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                               </button>
                             ) : (
                               <button
-                                onClick={() => setActiveTab('laboratorio')}
+                                onClick={() => {
+                                  setBusquedaInicialLaboratorio(p.alumnoNombre);
+                                  setActiveTab('laboratorio');
+                                }}
                                 className="text-[11px] font-semibold text-amber-700 hover:text-amber-800 underline cursor-pointer"
                               >
                                 Ver en Laboratorio
