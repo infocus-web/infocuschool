@@ -101,7 +101,7 @@ export default function PortalFamiliasModal({
   const [nombreAlumno, setNombreAlumno] = useState('');
 
   // Dynamic WhatsApp number: prioritized by selected school, or global configuration
-  const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
+    const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '';
   const [codigoAcceso, setCodigoAcceso] = useState('');
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
   const [codigoErrorMsg, setCodigoErrorMsg] = useState<string | null>(null);
@@ -1039,15 +1039,29 @@ export default function PortalFamiliasModal({
                     )}
 
                     <div className="flex gap-2 w-full sm:w-auto">
-                      <a
-                        href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 sm:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
-                      >
-                        <PhoneCall className="w-3.5 h-3.5" />
-                        <span>Consultar por WhatsApp</span>
-                      </a>
+                                            {whatsappDestino ? (
+                        <a
+                          href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 sm:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                        >
+                          <PhoneCall className="w-3.5 h-3.5" />
+                          <span>Consultar por WhatsApp</span>
+                        </a>
+                      ) : (
+                        <a
+                          href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
+                            `Consulta por pedido ${searchedOrder.id}`
+                          )}&body=${encodeURIComponent(
+                            `Hola Retrato Escolar, consulto por mi pedido ${searchedOrder.id}.`
+                          )}`}
+                          className="flex-1 sm:flex-initial px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Mail className="w-3.5 h-3.5" />
+                          <span>Escribinos por mail</span>
+                        </a>
+                      )}
                       <button
                         type="button"
                         onClick={() => setModalMode('pedido')}
