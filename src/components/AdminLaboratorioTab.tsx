@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Printer, Download, Mail, CheckCircle2, FolderDown, FileCode,
-  Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, FileSpreadsheet,
+  Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, AlertTriangle, FileSpreadsheet,
   Globe, ShieldCheck, Send, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { 
@@ -835,18 +835,24 @@ export default function AdminLaboratorioTab({
                                   tipo: archivo.tipo === 'individual' ? 'Retrato Individual' : archivo.tipo === 'grupal' ? 'Foto Grupal' : 'Foto Docente'
                                 })}
                                 className={`w-full text-left p-1.5 rounded-lg border text-[11px] font-mono flex items-center justify-between gap-2 transition-all cursor-pointer ${
-                                  isSelectedInPreview
+                                  archivo.sinFotoReal
+                                    ? 'bg-red-50 border-red-300 text-red-900 font-bold'
+                                    : isSelectedInPreview
                                     ? 'bg-amber-100 border-amber-400 text-amber-950 font-bold shadow-xs'
                                     : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
                                 }`}
-                                title="Ver en simulador de dorso"
+                                title={archivo.sinFotoReal ? 'Falta la foto real elegida por la familia — revisar a mano' : 'Ver en simulador de dorso'}
                               >
                                 <div className="flex items-center gap-1.5 truncate">
-                                  <FileCode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  {archivo.sinFotoReal ? (
+                                    <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                                  ) : (
+                                    <FileCode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  )}
                                   <span className="truncate">
                                     {modoEstructuraCarpetas === 'solo_2_carpetas_tamano' ? (
                                       <>
-                                        <span className="text-amber-700 font-semibold">{archivo.tamanoImpresion}/</span>
+                                        <span className={archivo.sinFotoReal ? 'font-semibold' : 'text-amber-700 font-semibold'}>{archivo.tamanoImpresion}/</span>
                                         <span>{archivo.nombreArchivoLab}</span>
                                       </>
                                     ) : (
@@ -855,6 +861,11 @@ export default function AdminLaboratorioTab({
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
+                                  {archivo.sinFotoReal && (
+                                    <span className="text-[9px] uppercase font-extrabold bg-red-600 text-white px-1.5 py-0.5 rounded shadow-2xs">
+                                      Falta foto
+                                    </span>
+                                  )}
                                   {archivo.esCopiaExtra && (
                                     <span className="text-[9px] uppercase font-extrabold bg-amber-400 text-slate-950 px-1.5 py-0.5 rounded shadow-2xs">
                                       COPIA {archivo.numeroCopia || 2}

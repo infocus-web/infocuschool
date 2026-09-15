@@ -2518,6 +2518,50 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
 
+                {/* Selected Photos Thumbnails (auditoría 2026-09, pedido de Pablo): antes acá
+                    se mostraba el listado de nombres de archivo internos para el laboratorio
+                    (con código de alumno y "copias extra duplicadas"), que es información
+                    interna del minilab y no debería ser visible para la familia. Ahora el
+                    cliente sólo ve miniaturas de las fotos que eligió — sin nombres de
+                    archivo ni copias extra repetidas. El detalle de archivos para el
+                    laboratorio sigue disponible para el fotógrafo en el panel de admin
+                    (pestaña "Laboratorio & Ensobrado"). */}
+                {pedidoGenerado && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                    <div className="flex items-center gap-1.5 text-slate-700 font-bold text-xs mb-2.5">
+                      <Images className="w-4 h-4 text-slate-500" />
+                      <span>Tus fotos elegidas:</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2.5">
+                      {pedidoGenerado.archivosParaLaboratorio
+                        .filter(archivo => !archivo.esCopiaExtra)
+                        .map((archivo, idx) => (
+                          <div key={idx} className="space-y-1">
+                            {archivo.sinFotoReal ? (
+                              // Auditoría 2026-09-15 (pedido de Pablo: "eliminemos todas las
+                              // fotos de muestra"): en vez de una imagen rota (o, peor, una
+                              // foto de stock que no es la del alumno), se avisa que está
+                              // pendiente de verificación por el equipo fotográfico.
+                              <div className="aspect-square rounded-lg bg-amber-50 border border-amber-300 flex flex-col items-center justify-center gap-1 p-1.5 text-center">
+                                <AlertCircle className="w-5 h-5 text-amber-600" />
+                                <span className="text-[9px] font-semibold text-amber-800 leading-tight">Foto pendiente de verificación</span>
+                              </div>
+                            ) : (
+                              <div className="aspect-square rounded-lg overflow-hidden bg-slate-200 border border-slate-300">
+                                <img
+                                  src={archivo.urlMuestra}
+                                  alt={archivo.tipo}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                            )}
+                            <p className="text-[10px] text-slate-500 text-center capitalize">{archivo.tipo}</p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="text-xs text-slate-600 space-y-1">
                   <p>
                     <strong>Kit:</strong> {selectedKit.nombre} (${total.toLocaleString('es-AR')} ARS)

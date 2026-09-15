@@ -457,7 +457,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                               onClick={() => handleAprobar(item, true)}
                               disabled={procesando}
                               className="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
-                              title="Aprobar y despachar código de acceso por WhatsApp y Email"
+                              title="Aprobar y despachar código de acceso por Email"
                             >
                               {procesando ? (
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />

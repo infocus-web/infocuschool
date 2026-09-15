@@ -234,9 +234,17 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                   observadorBarraSuperiorRef.current = null;
           }
           if (el) {
+                  // Corrección 2026-09-15 (pedido de Pablo: "queda tapada información, botones y
+                  // textos" en Nómina 2026): `entry.contentRect.height` mide sólo el content-box
+                  // (SIN el padding ni el borde inferior de la barra), así que este offset
+                  // quedaba unos px más chico que la altura real con la que la barra se renderiza
+                  // — la segunda franja fija (título + filtros de Nómina) terminaba pegándose un
+                  // poco más arriba de lo debido y su parte de arriba quedaba tapada detrás del
+                  // borde inferior de la barra superior. `getBoundingClientRect().height` da la
+                  // altura real renderizada (content + padding + borde), que es la que hace falta acá.
                   const observer = new ResizeObserver((entries) => {
                             for (const entry of entries) {
-                                        setAlturaBarraSuperior(entry.contentRect.height);
+                                        setAlturaBarraSuperior(entry.target.getBoundingClientRect().height);
                             }
                   });
                   observer.observe(el);
@@ -1067,11 +1075,12 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
       <div className="bg-white w-full h-full max-w-none max-h-none overflow-hidden flex flex-col shadow-2xl">
         
-        {/* Modal Header — auditoría 2026-09 (pedido de Pablo): a la mitad de alto que antes */}
-        <div className="px-4 py-2 sm:px-5 sm:py-2.5 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between">
+        {/* Modal Header — auditoría 2026-09 (pedido de Pablo): a la mitad de alto que antes;
+            2026-09-15 (pedido de Pablo: "se podría achicar un 30%"): un poco más bajo todavía */}
+        <div className="px-4 py-1.5 sm:px-5 sm:py-2 border-b border-slate-200 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold shrink-0">
-              <Camera className="w-3.5 h-3.5" />
+            <div className="w-6 h-6 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold shrink-0">
+              <Camera className="w-3 h-3" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -1156,8 +1165,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 resumen de kits quedan pegadas arriba al scrollear el contenido de la pestaña
                 activa (por ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding
                 negativos hacen que este bloque llegue hasta los bordes del contenedor con
-                scroll (que tiene su propio padding) para que "top-0" pegue justo arriba. */}
-            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-2 pb-3 bg-white space-y-2 border-b border-slate-200">
+                scroll (que tiene su propio padding) para que "top-0" pegue justo arriba.
+                2026-09-15 (pedido de Pablo: "hay un espacio en blanco que se podría eliminar"
+                entre el header oscuro y esta barra): el padding superior baja de pt-4/pt-6 a
+                pt-2/pt-3, que era lo que dejaba ese hueco antes de la tarjeta "Sección activa". */}
+            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-2 sm:pt-3 pb-3 bg-white space-y-3 border-b border-slate-200">
 
             <nav aria-label="Accesos rápidos del panel" className="flex items-center gap-2 overflow-x-auto pb-0.5">
               {accesosRapidos.map(({ id, label, icono: Icono }) => {

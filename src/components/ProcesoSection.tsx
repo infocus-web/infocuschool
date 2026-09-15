@@ -9,7 +9,7 @@ import {
   Users,
   Camera,
   Heart,
-  MessageCircle,
+  Mail,
   FolderHeart,
   XCircle
 } from 'lucide-react';
@@ -55,20 +55,20 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
       numero: '2',
       icono: KeyRound,
       titulo: 'Recibís 1 Código Familiar',
-      bajada: 'Directo a tu WhatsApp y Email',
+      bajada: 'Directo a tu Email',
       descripcion:
         'El sistema te genera una clave única y fácil de recordar (ej: FAM-4821). Con ese solo código accedés a las fotos de todos tus hijos.',
       miniGrafico: (
-        <div className="mt-3 p-2.5 bg-[#E8F8F0] rounded-xl border border-emerald-300/80 text-left space-y-1.5 shadow-2xs">
-          <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-800">
-            <MessageCircle className="w-3 h-3 text-[#25D366] shrink-0" />
-            <span>Mensaje de WhatsApp:</span>
+        <div className="mt-3 p-2.5 bg-sky-50 rounded-xl border border-sky-300/80 text-left space-y-1.5 shadow-2xs">
+          <div className="flex items-center gap-1 text-[10px] font-bold text-sky-800">
+            <Mail className="w-3 h-3 text-sky-600 shrink-0" />
+            <span>Mensaje por Email:</span>
           </div>
-          <div className="bg-white p-2 rounded-lg border border-emerald-200 shadow-2xs">
+          <div className="bg-white p-2 rounded-lg border border-sky-200 shadow-2xs">
             <p className="text-[11px] text-slate-700 leading-tight">
               ¡Hola! Tu <strong>Código Familiar</strong> es:
             </p>
-            <p className="text-sm font-black font-mono text-emerald-800 tracking-wider my-0.5">
+            <p className="text-sm font-black font-mono text-sky-800 tracking-wider my-0.5">
               FAM-4821
             </p>
             <p className="text-[10px] text-slate-500">
@@ -255,7 +255,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
                 <ul className="space-y-2 text-xs text-slate-700 font-medium">
                   <li className="flex items-start gap-2">
                     <span className="text-emerald-600 font-bold">✔</span>
-                    <span><strong>1 solo Código Familiar (ej: FAM-4821)</strong> que te llega directo a tu WhatsApp.</span>
+                    <span><strong>1 solo Código Familiar (ej: FAM-4821)</strong> que te llega directo a tu email.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-emerald-600 font-bold">✔</span>

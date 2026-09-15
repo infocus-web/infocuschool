@@ -406,7 +406,7 @@ export default function ModalInscripcionFamilia({
               <p className="text-xs text-slate-300 mt-0.5">
                 {paso === 'resultado'
                   ? familiaCreada?.estado === 'aceptado'
-                    ? 'Tu inscripción fue confirmada. Código despachado por WhatsApp y Email.'
+                    ? 'Tu inscripción fue confirmada. Código despachado por Email.'
                     : 'Tu inscripción quedó pendiente de validación por el equipo fotográfico.'
                   : 'Paso inicial para acceder a las fotos del curso de tu hijo/a'}
               </p>
@@ -636,29 +636,18 @@ export default function ModalInscripcionFamilia({
                         Tu solicitud está en revisión
                       </h4>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        No encontramos automáticamente tus datos en el padrón del colegio, así que tu solicitud quedó pendiente de revisión manual por el equipo fotográfico. En cuanto sea validada, vas a recibir tu <strong>Código de Acceso</strong> por WhatsApp y por Email.
+                        No encontramos automáticamente tus datos en el padrón del colegio, así que tu solicitud quedó pendiente de revisión manual por el equipo fotográfico. En cuanto sea validada, vas a recibir tu <strong>Código de Acceso</strong> por Email.
                       </p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                    <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-2xl flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
-                        <Phone className="w-4 h-4" />
-                      </div>
-                      <div className="overflow-hidden">
-                        <span className="text-[10px] font-bold text-emerald-900 uppercase block">Te avisaremos por WhatsApp:</span>
-                        <span className="text-xs font-black text-slate-900 truncate block">
-                          {familiaCreada?.telefonoWhatsApp || telefonoWhatsApp}
-                        </span>
-                      </div>
-                    </div>
+                  <div className="grid grid-cols-1 gap-2.5 pt-1">
                     <div className="p-3 bg-sky-50/80 border border-sky-200 rounded-2xl flex items-center gap-2.5">
                       <div className="w-8 h-8 rounded-xl bg-sky-500 text-white flex items-center justify-center shrink-0">
                         <Mail className="w-4 h-4" />
                       </div>
                       <div className="overflow-hidden">
-                        <span className="text-[10px] font-bold text-sky-900 uppercase block">Y por Email:</span>
+                        <span className="text-[10px] font-bold text-sky-900 uppercase block">Te avisaremos por Email:</span>
                         <span className="text-xs font-black text-slate-900 truncate block">
                           {familiaCreada?.email || email}
                         </span>
