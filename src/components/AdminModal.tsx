@@ -61,6 +61,7 @@ import AdminPadronTab from './AdminPadronTab';
 import AdminEstadoPagosTab from './AdminEstadoPagosTab';
 import AdminImportarAlumnosTab from './AdminImportarAlumnosTab';
 import AdminSolicitudesCodigoTab from './AdminSolicitudesCodigoTab';
+import AdminConsultasFamiliasTab from './AdminConsultasFamiliasTab';
 import { obtenerSolicitudesCodigoAdmin } from '../services/solicitudesCodigoService';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
 import AdminResumenKitsSection from './AdminResumenKitsSection';
@@ -201,7 +202,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'consultas' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
 
   // Auditoría 2026-09 (pedido de Pablo): en la pestaña "Nómina 2026", además de la barra
   // superior fija (pestañas + métricas + resumen de kits), también deben quedar fijos el
@@ -1050,6 +1051,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})` },
     { id: 'padron', label: 'Padrón autorizado' },
     { id: 'pedidos', label: `Pedidos de familias (${pedidosCompletos.length})` },
+    { id: 'consultas', label: 'Consultas de familias' },
     { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes de código (${pendientesSolicitudesCodigoCount})` : 'Solicitudes de código' },
   ] as const;
   const pestanaActiva = pestanasAdmin.find((pestana) => pestana.id === activeTab);
@@ -1192,6 +1194,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* TAB: SOLICITUDES DE CÓDIGO (reemplaza el botón que abría WhatsApp por cada familia) */}
             {activeTab === 'solicitudes' && (
               <AdminSolicitudesCodigoTab />
+            )}
+            {activeTab === 'consultas' && (
+              <AdminConsultasFamiliasTab />
             )}
 
             {/* TAB: LABORATORIO & ENSOBRADO */}

@@ -2979,6 +2979,104 @@ app.post('/api/padron/link/:codigo', async (req: Request, res: Response) => {
 });
 
 // ==============================================================================
+// 4C. CONSULTAS DE FAMILIAS (formulario público + bandeja administrativa)
+// La web nunca escribe directamente en Supabase: valida, limita intentos y usa el cliente
+// privado del servidor. La tabla no concede ningún permiso a anon/authenticated.
+// ==============================================================================
+
+app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 5, 15 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const { nombre, email, telefono, colegio, numeroPedido, asunto, mensaje, sitioWeb } = req.body || {};
+    if (String(sitioWeb || '').trim()) return res.json({ success: true });
+
+    const datos = {
+      nombre: String(nombre || '').trim(),
+      email: String(email || '').trim().toLowerCase(),
+      telefono: String(telefono || '').trim(),
+      colegio: String(colegio || '').trim(),
+      numeroPedido: String(numeroPedido || '').trim(),
+      asunto: String(asunto || '').trim(),
+      mensaje: String(mensaje || '').trim(),
+    };
+    if (datos.nombre.length < 2 || datos.nombre.length > 120) return res.status(400).json({ success: false, error: 'Revisá el nombre ingresado.' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(datos.email) || datos.email.length > 254) return res.status(400).json({ success: false, error: 'Ingresá un email válido.' });
+    if (datos.asunto.length < 2 || datos.asunto.length > 160) return res.status(400).json({ success: false, error: 'Seleccioná un motivo válido.' });
+    if (datos.mensaje.length < 5 || datos.mensaje.length > 3000) return res.status(400).json({ success: false, error: 'El mensaje debe tener entre 5 y 3000 caracteres.' });
+    if (datos.telefono.length > 50 || datos.colegio.length > 160 || datos.numeroPedido.length > 80) return res.status(400).json({ success: false, error: 'Uno de los datos ingresados es demasiado largo.' });
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'El servicio de consultas no está disponible.' });
+
+    const { data: consulta, error } = await supabase.from('consultas_familias').insert({
+      nombre: datos.nombre,
+      email: datos.email,
+      telefono: datos.telefono || null,
+      colegio: datos.colegio || null,
+      numero_pedido: datos.numeroPedido || null,
+      asunto: datos.asunto,
+      mensaje: datos.mensaje,
+      estado: 'nueva',
+      origen: 'web',
+    }).select('id').single();
+    if (error) throw error;
+
+    const resend = getResendClient();
+    if (resend) {
+      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const detalle = [
+        datos.colegio ? `<p><strong>Colegio:</strong> ${escapeHtml(datos.colegio)}</p>` : '',
+        datos.numeroPedido ? `<p><strong>Pedido:</strong> ${escapeHtml(datos.numeroPedido)}</p>` : '',
+        datos.telefono ? `<p><strong>Teléfono:</strong> ${escapeHtml(datos.telefono)}</p>` : '',
+      ].join('');
+      const aviso = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+        replyTo: datos.email,
+        to: [destino],
+        subject: `Nueva consulta web: ${datos.asunto}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><h2>Nueva consulta de una familia</h2><p><strong>Nombre:</strong> ${escapeHtml(datos.nombre)}</p><p><strong>Email:</strong> ${escapeHtml(datos.email)}</p>${detalle}<p><strong>Motivo:</strong> ${escapeHtml(datos.asunto)}</p><div style="padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;white-space:pre-wrap">${escapeHtml(datos.mensaje)}</div><p style="font-size:12px;color:#64748b">Consulta ${escapeHtml(consulta.id)} · También está disponible en el panel administrativo.</p></div>`,
+      });
+      if (aviso.error) console.error('[Consultas] No se pudo enviar el aviso por email:', aviso.error);
+    }
+
+    return res.status(201).json({ success: true });
+  } catch (err: any) {
+    console.error('[Consultas] Error al guardar consulta:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos guardar tu consulta. Intentá nuevamente.' });
+  }
+});
+
+app.get('/api/admin/consultas-familias', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    const estado = String(req.query.estado || 'nueva');
+    const estadosValidos = ['nueva', 'en_proceso', 'resuelta', 'todas'];
+    if (!estadosValidos.includes(estado)) return res.status(400).json({ success: false, error: 'Estado inválido.' });
+    let query = supabase.from('consultas_familias').select('*').order('created_at', { ascending: false }).limit(500);
+    if (estado !== 'todas') query = query.eq('estado', estado);
+    const { data, error } = await query;
+    if (error) throw error;
+    return res.json({ success: true, consultas: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'No se pudieron obtener las consultas.' });
+  }
+});
+
+app.patch('/api/admin/consultas-familias/:id/estado', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const estado = String(req.body?.estado || '');
+    if (!['nueva', 'en_proceso', 'resuelta'].includes(estado)) return res.status(400).json({ success: false, error: 'Estado inválido.' });
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    const { data, error } = await supabase.from('consultas_familias').update({ estado, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('id').single();
+    if (error) throw error;
+    return res.json({ success: true, consulta: data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'No se pudo actualizar la consulta.' });
+  }
+});
+
+// ==============================================================================
 // 4D. SOLICITUDES DE CÓDIGO DE CURSO (reemplaza el botón "Solicitar por WhatsApp")
 // Una familia que no encuentra su código deja sus datos acá en vez de escribirle
 // directo al fotógrafo por WhatsApp; queda listado en el panel admin para que lo
