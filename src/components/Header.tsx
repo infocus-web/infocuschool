@@ -44,13 +44,14 @@ export default function Header({
                 <span className="text-slate-600">|</span>
               </>
             )}
-            <a
-              href="mailto:infocusfotografiayvideo@gmail.com"
+            <button
+              type="button"
+              onClick={() => handleNavClick('contacto')}
               className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition-colors"
             >
               <Mail className="w-3.5 h-3.5" />
-              <span>Atención Familias por Email</span>
-            </a>
+              <span>Atención a Familias</span>
+            </button>
           </div>
         </div>
       </div>
