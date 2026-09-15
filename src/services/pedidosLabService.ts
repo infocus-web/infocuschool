@@ -938,9 +938,31 @@ export async function descargarLoteLaboratorioZip(
       const codigoCliente = formatearCodigoCliente(p.cursoCodigo, p.alumnoNombre);
       const carpetaAlumno = `${p.cursoCodigo}/${String(p.alumnoNumeroLista).padStart(2, '0')}_${sanitizarParaMinilab(p.alumnoNombre)}`;
 
+      const nombresUsadosAlumno = new Set<string>();
       for (const foto of p.archivosParaLaboratorio) {
         const sufijoExtra = foto.esCopiaExtra ? `_COPIA${foto.numeroCopia || 2}` : '';
-        const nombreJpg = `${codigoCliente}_${foto.tamanoImpresion}${sufijoExtra}.jpg`;
+        // Bug crítico (15/9): antes el nombre solo combinaba tamaño + copia, sin distinguir el
+        // TIPO de foto (individual/grupal/docente/otras). Como la foto de docente también es
+        // 15x21, terminaba con el mismo nombre que la foto individual del mismo alumno y JSZip
+        // sobrescribía un archivo con el otro dentro de la misma carpeta — la familia se
+        // quedaba sin una de las dos fotos en el ZIP del laboratorio sin ningún aviso.
+        const sufijoTipo =
+          foto.tipo === 'docente'
+            ? '_DOCENTE'
+            : foto.nombreArchivoOriginal === 'OTRAS_HD.jpg'
+              ? '_OTRAS'
+              : '';
+        let nombreJpg = `${codigoCliente}_${foto.tamanoImpresion}${sufijoTipo}${sufijoExtra}.jpg`;
+        // Red de seguridad adicional: si por cualquier otro motivo dos archivos del mismo
+        // alumno terminaran con igual nombre, se agrega un sufijo numérico en vez de
+        // sobrescribirse en silencio.
+        if (nombresUsadosAlumno.has(nombreJpg)) {
+          let seq = 2;
+          const base = nombreJpg.replace(/\.jpg$/, '');
+          while (nombresUsadosAlumno.has(`${base}_${seq}.jpg`)) seq++;
+          nombreJpg = `${base}_${seq}.jpg`;
+        }
+        nombresUsadosAlumno.add(nombreJpg);
         if (foto.sinFotoReal) {
           const fallbackBlob = await generarJpgSimuladoLaboratorio(
             codigoCliente,
