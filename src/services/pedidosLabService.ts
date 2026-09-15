@@ -14,6 +14,14 @@ export interface ArchivoFotoLab {
   urlOriginalHD?: string;
   esCopiaExtra?: boolean;
   numeroCopia?: number; // 1 = original, 2 = copia extra, etc.
+  /**
+   * true cuando no se pudo encontrar la foto real que eligió la familia dentro de la galería
+   * real del curso (auditoría 2026-09-15, pedido de Pablo: "eliminemos todas las fotos de
+   * muestra" — que nunca se use una foto de stock como reemplazo silencioso de la real).
+   * En ese caso `urlMuestra`/`urlOriginalHD` quedan vacíos a propósito: mejor marcarlo para que
+   * el fotógrafo lo revise a mano que imprimir o enviar por error la foto de otro alumno.
+   */
+  sinFotoReal?: boolean;
 }
 
 export interface CopiasExtrasConfig {
@@ -193,14 +201,25 @@ export function generarArchivosParaLaboratorio(
   copiasExtras?: CopiasExtrasConfig,
   fotosDisponibles: Foto[] = FOTOS_MUESTRA
 ): ArchivoFotoLab[] {
+  // Auditoría 2026-09-15 (pedido de Pablo: "eliminemos todas las fotos de muestra"): esta
+  // búsqueda antes caía en FOTOS_MUESTRA (fotos de stock genéricas) cuando la foto real elegida
+  // por la familia no aparecía en la galería — así fue como el pedido de Delfina Marin terminó
+  // con archivos genéricos para el laboratorio. Ahora busca ÚNICAMENTE en la galería real
+  // (`fotosDisponibles`, la de este curso) y nunca sustituye en silencio: si no la encuentra,
+  // el archivo queda marcado con `sinFotoReal: true` (ver datosFoto) para que el fotógrafo lo
+  // note y lo resuelva a mano, en vez de imprimir o enviar por error la foto de otro alumno.
   const buscarFoto = (id: string | undefined, categoria: Foto['categoria']): Foto | undefined =>
-    fotosDisponibles.find((foto) => foto.id === id)
-    || FOTOS_MUESTRA.find((foto) => foto.id === id)
-    || FOTOS_MUESTRA.find((foto) => foto.categoria === categoria);
+    id ? fotosDisponibles.find((foto) => foto.id === id && foto.categoria === categoria) : undefined;
 
-  const individualFoto = buscarFoto(fotosSeleccionadas.individualId, 'individual') || FOTOS_MUESTRA[0];
-  const grupalFoto = buscarFoto(fotosSeleccionadas.grupalId, 'grupal') || FOTOS_MUESTRA[0];
-  const docenteFoto = fotosSeleccionadas.docenteId ? buscarFoto(fotosSeleccionadas.docenteId, 'docente') : undefined;
+  // Datos de imagen para un ArchivoFotoLab a partir de la foto resuelta (o el marcador de "no
+  // encontrada" si `buscarFoto` no dio con la foto real).
+  const datosFoto = (foto: Foto | undefined): Pick<ArchivoFotoLab, 'urlMuestra' | 'urlOriginalHD' | 'sinFotoReal'> =>
+    foto ? { urlMuestra: foto.thumbnail, urlOriginalHD: foto.url } : { urlMuestra: '', sinFotoReal: true };
+
+  const individualFoto = buscarFoto(fotosSeleccionadas.individualId, 'individual');
+  const grupalFoto = buscarFoto(fotosSeleccionadas.grupalId, 'grupal');
+  const seEligioDocente = Boolean(fotosSeleccionadas.docenteId);
+  const docenteFoto = seEligioDocente ? buscarFoto(fotosSeleccionadas.docenteId, 'docente') : undefined;
 
   const archivosLab: ArchivoFotoLab[] = [
     {
@@ -209,8 +228,7 @@ export function generarArchivosParaLaboratorio(
       nombreArchivoOriginal: 'INDIVIDUAL_HD.jpg',
       nombreArchivoLab: generarNombreArchivoLab(cursoCodigo, numLista, alumnoNombre, 'INDIVIDUAL', '15x21'),
       tamanoImpresion: '15x21',
-      urlMuestra: individualFoto.thumbnail,
-      urlOriginalHD: individualFoto.url,
+      ...datosFoto(individualFoto),
       numeroCopia: 1
     },
     {
@@ -219,21 +237,19 @@ export function generarArchivosParaLaboratorio(
       nombreArchivoOriginal: 'GRUPAL_HD.jpg',
       nombreArchivoLab: generarNombreArchivoLab(cursoCodigo, numLista, alumnoNombre, 'GRUPAL', '20x30'),
       tamanoImpresion: '20x30',
-      urlMuestra: grupalFoto.thumbnail,
-      urlOriginalHD: grupalFoto.url,
+      ...datosFoto(grupalFoto),
       numeroCopia: 1
     }
   ];
 
-  if (docenteFoto) {
+  if (seEligioDocente) {
     archivosLab.push({
       id: `arch-${Date.now()}-3`,
       tipo: 'docente',
       nombreArchivoOriginal: 'DOCENTE_HD.jpg',
       nombreArchivoLab: generarNombreArchivoLab(cursoCodigo, numLista, alumnoNombre, 'DOCENTE', '15x21'),
       tamanoImpresion: '15x21',
-      urlMuestra: docenteFoto.thumbnail,
-      urlOriginalHD: docenteFoto.url,
+      ...datosFoto(docenteFoto),
       numeroCopia: 1
     });
   }
@@ -257,8 +273,7 @@ export function generarArchivosParaLaboratorio(
           numCopia
         ),
         tamanoImpresion: '15x21',
-        urlMuestra: individualFoto.thumbnail,
-        urlOriginalHD: individualFoto.url,
+        ...datosFoto(individualFoto),
         esCopiaExtra: true,
         numeroCopia: numCopia
       });
@@ -278,14 +293,13 @@ export function generarArchivosParaLaboratorio(
           numCopia
         ),
         tamanoImpresion: '20x30',
-        urlMuestra: grupalFoto.thumbnail,
-        urlOriginalHD: grupalFoto.url,
+        ...datosFoto(grupalFoto),
         esCopiaExtra: true,
         numeroCopia: numCopia
       });
 
-      // 3. Copia extra de foto docente 15x21 (si aplica)
-      if (docenteFoto) {
+      // 3. Copia extra de foto docente 15x21 (si la familia eligió foto de docente)
+      if (seEligioDocente) {
         archivosLab.push({
           id: `arch-${Date.now()}-extra-carp-doc-${c}`,
           tipo: 'docente',
@@ -300,8 +314,7 @@ export function generarArchivosParaLaboratorio(
             numCopia
           ),
           tamanoImpresion: '15x21',
-          urlMuestra: docenteFoto.thumbnail,
-          urlOriginalHD: docenteFoto.url,
+          ...datosFoto(docenteFoto),
           esCopiaExtra: true,
           numeroCopia: numCopia
         });
@@ -327,8 +340,7 @@ export function generarArchivosParaLaboratorio(
           numCopia
         ),
         tamanoImpresion: '15x21',
-        urlMuestra: individualFoto.thumbnail,
-        urlOriginalHD: individualFoto.url,
+        ...datosFoto(individualFoto),
         esCopiaExtra: true,
         numeroCopia: numCopia
       });
@@ -353,8 +365,7 @@ export function generarArchivosParaLaboratorio(
           numCopia
         ),
         tamanoImpresion: '20x30',
-        urlMuestra: grupalFoto.thumbnail,
-        urlOriginalHD: grupalFoto.url,
+        ...datosFoto(grupalFoto),
         esCopiaExtra: true,
         numeroCopia: numCopia
       });
@@ -362,7 +373,7 @@ export function generarArchivosParaLaboratorio(
   }
 
   // Generación automática de archivos duplicados para el laboratorio (Copia Extra 15x21 Con Docente)
-  if (copiasExtras?.docente15x21 && copiasExtras.docente15x21 > 0 && docenteFoto) {
+  if (copiasExtras?.docente15x21 && copiasExtras.docente15x21 > 0 && seEligioDocente) {
     for (let c = 1; c <= copiasExtras.docente15x21; c++) {
       const numCopia = c + 1;
       archivosLab.push({
@@ -379,38 +390,37 @@ export function generarArchivosParaLaboratorio(
           numCopia
         ),
         tamanoImpresion: '15x21',
-        urlMuestra: docenteFoto.thumbnail,
-        urlOriginalHD: docenteFoto.url,
+        ...datosFoto(docenteFoto),
         esCopiaExtra: true,
         numeroCopia: numCopia
       });
     }
   }
 
-  // Fotos digitales sueltas de eventos elegidas expresamente por la familia.
+  // Fotos digitales sueltas de eventos elegidas expresamente por la familia. Antes, si la foto
+  // no aparecía en la galería real, esta copia extra pagada se perdía en silencio (el `if
+  // (fotoEvento)` la salteaba sin dejar rastro); ahora siempre se genera el archivo — marcado
+  // `sinFotoReal` si no se encontró — para que quede visible que hay una copia pendiente.
   for (const [indice, fotoId] of (fotosSeleccionadas.otrasIds || []).entries()) {
     const fotoEvento = fotosDisponibles.find((foto) => foto.id === fotoId && foto.categoria === 'patio');
-    if (fotoEvento) {
-      archivosLab.push({
-        id: `arch-${Date.now()}-evento-${indice + 1}`,
-        tipo: 'individual',
-        nombreArchivoOriginal: 'OTRAS_HD.jpg',
-        nombreArchivoLab: generarNombreArchivoLab(
-          cursoCodigo,
-          numLista,
-          alumnoNombre,
-          'OTRAS',
-          '15x21',
-          true,
-          indice + 1
-        ),
-        tamanoImpresion: '15x21',
-        urlMuestra: fotoEvento.thumbnail,
-        urlOriginalHD: fotoEvento.url,
-        esCopiaExtra: true,
-        numeroCopia: indice + 1
-      });
-    }
+    archivosLab.push({
+      id: `arch-${Date.now()}-evento-${indice + 1}`,
+      tipo: 'individual',
+      nombreArchivoOriginal: 'OTRAS_HD.jpg',
+      nombreArchivoLab: generarNombreArchivoLab(
+        cursoCodigo,
+        numLista,
+        alumnoNombre,
+        'OTRAS',
+        '15x21',
+        true,
+        indice + 1
+      ),
+      tamanoImpresion: '15x21',
+      ...datosFoto(fotoEvento),
+      esCopiaExtra: true,
+      numeroCopia: indice + 1
+    });
   }
 
   return archivosLab;
@@ -715,7 +725,8 @@ async function generarJpgSimuladoLaboratorio(
   tamano: string,
   tipo: string,
   esCopiaExtra?: boolean,
-  numeroCopia?: number
+  numeroCopia?: number,
+  faltaFotoReal?: boolean
 ): Promise<Blob> {
   if (typeof document === 'undefined') {
     return new Blob([], { type: 'image/jpeg' });
@@ -727,9 +738,16 @@ async function generarJpgSimuladoLaboratorio(
   canvas.height = es20x30 ? 800 : 1180;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    // Fondo profesional para laboratorio
+    // Fondo profesional para laboratorio. Auditoría 2026-09-15 (pedido de Pablo: "eliminemos
+    // todas las fotos de muestra"): cuando no se encontró la foto real (faltaFotoReal), este
+    // cartel rojo reemplaza lo que antes era una foto de stock genérica — así el operador del
+    // laboratorio ve de inmediato que falta resolver esa foto a mano, en vez de imprimir por
+    // error la foto de otro alumno sin darse cuenta.
     const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    if (esCopiaExtra) {
+    if (faltaFotoReal) {
+      grad.addColorStop(0, '#fef2f2');
+      grad.addColorStop(1, '#fecaca');
+    } else if (esCopiaExtra) {
       grad.addColorStop(0, '#fffbeb');
       grad.addColorStop(1, '#fef3c7');
     } else {
@@ -740,17 +758,28 @@ async function generarJpgSimuladoLaboratorio(
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Marco
-    ctx.strokeStyle = esCopiaExtra ? '#f59e0b' : '#cbd5e1';
-    ctx.lineWidth = esCopiaExtra ? 18 : 14;
+    ctx.strokeStyle = faltaFotoReal ? '#dc2626' : (esCopiaExtra ? '#f59e0b' : '#cbd5e1');
+    ctx.lineWidth = faltaFotoReal ? 22 : (esCopiaExtra ? 18 : 14);
     ctx.strokeRect(18, 18, canvas.width - 36, canvas.height - 36);
 
     // Encabezado
-    ctx.fillStyle = '#d97706';
+    ctx.fillStyle = faltaFotoReal ? '#b91c1c' : '#d97706';
     ctx.font = 'bold 24px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('RETRATO ESCOLAR · FOTOGRAFÍA ESCOLAR 2026', canvas.width / 2, 65);
 
-    if (esCopiaExtra) {
+    if (faltaFotoReal) {
+      // Badge de alerta: no se encontró la foto real elegida por la familia
+      ctx.fillStyle = '#b91c1c';
+      ctx.fillRect(canvas.width / 2 - 280, 90, 560, 42);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText('⚠ FALTA LA FOTO REAL — REVISAR A MANO ⚠', canvas.width / 2, 118);
+
+      ctx.fillStyle = '#991b1b';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('NO IMPRIMIR ESTA HOJA · BUSCAR LA FOTO CORRECTA ANTES DE ENSOBRAR', canvas.width / 2, 160);
+    } else if (esCopiaExtra) {
       // Badge destacado de copia extra
       ctx.fillStyle = '#b45309';
       ctx.fillRect(canvas.width / 2 - 260, 90, 520, 42);
@@ -766,8 +795,8 @@ async function generarJpgSimuladoLaboratorio(
     // Código de cliente destacado para el operador
     ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 42px monospace';
-    const textoCodigo = esCopiaExtra 
-      ? `${codigoCliente}_COPIA${numeroCopia || 2}` 
+    const textoCodigo = esCopiaExtra
+      ? `${codigoCliente}_COPIA${numeroCopia || 2}`
       : codigoCliente;
     ctx.fillText(textoCodigo, canvas.width / 2, canvas.height / 2 - 20);
 
@@ -857,32 +886,50 @@ export async function descargarLoteLaboratorioZip(
           nombreJpg = `${codigoCliente}_${seq}.jpg`;
         }
         setNombres.add(nombreJpg);
-        listaArchivosLab.push(`${foto.tamanoImpresion}/${nombreJpg}${foto.esCopiaExtra ? ' [COPIA EXTRA]' : ''}`);
+        listaArchivosLab.push(`${foto.tamanoImpresion}/${nombreJpg}${foto.esCopiaExtra ? ' [COPIA EXTRA]' : ''}${foto.sinFotoReal ? ' [⚠ FALTA FOTO]' : ''}`);
 
-        // Descarga la imagen o genera JPEG válido nativo si hay restricción de CORS
-        try {
-          const urlFoto = foto.urlOriginalHD || foto.urlMuestra;
-          const response = urlFoto.startsWith('/api/admin/')
-            ? await fetchAdminAutenticado(urlFoto)
-            : await fetch(urlFoto);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const blob = await response.blob();
-          targetFolder?.file(nombreJpg, blob);
-        } catch {
+        // Auditoría 2026-09-15 (pedido de Pablo: "eliminemos todas las fotos de muestra"): si
+        // no se encontró la foto real (sinFotoReal), no se intenta descargar nada — directo al
+        // cartel rojo de "falta la foto" (generarJpgSimuladoLaboratorio con faltaFotoReal), para
+        // no arriesgarse a que un fetch a una URL vacía devuelva cualquier cosa.
+        if (foto.sinFotoReal) {
           const fallbackBlob = await generarJpgSimuladoLaboratorio(
             codigoCliente,
             foto.tamanoImpresion,
             foto.tipo,
             foto.esCopiaExtra,
-            foto.numeroCopia
+            foto.numeroCopia,
+            true
           );
           targetFolder?.file(nombreJpg, fallbackBlob);
+        } else {
+          // Descarga la imagen o genera JPEG válido nativo si hay restricción de CORS
+          try {
+            const urlFoto = foto.urlOriginalHD || foto.urlMuestra;
+            const response = urlFoto.startsWith('/api/admin/')
+              ? await fetchAdminAutenticado(urlFoto)
+              : await fetch(urlFoto);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const blob = await response.blob();
+            targetFolder?.file(nombreJpg, blob);
+          } catch {
+            const fallbackBlob = await generarJpgSimuladoLaboratorio(
+              codigoCliente,
+              foto.tamanoImpresion,
+              foto.tipo,
+              foto.esCopiaExtra,
+              foto.numeroCopia
+            );
+            targetFolder?.file(nombreJpg, fallbackBlob);
+          }
         }
       }
 
       const tieneCopiasExtras = p.archivosParaLaboratorio.some(a => a.esCopiaExtra) || (p.copiasExtras && (p.copiasExtras.individual15x21 > 0 || p.copiasExtras.grupal20x30 > 0));
+      const tieneFaltantes = p.archivosParaLaboratorio.some(a => a.sinFotoReal);
       const alertaExtra = tieneCopiasExtras ? ' ⚠️ [INCLUYE COPIA EXTRA DUPLICADA]' : '';
-      planillaTexto += `#${String(p.alumnoNumeroLista).padStart(2, '0')} | ${p.cursoCodigo} | ${p.alumnoNombre} | ${codigoCliente} | ${p.kitNombre}${alertaExtra} | ${listaArchivosLab.join(' + ')}\n`;
+      const alertaFaltante = tieneFaltantes ? ' 🛑 [FALTA UNA FOTO REAL - REVISAR ANTES DE ENSOBRAR]' : '';
+      planillaTexto += `#${String(p.alumnoNumeroLista).padStart(2, '0')} | ${p.cursoCodigo} | ${p.alumnoNombre} | ${codigoCliente} | ${p.kitNombre}${alertaExtra}${alertaFaltante} | ${listaArchivosLab.join(' + ')}\n`;
     }
   } else {
     // Estructura opcional alternativa: subcarpeta por cada alumno
@@ -894,29 +941,43 @@ export async function descargarLoteLaboratorioZip(
       for (const foto of p.archivosParaLaboratorio) {
         const sufijoExtra = foto.esCopiaExtra ? `_COPIA${foto.numeroCopia || 2}` : '';
         const nombreJpg = `${codigoCliente}_${foto.tamanoImpresion}${sufijoExtra}.jpg`;
-        try {
-          const urlFoto = foto.urlOriginalHD || foto.urlMuestra;
-          const response = urlFoto.startsWith('/api/admin/')
-            ? await fetchAdminAutenticado(urlFoto)
-            : await fetch(urlFoto);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const blob = await response.blob();
-          zip.folder(carpetaAlumno)?.file(nombreJpg, blob);
-        } catch {
+        if (foto.sinFotoReal) {
           const fallbackBlob = await generarJpgSimuladoLaboratorio(
             codigoCliente,
             foto.tamanoImpresion,
             foto.tipo,
             foto.esCopiaExtra,
-            foto.numeroCopia
+            foto.numeroCopia,
+            true
           );
           zip.folder(carpetaAlumno)?.file(nombreJpg, fallbackBlob);
+        } else {
+          try {
+            const urlFoto = foto.urlOriginalHD || foto.urlMuestra;
+            const response = urlFoto.startsWith('/api/admin/')
+              ? await fetchAdminAutenticado(urlFoto)
+              : await fetch(urlFoto);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const blob = await response.blob();
+            zip.folder(carpetaAlumno)?.file(nombreJpg, blob);
+          } catch {
+            const fallbackBlob = await generarJpgSimuladoLaboratorio(
+              codigoCliente,
+              foto.tamanoImpresion,
+              foto.tipo,
+              foto.esCopiaExtra,
+              foto.numeroCopia
+            );
+            zip.folder(carpetaAlumno)?.file(nombreJpg, fallbackBlob);
+          }
         }
       }
 
       const tieneCopiasExtras = p.archivosParaLaboratorio.some(a => a.esCopiaExtra) || (p.copiasExtras && (p.copiasExtras.individual15x21 > 0 || p.copiasExtras.grupal20x30 > 0));
+      const tieneFaltantes = p.archivosParaLaboratorio.some(a => a.sinFotoReal);
       const alertaExtra = tieneCopiasExtras ? ' ⚠️ [INCLUYE COPIA EXTRA DUPLICADA]' : '';
-      planillaTexto += `#${String(p.alumnoNumeroLista).padStart(2, '0')} | ${p.cursoCodigo} | ${p.alumnoNombre} | ${codigoCliente} | ${p.kitNombre}${alertaExtra}\n`;
+      const alertaFaltante = tieneFaltantes ? ' 🛑 [FALTA UNA FOTO REAL - REVISAR ANTES DE ENSOBRAR]' : '';
+      planillaTexto += `#${String(p.alumnoNumeroLista).padStart(2, '0')} | ${p.cursoCodigo} | ${p.alumnoNombre} | ${codigoCliente} | ${p.kitNombre}${alertaExtra}${alertaFaltante}\n`;
     }
   }
 

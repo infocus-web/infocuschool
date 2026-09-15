@@ -230,7 +230,7 @@ export async function validarEInscribirFamilia(datos: {
  * Auditoría 2026-09-09 (revisión a fondo, hallazgo reportado por Pablo): antes, buscar por
  * teléfono o email de una familia ya aprobada devolvía directo su código de acceso real — el
  * teléfono de un padre empadronado no es secreto, así que cualquiera que lo supiera podía
- * "entrar" con él. Ahora, sólo escribir el código real (que sólo se entrega por WhatsApp/email)
+ * "entrar" con él. Ahora, sólo escribir el código real (que sólo se entrega por email)
  * devuelve la familia completa (`encontrada: true`). Si se buscó por teléfono/email y esa familia
  * YA tiene un código asignado, esta ruta nunca lo devuelve: como mucho reenvía el código al
  * correo de confianza ya guardado (`yaRegistrado` + `emailReenviado` + `emailDestino` parcial).
