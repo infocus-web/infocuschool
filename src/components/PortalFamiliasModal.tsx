@@ -2466,7 +2466,7 @@ export default function PortalFamiliasModal({
                       <strong>CBU:</strong> <span className="font-mono">0070313830004052956749</span>
                     </p>
                     <p className="text-slate-500 text-[11px] mt-1">
-                      Una vez realizada, envianos el comprobante por email a fotos@retratoescolar.com.ar con tu número de pedido ({numeroPedido}) para activar tu entrega y link de descarga HD.
+                      Una vez realizada, envianos el comprobante por email a infocusfotografiayvideo@gmail.com con tu número de pedido ({numeroPedido}) para activar tu entrega y link de descarga HD.
                     </p>
                   </div>
                 )}
@@ -2579,7 +2579,7 @@ export default function PortalFamiliasModal({
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
                 <a
-                  href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
+                  href={`mailto:infocusfotografiayvideo@gmail.com?subject=${encodeURIComponent(
                     `Pedido ${numeroPedido} realizado`
                   )}&body=${encodeURIComponent(
                     `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`
