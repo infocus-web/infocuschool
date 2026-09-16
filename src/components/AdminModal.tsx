@@ -1160,28 +1160,40 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
           </div>
         ) : (
           /* Authenticated Admin Dashboard */
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 pb-4 sm:pb-6 space-y-3">
 
             {/* Barra superior fija (auditoría 2026-09, pedido de Pablo): pestañas + métricas
                 quedan pegadas arriba al scrollear el contenido de la pestaña activa (por
-                ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding negativos hacen
-                que este bloque llegue hasta los bordes del contenedor con scroll (que tiene su
-                propio padding) para que "top-0" pegue justo arriba.
+                ejemplo, la lista larga de "Nómina 2026").
                 2026-09-15 (pedido de Pablo: "hay un espacio en blanco que se podría eliminar"
                 entre el header oscuro y esta barra): el padding superior bajó de pt-4/pt-6 a
                 pt-2/pt-3.
                 2026-09-16 (pedido de Pablo: "la barra fija está tapando filas con información
                 importante" + "quiero que todas esas herramientas queden como botones arriba"):
-                se sacó el <select> con las 14 secciones y la tarjeta "Sección activa" (quedaba
-                redundante: el botón activo ya se resalta en ámbar) — ahora las 14 secciones son
-                botones directos, en una sola lista (`accesosRapidos`, ver arriba) ordenados por
-                importancia y con salto de línea (flex-wrap) en vez de scroll horizontal. Esto
-                además ACHICA la altura total de la barra fija respecto de antes (se perdió la
-                fila entera de "Sección activa" + el <select>), que era lo que hacía que tapara
-                más contenido de lo necesario al quedar pegada arriba. El padding superior bajó
-                otra vez (pt-2/pt-3 → pt-1/pt-1.5) para que los botones queden pegados al header
-                oscuro con la mínima distancia posible. */}
-            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-1 sm:pt-1.5 pb-2 bg-white space-y-2 border-b border-slate-200">
+                dos cambios distintos acá:
+                (a) se sacó el <select> con las 14 secciones y la tarjeta "Sección activa"
+                (quedaba redundante: el botón activo ya se resalta en ámbar) — ahora las 14
+                secciones son botones directos, en una sola lista (`accesosRapidos`, ver arriba)
+                ordenados por importancia y con salto de línea (flex-wrap) en vez de scroll
+                horizontal.
+                (b) el "tapando filas" era un bug real de layout, no solo percepción: este bloque
+                usaba un margen superior NEGATIVO (`-mt-4`/`-mt-6`) para cancelar el padding
+                superior del contenedor con scroll y así llegar "hasta el borde" antes de que
+                `sticky top-0` lo prenda ahí. El problema es que ese margen negativo sólo se tiene
+                en cuenta para calcular DÓNDE EMPIEZA el contenido que sigue (el resto de cada
+                pestaña) — pero al estar "clavado" (sticky), el navegador lo termina pintando más
+                abajo de esa posición (exactamente en el borde del padding original, no en el
+                borde real del contenedor). Resultado: el contenido de la pestaña arrancaba
+                calculado 12-24px más arriba de donde la barra realmente terminaba de pintarse, y
+                esos primeros 12-24px de la pestaña quedaban tapados por la barra AUN SIN
+                SCROLLEAR (reproducido y confirmado con Playwright antes de tocar nada). Se sacó
+                el padding superior del contenedor con scroll (`p-4 sm:p-6` → `px-4 sm:px-6 pb-4
+                sm:pb-6`, sin `pt-`) y el `-mt-4 sm:-mt-6` de esta barra — ya no hace falta
+                cancelar un padding que no existe, así que la posición "de flujo" (para el
+                contenido siguiente) y la posición pintada (sticky) coinciden. El padding superior
+                interno de la barra (pt-1/pt-1.5) sigue siendo lo único que controla la distancia
+                al header oscuro, ahora sin ese desfasaje. */}
+            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 pt-1 sm:pt-1.5 pb-2 bg-white space-y-2 border-b border-slate-200">
 
             <nav aria-label="Secciones del panel" className="flex flex-wrap items-center gap-1.5">
               {accesosRapidos.map(({ id, label, icono: Icono }) => {
