@@ -53,7 +53,9 @@ import {
   InscripcionFamilia,
   buscarMiInscripcion,
   guardarFamiliaActiva,
-  determinarCodigoParaInscripcion
+  determinarCodigoParaInscripcion,
+  obtenerHijosDeFamilia,
+  HijoConCodigoSeccion
 } from '../services/inscripcionesService';
 import { enviarSolicitudCodigo } from '../services/solicitudesCodigoService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
@@ -416,11 +418,48 @@ export default function PortalFamiliasModal({
     }
   }, []);
 
-  // Sibling selector inside Family Portal (1 code for all children)
+  // Sibling selector inside Family Portal (1 code for all children).
+  // Auditoría 2026-09-16 (pedido de Pablo): la web y el mail de aprobación prometen "1 solo
+  // Código Familiar... vas a poder alternar entre tus hijos con un solo toque" incluso si están
+  // en secciones distintas, pero antes esta función solo actualizaba el nombre/grado que se
+  // MUESTRA — la galería seguía mostrando siempre la sección del hijo principal, porque
+  // `codigoSeccionValidado` (la única llave real que trae fotos) nunca se tocaba acá. Ahora
+  // `hijosFamilia` trae, para cada hermano, el código real de SU PROPIA sección (resuelto por el
+  // servidor en `/api/familia/hijos` — nunca se confía en un grado/turno/división suelto del
+  // navegador para traer fotos), y cambiar de hijo cambia también esa llave.
   const [hijoSeleccionadoId, setHijoSeleccionadoId] = useState<string>('principal');
+  const [hijosFamilia, setHijosFamilia] = useState<HijoConCodigoSeccion[]>([]);
+
+  useEffect(() => {
+    let cancelado = false;
+    const codigoFamiliar = familiaActiva?.codigoAsignado || familiaActiva?.codigoFamiliar;
+    if (!codigoFamiliar) {
+      setHijosFamilia([]);
+      return;
+    }
+    obtenerHijosDeFamilia(codigoFamiliar).then((hijos) => {
+      if (!cancelado) setHijosFamilia(hijos);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [familiaActiva?.codigoAsignado, familiaActiva?.codigoFamiliar]);
 
   const seleccionarHijo = (id: string) => {
     setHijoSeleccionadoId(id);
+    const hijoConCodigo = hijosFamilia.find((h) => h.id === id);
+    if (hijoConCodigo) {
+      // Esta es la parte que antes faltaba: sin esto, la galería mostrada nunca cambiaba de
+      // sección al tocar otro hijo, aunque el nombre de arriba sí se actualizara.
+      setCodigoSeccionValidado(hijoConCodigo.codigoSeccion);
+      if (hijoConCodigo.grado) setGrado(hijoConCodigo.grado);
+      if (hijoConCodigo.division) setDivision(hijoConCodigo.division);
+      if (hijoConCodigo.turno) setTurno(hijoConCodigo.turno);
+      setNombreAlumno(hijoConCodigo.nombreCompleto);
+      return;
+    }
+    // Respaldo (no debería pasar salvo que `hijosFamilia` todavía no haya terminado de cargar):
+    // al menos deja el nombre/grado mostrados coherentes con lo que ya sabíamos localmente.
     if (!familiaActiva) return;
     if (id === 'principal') {
       setNombreAlumno(`${familiaActiva.alumnoNombre} ${familiaActiva.alumnoApellido}`);
@@ -1589,6 +1628,33 @@ export default function PortalFamiliasModal({
                   </button>
                 </div>
               </div>
+
+              {/* Selector de hijo/a (Código Familiar): solo se muestra si hay más de uno para
+                  elegir — familias de un solo hijo no ven ningún cambio acá. Auditoría 2026-09-16:
+                  esto es lo que hace real la promesa de "1 solo Código Familiar... alterná entre
+                  tus hijos con un solo toque" que ya está en la web (Hero, /proceso, FAQ). */}
+              {hijosFamilia.length > 1 && (
+                <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide shrink-0">
+                    Tus hijos/as:
+                  </span>
+                  {hijosFamilia.map((h) => (
+                    <button
+                      key={h.id}
+                      type="button"
+                      onClick={() => seleccionarHijo(h.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+                        hijoSeleccionadoId === h.id
+                          ? 'bg-amber-500 text-slate-950'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {h.nombreCompleto}
+                      <span className="font-normal opacity-80"> · {h.grado} "{h.division}"</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {fotosDisponibles.length === 0 ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-6 py-10 text-center shadow-xs">
