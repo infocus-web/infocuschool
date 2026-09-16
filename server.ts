@@ -653,6 +653,185 @@ app.get('/api/admin/colegios/:colegioId/estado-pagos', requireAdminAuth, async (
   }
 });
 
+// Auditoría 2026-09-16 (pedido de Pablo: "necesito un buscador de alumnos, por nombre y
+// apellido, dni, codigo, telefono, para saber si pagó"): hasta ahora, para saber si una familia
+// puntual ya pagó había que entrar a "Estado de pagos" y elegir el colegio a mano (pensado para
+// cursos con tarifa total acordada, no para una búsqueda rápida de un alumno cualquiera), o
+// revisar "Pedidos" a ojo. Este endpoint busca en paralelo por nombre/apellido y DNI (tabla
+// `alumnos`), por Código de Acceso real de la sección (`codigos_seccion`, mismo mecanismo que
+// "Códigos y difusión") y por teléfono de la familia (`pedidos` + `familias.whatsapp`, igual que
+// ya hace el buscador público `/api/pedidos/buscar`) — y para cada alumno que encuentra, cruza
+// sus pedidos por nombre (mismo criterio que `/estado-pagos` de arriba) para decir si ya pagó.
+app.get('/api/admin/alumnos/buscar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const qRaw = String(req.query.q || '').trim();
+    if (qRaw.length < 2) {
+      return res.status(400).json({ success: false, error: 'Escribí al menos 2 caracteres para buscar.' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    const soloDigitos = qRaw.replace(/\D/g, '');
+    const codigoNormalizado = normalizarCodigoSeccion(qRaw);
+    const qLike = `%${qRaw.replace(/[%_]/g, '\\$&')}%`;
+
+    const [colegiosRes, porNombreRes, porDniRes, seccionesRes, pedidosPorTelefonoRes] = await Promise.all([
+      supabase.from('colegios').select('id, nombre'),
+      supabase.from('alumnos').select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni').ilike('nombre', qLike).limit(50),
+      supabase.from('alumnos').select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni').ilike('dni', qLike).limit(50),
+      codigoNormalizado.length >= 4
+        ? supabase.from('codigos_seccion').select('colegio_id, grado, turno, division, codigo_secreto')
+        : Promise.resolve({ data: [], error: null } as any),
+      soloDigitos.length >= 6
+        ? supabase
+            .from('pedidos')
+            .select(
+              'id, pedido_friendly_id, colegio_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, familias!inner(nombre, whatsapp, email)'
+            )
+            .ilike('familias.whatsapp', `%${soloDigitos}%`)
+            .order('created_at', { ascending: false })
+            .limit(20)
+        : Promise.resolve({ data: [], error: null } as any),
+    ]);
+    if (porNombreRes.error) throw porNombreRes.error;
+    if (porDniRes.error) throw porDniRes.error;
+
+    const mapaColegios = new Map((colegiosRes.data || []).map((c: any) => [c.id, c.nombre]));
+
+    // El código de sección no distingue mayúsculas ni guiones ("AB12-CD34" == "ab12cd34"), y
+    // Supabase no lo puede filtrar así en la consulta — se compara ya normalizado acá.
+    const seccionesQueMatchean = ((seccionesRes as any).data || []).filter(
+      (s: any) => codigoNormalizado.length >= 4 && normalizarCodigoSeccion(s.codigo_secreto).includes(codigoNormalizado)
+    );
+    let alumnosDeSecciones: any[] = [];
+    if (seccionesQueMatchean.length > 0) {
+      const resultados = await Promise.all(
+        seccionesQueMatchean.map((s: any) =>
+          supabase
+            .from('alumnos')
+            .select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni')
+            .eq('colegio_id', s.colegio_id)
+            .eq('grado', s.grado)
+            .eq('turno', s.turno)
+            .eq('division', s.division)
+        )
+      );
+      alumnosDeSecciones = resultados.flatMap((r) => r.data || []);
+    }
+
+    // Combina y dedupea por id los tres caminos de búsqueda (nombre, DNI, código de sección).
+    const mapaAlumnos = new Map<string, any>();
+    [...(porNombreRes.data || []), ...(porDniRes.data || []), ...alumnosDeSecciones].forEach((a) => mapaAlumnos.set(a.id, a));
+    const alumnosEncontrados = Array.from(mapaAlumnos.values()).slice(0, 60);
+
+    // Para cruzar pago, trae de una sola vez todos los pedidos de cada colegio involucrado
+    // (en vez de un pedido por alumno) — mismo criterio de "pagado" y de emparejado por nombre
+    // normalizado que ya usa `/estado-pagos` arriba.
+    const colegioIds = Array.from(new Set(alumnosEncontrados.map((a) => a.colegio_id).filter(Boolean)));
+    const ESTADOS_PAGADOS = new Set(['pagado', 'entregado']);
+    const pedidosPorColegio = new Map<string, any[]>();
+    if (colegioIds.length > 0) {
+      const resultados = await Promise.all(
+        colegioIds.map((cid) =>
+          supabase
+            .from('pedidos')
+            .select('id, pedido_friendly_id, alumno_nombre, estado, total, kit_nombre, metodo_pago, created_at, familias(nombre, whatsapp, email)')
+            .eq('colegio_id', cid)
+        )
+      );
+      colegioIds.forEach((cid, idx) => pedidosPorColegio.set(cid, resultados[idx].data || []));
+    }
+
+    // El Código de Acceso real de cada sección (no hay uno por alumno individual, es uno por
+    // grado+turno+división) — se cachea por sección para no repetir la misma consulta si varios
+    // alumnos encontrados comparten curso.
+    const codigosPorSeccionCache = new Map<string, string | null>();
+    const obtenerCodigoDeSeccion = async (a: any): Promise<string | null> => {
+      const clave = `${a.colegio_id}__${a.grado}__${a.turno}__${a.division}`;
+      if (codigosPorSeccionCache.has(clave)) return codigosPorSeccionCache.get(clave)!;
+      const { data: fila } = await supabase
+        .from('codigos_seccion')
+        .select('codigo_secreto')
+        .eq('colegio_id', a.colegio_id)
+        .eq('grado', a.grado || '')
+        .eq('turno', a.turno || '')
+        .eq('division', a.division || '')
+        .maybeSingle();
+      const codigo = fila?.codigo_secreto || null;
+      codigosPorSeccionCache.set(clave, codigo);
+      return codigo;
+    };
+
+    const alumnosConDatos = await Promise.all(
+      alumnosEncontrados.map(async (a) => {
+        const pedidosDelColegio = pedidosPorColegio.get(a.colegio_id || '') || [];
+        const claveExacta = normalizarNombreComparable(a.nombre);
+        const clavePalabras = normalizarNombrePorPalabras(a.nombre);
+        const pedidosDelAlumno = pedidosDelColegio.filter((p: any) => {
+          const pClaveExacta = normalizarNombreComparable(p.alumno_nombre);
+          const pClavePalabras = normalizarNombrePorPalabras(p.alumno_nombre);
+          return pClaveExacta === claveExacta || pClavePalabras === clavePalabras;
+        });
+        const pedidoPagado = pedidosDelAlumno.find((p: any) => ESTADOS_PAGADOS.has(p.estado));
+        const pedidoElegido = pedidoPagado || pedidosDelAlumno[pedidosDelAlumno.length - 1] || null;
+        const codigoSeccion = await obtenerCodigoDeSeccion(a);
+
+        return {
+          id: a.id,
+          nombre: a.nombre,
+          dni: a.dni || null,
+          grado: a.grado,
+          division: a.division,
+          turno: a.turno,
+          numeroLista: a.numero_lista,
+          colegioId: a.colegio_id,
+          colegioNombre: mapaColegios.get(a.colegio_id) || null,
+          codigoSeccion,
+          pagado: !!pedidoPagado,
+          otrosPedidos: pedidosDelAlumno.length > 1 ? pedidosDelAlumno.length - 1 : 0,
+          pedido: pedidoElegido
+            ? {
+                id: pedidoElegido.id,
+                numero: pedidoElegido.pedido_friendly_id || null,
+                estado: pedidoElegido.estado,
+                total: Number(pedidoElegido.total) || 0,
+                kitNombre: pedidoElegido.kit_nombre,
+                metodoPago: pedidoElegido.metodo_pago,
+                fecha: pedidoElegido.created_at,
+                tutorNombre: pedidoElegido.familias?.nombre || null,
+                tutorTelefono: pedidoElegido.familias?.whatsapp || null,
+                tutorEmail: pedidoElegido.familias?.email || null,
+              }
+            : null,
+        };
+      })
+    );
+
+    // Pedidos hallados directo por teléfono de la familia — se muestran aparte porque puede que
+    // el nombre del alumno en ese pedido no matchee ningún alumno de la nómina cargada (typo,
+    // alumno que ya no está en la lista, colegio sin nómina real cargada todavía, etc.), igual
+    // que ya pasa en "Estado de pagos" con "Pedidos sin alumno en la nómina".
+    const pedidosPorTelefono = ((pedidosPorTelefonoRes as any).data || []).map((p: any) => ({
+      id: p.id,
+      numero: p.pedido_friendly_id || null,
+      alumnoNombre: p.alumno_nombre,
+      colegioNombre: p.colegio_nombre || mapaColegios.get(p.colegio_id) || null,
+      grado: p.grado,
+      division: p.division,
+      estado: p.estado,
+      total: Number(p.total) || 0,
+      kitNombre: p.kit_nombre,
+      fecha: p.created_at,
+      tutorNombre: p.familias?.nombre || null,
+      tutorTelefono: p.familias?.whatsapp || null,
+    }));
+
+    return res.json({ success: true, alumnos: alumnosConDatos, pedidosPorTelefono });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al buscar alumnos' });
+  }
+});
+
 // Importa alumnos a la nómina real (tabla 'alumnos') para un colegio puntual. No existía
 // ninguna forma de cargar esta tabla desde el panel — se cargaba a mano, directo en Supabase.
 // Pensado para pegar la lista tal cual sale de copiar un rango de Excel (número de lista +
@@ -3462,11 +3641,25 @@ app.delete('/api/admin/solicitudes-codigo/:id', requireAdminAuth, async (req: Re
 // solicitudes, a diferencia de consultas_familias_mensajes) — es un email suelto de una vía. Al
 // enviarse con éxito, se marca la solicitud como atendida automáticamente (si ya se le contestó,
 // no tiene sentido que siga apareciendo en "Pendientes").
+//
+// Auditoría 2026-09-16, segunda vuelta (pedido de Pablo: "no puede ser automático?"): cuando la
+// familia sí dejó colegio+grado+turno+división al pedir el código (el panel se lo busca solo con
+// `asegurarCodigoSeccionAdmin`/`codigos_seccion` antes de abrir este cuadro), el frontend manda
+// `codigo` acá y el email sale con la misma caja destacada que ya usa el aviso de "inscripción
+// validada" (ver `enviarCorreoCodigoAcceso` más abajo) en vez de un párrafo de texto libre — así
+// Pablo no tiene que escribir ni tipear el código a mano, solo revisar y apretar enviar. `mensaje`
+// pasa a ser opcional en ese caso (una aclaración extra, si quiere agregar algo); sigue siendo
+// obligatorio cuando no hay código (la familia no dejó grado/turno/división, o esa sección
+// todavía no tiene código asignado) y Pablo responde a mano como antes.
 app.post('/api/admin/solicitudes-codigo/:id/responder', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const mensaje = String(req.body?.mensaje || '').trim();
-    if (mensaje.length < 2 || mensaje.length > 5000) {
+    const codigo = String(req.body?.codigo || '').trim().toUpperCase();
+    if (!codigo && (mensaje.length < 2 || mensaje.length > 5000)) {
       return res.status(400).json({ success: false, error: 'La respuesta debe tener entre 2 y 5000 caracteres.' });
+    }
+    if (mensaje.length > 5000) {
+      return res.status(400).json({ success: false, error: 'La aclaración no puede superar los 5000 caracteres.' });
     }
 
     const supabase = getServerSupabase();
@@ -3483,11 +3676,15 @@ app.post('/api/admin/solicitudes-codigo/:id/responder', requireAdminAuth, async 
 
     const resend = getResendClient();
     if (!resend) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
+    const nombreDestinatario = escapeHtml(solicitud.nombre_solicitante || 'Familia');
+    const htmlContent = codigo
+      ? `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Tu Código de Acceso - Retrato Escolar</title></head><body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e293b;"><div style="max-width:600px;margin:24px auto;background-color:#ffffff;border-radius:16px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);"><div style="background-color:#0f172a;padding:32px 24px;text-align:center;border-bottom:3px solid #f59e0b;"><div style="font-size:11px;font-weight:800;letter-spacing:2px;color:#f59e0b;text-transform:uppercase;margin-bottom:6px;">RETRATO ESCOLAR • EDICIÓN 2026</div><h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:800;letter-spacing:-0.5px;">Encontramos tu Código de Acceso</h1></div><div style="padding:28px 24px;"><p style="font-size:15px;line-height:1.6;margin-top:0;">Hola <strong>${nombreDestinatario}</strong>,</p><p style="font-size:14px;line-height:1.6;color:#334155;">Nos pediste una mano para encontrar tu Código de Acceso — acá lo tenés:</p><div style="margin:24px 0;text-align:center;background-color:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:18px;"><div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#92400e;margin-bottom:6px;">Tu Código de Acceso</div><div style="font-size:26px;font-weight:800;color:#0f172a;font-family:monospace;letter-spacing:2px;">${escapeHtml(codigo)}</div></div>${mensaje ? `<div style="white-space:pre-wrap;line-height:1.6;font-size:14px;color:#334155;margin-bottom:16px;">${escapeHtml(mensaje)}</div>` : ''}<p style="font-size:13px;line-height:1.6;color:#334155;">Con este código podés ingresar a <strong>retratoescolar.com.ar</strong>, ver la galería y elegir tus fotos.</p><div style="font-size:12px;color:#64748b;line-height:1.6;border-top:1px solid #e2e8f0;padding-top:16px;margin-top:16px;">Podés responder directamente a este correo si necesitás algo más.</div></div><div style="background-color:#f1f5f9;padding:18px 24px;text-align:center;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;">© 2026 Retrato Escolar • Fotografía Escolar Profesional<br><a href="https://retratoescolar.com.ar" style="color:#d97706;text-decoration:none;font-weight:600;">retratoescolar.com.ar</a></div></div></body></html>`
+      : `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${nombreDestinatario},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás algo más.</p></div>`;
     const resultado = await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
       to: [solicitud.contacto],
-      subject: 'Tu código de curso — Retrato Escolar',
-      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(solicitud.nombre_solicitante || 'Familia')},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás algo más.</p></div>`,
+      subject: codigo ? `Retrato Escolar: Tu Código de Acceso (${codigo})` : 'Tu código de curso — Retrato Escolar',
+      html: htmlContent,
     });
     if (resultado.error) throw resultado.error;
 
