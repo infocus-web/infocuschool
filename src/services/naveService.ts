@@ -50,3 +50,49 @@ export async function crearIntencionPagoNave(
     };
   }
 }
+
+export interface ItemIntencionNave {
+  pedidoId: string;
+  kitId: string;
+  kitNombre: string;
+  alumnoNombre: string;
+  colegioNombre: string;
+  carpetasExtras?: number;
+}
+
+export interface DatosIntencionNaveMultiple {
+  grupoPagoId: string;
+  items: ItemIntencionNave[];
+  tutorNombre: string;
+  tutorEmail: string;
+  tutorTelefono?: string;
+}
+
+/**
+ * Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): equivalente a
+ * crearIntencionPagoNave, pero pide UNA sola intención con un producto de línea por cada hijo
+ * del carrito, dentro de la misma transacción — Nave cobra el total combinado en un único
+ * checkout. Ver /api/nave/crear-intencion-multiple en el servidor.
+ */
+export async function crearIntencionPagoNaveMultiple(
+  datos: DatosIntencionNaveMultiple
+): Promise<RespuestaIntencionNave> {
+  try {
+    const res = await fetch('/api/nave/crear-intencion-multiple', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(datos),
+    });
+
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    console.error('Error al solicitar intención de pago combinada de Nave:', err);
+    return {
+      success: false,
+      error: err?.message || 'Error de red al conectar con Nave',
+    };
+  }
+}
