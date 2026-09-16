@@ -57,7 +57,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
       titulo: 'Recibís 1 Código Familiar',
       bajada: 'Directo a tu Email',
       descripcion:
-        'El sistema te genera una clave única y fácil de recordar (ej: FAM-4821). Con ese solo código accedés a las fotos de todos tus hijos.',
+        'Además del código de curso de cada hijo, te generamos un Código Familiar único y fácil de recordar (ej: FAM-4821). Con ese código entrás una sola vez y ves a todos tus hijos juntos.',
       miniGrafico: (
         <div className="mt-3 p-2.5 bg-sky-50 rounded-xl border border-sky-300/80 text-left space-y-1.5 shadow-2xs">
           <div className="flex items-center gap-1 text-[10px] font-bold text-sky-800">
