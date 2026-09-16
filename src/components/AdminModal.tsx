@@ -59,6 +59,7 @@ import {
 import AdminInscriptosTab from './AdminInscriptosTab';
 import AdminPadronTab from './AdminPadronTab';
 import AdminEstadoPagosTab from './AdminEstadoPagosTab';
+import AdminBuscadorAlumnosTab from './AdminBuscadorAlumnosTab';
 import AdminImportarAlumnosTab from './AdminImportarAlumnosTab';
 import AdminSolicitudesCodigoTab from './AdminSolicitudesCodigoTab';
 import AdminConsultasFamiliasTab from './AdminConsultasFamiliasTab';
@@ -202,7 +203,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'consultas' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'buscar-alumno' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'consultas' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
   // Nombre de alumno con el que arrancar la búsqueda al entrar a Laboratorio desde
   // "Ver en Laboratorio" en Pedidos — así el fotógrafo cae directo en el pedido que
   // estaba viendo, en vez de tener que buscarlo a mano entre todos (15/9).
@@ -501,6 +502,24 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     }
   };
 
+  // Auditoría 2026-09-16 (Pablo: "acá no encuentro ningún código" — la pestaña mostraba
+  // "0 sección(es) · 0 alumnos en nómina" para un colegio que sí tiene 1.314 alumnos en la
+  // Nómina real): `colegioIdCodigos` se inicializaba una sola vez, en el primer render, con
+  // `colegiosList[0]?.id` — pero `useColegiosLista()` arranca devolviendo `COLEGIO_POR_DEFECTO`
+  // (un colegio de relleno con id fijo `col-divino-pastor-2026`, mismo NOMBRE que el colegio
+  // real pero otro id) mientras carga la lista de verdad desde Supabase en segundo plano. Sin
+  // este efecto, `colegioIdCodigos` quedaba pegado para siempre a ese id de relleno — nunca se
+  // actualizaba cuando la lista real llegaba — y como ningún alumno tiene ese `colegio_id`
+  // (los reales usan el UUID de Supabase), el filtro de esta pestaña daba 0 siempre. El
+  // `<select>` de arriba igual mostraba "Instituto Madre del Divino Pastor" seleccionado porque
+  // es el único texto que coincide, aunque el id por debajo no fuera el real. Mismo patrón de
+  // arreglo que ya usa `AdminPadronTab.tsx`.
+  useEffect(() => {
+    if (colegiosList.length > 0 && (!colegioIdCodigos || !colegiosList.some((c) => c.id === colegioIdCodigos))) {
+      setColegioIdCodigos(colegiosList[0].id);
+    }
+  }, [colegiosList, colegioIdCodigos]);
+
   useEffect(() => {
     if (isAuthenticated && colegioIdCodigos) {
       cargarCodigosReales(colegioIdCodigos);
@@ -757,6 +776,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
 
   // Cierre de año (borrado de temporada, ver services/cierreAnioService.ts)
   const [cierreAnioColegioId, setCierreAnioColegioId] = useState<string>(() => colegiosList[0]?.id || '');
+  // Auditoría 2026-09-16: mismo arreglo que `colegioIdCodigos` más arriba — sin este efecto,
+  // este selector queda pegado al id de relleno de `COLEGIO_POR_DEFECTO` y nunca encuentra la
+  // nómina/pedidos reales del colegio para cerrar el año.
+  useEffect(() => {
+    if (colegiosList.length > 0 && (!cierreAnioColegioId || !colegiosList.some((c) => c.id === cierreAnioColegioId))) {
+      setCierreAnioColegioId(colegiosList[0].id);
+    }
+  }, [colegiosList, cierreAnioColegioId]);
   const [cierreAnioResumen, setCierreAnioResumen] = useState<ResumenCierreAnio | null>(null);
   const [cierreAnioNombreConfirmado, setCierreAnioNombreConfirmado] = useState<string>('');
   const [cargandoResumenCierre, setCargandoResumenCierre] = useState(false);
@@ -1057,6 +1084,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   // `accesosRapidos` por separado) para que cada sección tenga un único botón, siempre visible.
   const accesosRapidos = [
     { id: 'inscriptos', label: pendientesInscripcionCount > 0 ? `Inscriptos (${pendientesInscripcionCount})` : 'Inscriptos', icono: Users },
+    { id: 'buscar-alumno', label: 'Buscar alumno', icono: Search },
     { id: 'pedidos', label: `Pedidos (${pedidosCompletos.length})`, icono: Package },
     { id: 'laboratorio', label: 'Laboratorio', icono: Printer },
     { id: 'subir', label: 'Cargar fotos', icono: Upload },
@@ -1228,6 +1256,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
               <AdminInscriptosTab onProbarCodigo={onProbarCodigo} />
+            )}
+
+            {/* TAB: BUSCAR ALUMNO (pedido de Pablo 2026-09-16: nombre/DNI/código/teléfono → ¿pagó?) */}
+            {activeTab === 'buscar-alumno' && (
+              <AdminBuscadorAlumnosTab />
             )}
 
             {/* TAB: PADRÓN AUTORIZADO (Excel/CSV) */}

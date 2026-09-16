@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { MessageCircle, Loader2, Trash2, CheckCircle2, Mail, School, RefreshCw, Filter, X, Send } from 'lucide-react';
+import { MessageCircle, Loader2, Trash2, CheckCircle2, Mail, School, RefreshCw, Filter, X, Send, KeyRound, AlertTriangle } from 'lucide-react';
 import {
   SolicitudCodigo,
   obtenerSolicitudesCodigoAdmin,
@@ -7,6 +7,7 @@ import {
   eliminarSolicitudCodigoAdmin,
   responderSolicitudCodigoAdmin,
 } from '../services/solicitudesCodigoService';
+import { asegurarCodigoSeccionAdmin } from '../services/codigosSeccionService';
 
 export default function AdminSolicitudesCodigoTab() {
   const [filtro, setFiltro] = useState<'pendiente' | 'todas'>('pendiente');
@@ -21,6 +22,15 @@ export default function AdminSolicitudesCodigoTab() {
   const [respuesta, setRespuesta] = useState('');
   const [respuestaEnviadaId, setRespuestaEnviadaId] = useState<string | null>(null);
   const [errorRespuesta, setErrorRespuesta] = useState<string | null>(null);
+  // Auditoría 2026-09-16, segunda vuelta (pedido de Pablo: "no puede ser automática la entrega
+  // del mensaje con el código?"): al abrir "Responder", si la familia dejó colegio+grado+turno+
+  // división al pedirlo, se busca (o se crea, si esa sección todavía no tenía uno) el Código de
+  // Acceso real de esa sección con el mismo mecanismo que ya usa la pestaña "Códigos y difusión"
+  // — así Pablo no tiene que escribirlo a mano, solo revisar y enviar. Si la familia no dejó esos
+  // datos, se sigue pidiendo el texto a mano como antes.
+  const [buscandoCodigo, setBuscandoCodigo] = useState(false);
+  const [codigoEncontrado, setCodigoEncontrado] = useState<string | null>(null);
+  const [avisoSinCodigo, setAvisoSinCodigo] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -67,19 +77,41 @@ export default function AdminSolicitudesCodigoTab() {
     }
   };
 
-  const handleAbrirRespuesta = (id: string) => {
-    setRespondiendoId(id);
+  const handleAbrirRespuesta = async (s: SolicitudCodigo) => {
+    setRespondiendoId(s.id);
     setRespuesta('');
     setErrorRespuesta(null);
     setRespuestaEnviadaId(null);
+    setCodigoEncontrado(null);
+    setAvisoSinCodigo(null);
+
+    if (!s.colegioId || !s.grado || !s.turno || !s.division) {
+      setAvisoSinCodigo(
+        'Esta familia no dejó colegio, grado, turno y división completos, así que no pudimos ubicar el código solo — escribí la respuesta a mano (podés pedirle esos datos, o directamente pasarle el código si ya lo sabés).'
+      );
+      return;
+    }
+    setBuscandoCodigo(true);
+    try {
+      const resultado = await asegurarCodigoSeccionAdmin(s.colegioId, s.grado, s.turno, s.division);
+      if (resultado.success && resultado.codigo) {
+        setCodigoEncontrado(resultado.codigo);
+      } else {
+        setAvisoSinCodigo(
+          resultado.error || 'No pudimos ubicar el código de esa sección automáticamente — escribí la respuesta a mano.'
+        );
+      }
+    } finally {
+      setBuscandoCodigo(false);
+    }
   };
 
   const handleEnviarRespuesta = async (s: SolicitudCodigo) => {
-    if (respuesta.trim().length < 2) return;
+    if (!codigoEncontrado && respuesta.trim().length < 2) return;
     setProcesandoId(s.id);
     setErrorRespuesta(null);
     try {
-      const resultado = await responderSolicitudCodigoAdmin(s.id, respuesta.trim());
+      const resultado = await responderSolicitudCodigoAdmin(s.id, respuesta.trim(), codigoEncontrado || undefined);
       if (resultado.success) {
         setRespondiendoId(null);
         setRespuesta('');
@@ -210,7 +242,7 @@ export default function AdminSolicitudesCodigoTab() {
                     <div className="flex items-center justify-end gap-1">
                       <button
                         type="button"
-                        onClick={() => (respondiendoId === s.id ? setRespondiendoId(null) : handleAbrirRespuesta(s.id))}
+                        onClick={() => (respondiendoId === s.id ? setRespondiendoId(null) : handleAbrirRespuesta(s))}
                         disabled={procesandoId === s.id}
                         className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-[10px] font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
@@ -248,14 +280,40 @@ export default function AdminSolicitudesCodigoTab() {
                   <tr>
                     <td colSpan={6} className="py-3 px-3 bg-sky-50/60 border-t border-sky-100">
                       <div className="flex flex-col gap-2">
+                        {buscandoCodigo && (
+                          <p className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Buscando el código de acceso de esa sección...
+                          </p>
+                        )}
+                        {codigoEncontrado && (
+                          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
+                            <KeyRound className="h-4 w-4 text-emerald-600 shrink-0" />
+                            <p className="text-[11px] text-emerald-900">
+                              Encontramos el código de <strong>{[s.grado, s.division, s.turno].filter(Boolean).join(' · ')}</strong>:{' '}
+                              <span className="font-mono font-extrabold tracking-wider">{codigoEncontrado}</span> — se manda
+                              destacado en el email, no hace falta que lo escribas.
+                            </p>
+                          </div>
+                        )}
+                        {avisoSinCodigo && (
+                          <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200">
+                            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                            <p className="text-[11px] text-amber-900">{avisoSinCodigo}</p>
+                          </div>
+                        )}
                         <textarea
                           value={respuesta}
                           onChange={(e) => setRespuesta(e.target.value)}
-                          minLength={2}
+                          minLength={codigoEncontrado ? 0 : 2}
                           maxLength={5000}
                           rows={3}
                           autoFocus
-                          placeholder={`Escribí la respuesta que le va a llegar por email a ${s.contacto}...`}
+                          placeholder={
+                            codigoEncontrado
+                              ? 'Aclaración opcional (el código ya se agrega solo, no hace falta escribirlo)...'
+                              : `Escribí la respuesta que le va a llegar por email a ${s.contacto}...`
+                          }
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
                         />
                         {errorRespuesta && (
@@ -273,7 +331,7 @@ export default function AdminSolicitudesCodigoTab() {
                           <button
                             type="button"
                             onClick={() => handleEnviarRespuesta(s)}
-                            disabled={procesandoId === s.id || respuesta.trim().length < 2}
+                            disabled={procesandoId === s.id || buscandoCodigo || (!codigoEncontrado && respuesta.trim().length < 2)}
                             className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-[10px] font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                           >
                             {procesandoId === s.id ? (
