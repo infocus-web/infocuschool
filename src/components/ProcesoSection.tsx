@@ -10,8 +10,7 @@ import {
   Camera,
   Heart,
   Mail,
-  FolderHeart,
-  XCircle
+  FolderHeart
 } from 'lucide-react';
 
 interface ProcesoSectionProps {
@@ -57,7 +56,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
       titulo: 'Recibís 1 Código Familiar',
       bajada: 'Directo a tu Email',
       descripcion:
-        'Además del código de curso de cada hijo, te generamos un Código Familiar único y fácil de recordar (ej: FAM-4821). Con ese código entrás una sola vez y ves a todos tus hijos juntos.',
+        'El sistema te genera una clave única y fácil de recordar (ej: FAM-4821). Con ese solo código accedés a las fotos de todos tus hijos.',
       miniGrafico: (
         <div className="mt-3 p-2.5 bg-sky-50 rounded-xl border border-sky-300/80 text-left space-y-1.5 shadow-2xs">
           <div className="flex items-center gap-1 text-[10px] font-bold text-sky-800">
@@ -212,61 +211,32 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
             <div className="text-center space-y-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400 text-slate-950 text-xs font-extrabold uppercase tracking-wider">
                 <Users className="w-4 h-4" />
-                ¡Gran Novedad para Padres con Varios Hijos!
+                Para familias con varios hijos
               </span>
               <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit']">
-                ¿Tenés 2 o más hijos en el colegio? Anotate una vez y sumá un Código Familiar
+                ¿Tenés 2 o más hijos en el colegio? Con 1 solo Código Familiar los ves a todos juntos
               </h3>
               <p className="text-sm sm:text-base text-slate-600 max-w-2xl mx-auto">
-                El código de curso de cada hijo (el que llega por WhatsApp del colegio) sigue funcionando igual que siempre. Si además anotás a tus hijos acá, te damos un Código Familiar para verlos a todos juntos en la misma pantalla.
+                Anotá a tus hijos juntos en un solo registro y te mandamos un único código para ver las fotos de todos, sin importar en qué sala, grado o turno estén.
               </p>
             </div>
 
-            {/* Comparativa Visual Súper Clara (Sin anotarte vs. Anotándote) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-              {/* Sin anotarte: solo código de curso */}
-              <div className="bg-white/80 p-5 rounded-2xl border border-rose-200 shadow-2xs space-y-3">
-                <div className="flex items-center gap-2 text-rose-700 font-bold text-sm">
-                  <XCircle className="w-5 h-5 text-rose-500 shrink-0" />
-                  <span>Sin anotarte (código de curso, como siempre)</span>
-                </div>
-                <ul className="space-y-2 text-xs text-slate-600">
-                  <li className="flex items-start gap-2">
-                    <span className="text-rose-500 font-bold">•</span>
-                    <span>Usás el código de curso de cada hijo (sala, grado o turno), el que ya te llega por WhatsApp del colegio.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-rose-500 font-bold">•</span>
-                    <span>Si tenés hijos en cursos distintos, entrás y salís con un código diferente para cada uno.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-rose-500 font-bold">•</span>
-                    <span>Para pedir la foto de hermanos juntos, hay que solicitarla aparte.</span>
-                  </li>
-                </ul>
-              </div>
-
-              {/* Anotándote: código familiar opcional */}
-              <div className="bg-white p-5 rounded-2xl border-2 border-emerald-400 shadow-xs space-y-3">
-                <div className="flex items-center gap-2 text-emerald-800 font-extrabold text-sm">
+            {/* Beneficios del Código Familiar */}
+            <div className="bg-white p-5 sm:p-6 rounded-2xl border-2 border-emerald-400 shadow-xs max-w-2xl mx-auto text-left">
+              <ul className="space-y-2.5 text-sm text-slate-700 font-medium">
+                <li className="flex items-start gap-2">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <span>Anotándote 1 vez (Código Familiar, opcional)</span>
-                </div>
-                <ul className="space-y-2 text-xs text-slate-700 font-medium">
-                  <li className="flex items-start gap-2">
-                    <span className="text-emerald-600 font-bold">✔</span>
-                    <span>Recibís además <strong>1 Código Familiar (ej: FAM-4821)</strong> directo a tu email.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-emerald-600 font-bold">✔</span>
-                    <span>Entrás con ese código y ves a todos tus hijos juntos, sin tener que usar el código de curso de cada uno por separado. Podés pasar de uno al otro tocando su nombre.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-emerald-600 font-bold">✔</span>
-                    <span>Podés solicitar la <strong>Foto de Hermanos juntos</strong> directamente al anotarte.</span>
-                  </li>
-                </ul>
-              </div>
+                  <span><strong>1 solo Código Familiar (ej: FAM-4821)</strong> que te llega directo a tu email.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span>Entrás y ves a todos tus hijos juntos. Podés pasar de uno al otro tocando su nombre.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span>Podés solicitar la <strong>Foto de Hermanos juntos</strong> directamente al anotarte.</span>
+                </li>
+              </ul>
             </div>
 
             {/* Botones de acción rápida */}
