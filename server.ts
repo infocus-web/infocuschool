@@ -3453,6 +3453,58 @@ app.delete('/api/admin/solicitudes-codigo/:id', requireAdminAuth, async (req: Re
   }
 });
 
+// Auditoría 2026-09-16 (pedido de Pablo): el cartel de esta pestaña ya decía "Respondeles por
+// WhatsApp o email", pero "por email" quería decir abrir su propio cliente de correo a mano —
+// no había forma de contestar desde el sistema, con la misma cuenta oficial que ya usa para todo
+// lo demás (Mercado Pago, avisos de fotos listas, etc.). Este endpoint replica el patrón que ya
+// existe para "Consultas de familias" (mismo remitente, mismo servicio de Resend), pero más
+// simple: acá no hay un hilo de conversación guardado (no existe una tabla de mensajes para
+// solicitudes, a diferencia de consultas_familias_mensajes) — es un email suelto de una vía. Al
+// enviarse con éxito, se marca la solicitud como atendida automáticamente (si ya se le contestó,
+// no tiene sentido que siga apareciendo en "Pendientes").
+app.post('/api/admin/solicitudes-codigo/:id/responder', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const mensaje = String(req.body?.mensaje || '').trim();
+    if (mensaje.length < 2 || mensaje.length > 5000) {
+      return res.status(400).json({ success: false, error: 'La respuesta debe tener entre 2 y 5000 caracteres.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    const { data: solicitud, error } = await supabase
+      .from('solicitudes_codigo')
+      .select('id,nombre_solicitante,contacto,estado')
+      .eq('id', req.params.id)
+      .single();
+    if (error || !solicitud) return res.status(404).json({ success: false, error: 'No encontramos la solicitud.' });
+    if (!solicitud.contacto || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(solicitud.contacto)) {
+      return res.status(400).json({ success: false, error: 'Esta solicitud no tiene un email válido cargado.' });
+    }
+
+    const resend = getResendClient();
+    if (!resend) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
+    const resultado = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+      to: [solicitud.contacto],
+      subject: 'Tu código de curso — Retrato Escolar',
+      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(solicitud.nombre_solicitante || 'Familia')},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás algo más.</p></div>`,
+    });
+    if (resultado.error) throw resultado.error;
+
+    if (solicitud.estado !== 'atendido') {
+      const { error: updateError } = await supabase
+        .from('solicitudes_codigo')
+        .update({ estado: 'atendido', updated_at: new Date().toISOString() })
+        .eq('id', solicitud.id);
+      if (updateError) console.error('[Solicitudes código] La respuesta se envió, pero no se marcó como atendida:', updateError);
+    }
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Solicitudes código] Error al responder:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos enviar la respuesta. Intentá nuevamente.' });
+  }
+});
+
 // ==============================================================================
 // 5. HELPER PARA ENVÍO DE EMAIL CON RESEND
 // ==============================================================================
