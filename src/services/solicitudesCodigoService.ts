@@ -118,16 +118,23 @@ export async function eliminarSolicitudCodigoAdmin(id: string): Promise<{ succes
  * Panel admin: responde una solicitud por email desde el sistema (mismo remitente oficial que
  * usa el resto de la plataforma), en vez de tener que escribirle a mano desde el correo personal
  * del fotógrafo. Al enviarse con éxito, el servidor marca la solicitud como atendida.
+ *
+ * `codigo` es opcional: cuando el panel pudo ubicar solo el Código de Acceso real de la sección
+ * (ver `AdminSolicitudesCodigoTab.tsx`, usa `asegurarCodigoSeccionAdmin` con el colegio/grado/
+ * turno/división que haya dejado la familia), se lo pasa acá y el email sale con el código
+ * destacado en vez de depender de que Pablo lo escriba a mano; `mensaje` queda como una
+ * aclaración opcional en ese caso.
  */
 export async function responderSolicitudCodigoAdmin(
   id: string,
-  mensaje: string
+  mensaje: string,
+  codigo?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const res = await fetchAdminAutenticado(`/api/admin/solicitudes-codigo/${encodeURIComponent(id)}/responder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mensaje }),
+      body: JSON.stringify({ mensaje, codigo: codigo || undefined }),
     });
     const data = await res.json();
     return data;
