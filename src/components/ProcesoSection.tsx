@@ -215,51 +215,51 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
                 ¡Gran Novedad para Padres con Varios Hijos!
               </span>
               <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit']">
-                ¿Tenés 2 o más hijos en el colegio? Ahora tenés 1 solo Código Familiar
+                ¿Tenés 2 o más hijos en el colegio? Anotate una vez y sumá un Código Familiar
               </h3>
               <p className="text-sm sm:text-base text-slate-600 max-w-2xl mx-auto">
-                No tenés que andar con claves distintas para cada curso. Con un único código ves a todos tus hijos juntos en la misma pantalla.
+                El código de curso de cada hijo (el que llega por WhatsApp del colegio) sigue funcionando igual que siempre. Si además anotás a tus hijos acá, te damos un Código Familiar para verlos a todos juntos en la misma pantalla.
               </p>
             </div>
 
-            {/* Comparativa Visual Súper Clara (Antes vs. Ahora) */}
+            {/* Comparativa Visual Súper Clara (Sin anotarte vs. Anotándote) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-              {/* Cómo era antes */}
+              {/* Sin anotarte: solo código de curso */}
               <div className="bg-white/80 p-5 rounded-2xl border border-rose-200 shadow-2xs space-y-3">
                 <div className="flex items-center gap-2 text-rose-700 font-bold text-sm">
                   <XCircle className="w-5 h-5 text-rose-500 shrink-0" />
-                  <span>¿Cómo era el método tradicional?</span>
+                  <span>Sin anotarte (código de curso, como siempre)</span>
                 </div>
                 <ul className="space-y-2 text-xs text-slate-600">
                   <li className="flex items-start gap-2">
                     <span className="text-rose-500 font-bold">•</span>
-                    <span>Varios sobres de papel dando vueltas en la mochila de cada chico.</span>
+                    <span>Usás el código de curso de cada hijo (sala, grado o turno), el que ya te llega por WhatsApp del colegio.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-rose-500 font-bold">•</span>
-                    <span>Un código o papel distinto para cada sala, grado o turno.</span>
+                    <span>Si tenés hijos en cursos distintos, entrás y salís con un código diferente para cada uno.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-rose-500 font-bold">•</span>
-                    <span>Hacer trámites por duplicado o enviar dinero en efectivo a la escuela.</span>
+                    <span>Para pedir la foto de hermanos juntos, hay que solicitarla aparte.</span>
                   </li>
                 </ul>
               </div>
 
-              {/* Cómo es ahora */}
+              {/* Anotándote: código familiar opcional */}
               <div className="bg-white p-5 rounded-2xl border-2 border-emerald-400 shadow-xs space-y-3">
                 <div className="flex items-center gap-2 text-emerald-800 font-extrabold text-sm">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <span>¿Cómo funciona ahora con Retrato Escolar?</span>
+                  <span>Anotándote 1 vez (Código Familiar, opcional)</span>
                 </div>
                 <ul className="space-y-2 text-xs text-slate-700 font-medium">
                   <li className="flex items-start gap-2">
                     <span className="text-emerald-600 font-bold">✔</span>
-                    <span><strong>1 solo Código Familiar (ej: FAM-4821)</strong> que te llega directo a tu email.</span>
+                    <span>Recibís además <strong>1 Código Familiar (ej: FAM-4821)</strong> directo a tu email.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-emerald-600 font-bold">✔</span>
-                    <span>Entrás y ves a todos tus hijos juntos. Podés pasar de uno al otro tocando su nombre.</span>
+                    <span>Entrás con ese código y ves a todos tus hijos juntos, sin tener que usar el código de curso de cada uno por separado. Podés pasar de uno al otro tocando su nombre.</span>
                   </li>
                   <li className="flex items-start gap-2">
                     <span className="text-emerald-600 font-bold">✔</span>
