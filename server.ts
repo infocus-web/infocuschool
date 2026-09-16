@@ -4377,6 +4377,93 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
   }
 });
 
+// Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): equivalente a
+// /api/mercadopago/crear-preferencia, pero arma UNA sola preferencia con un ítem de línea por
+// cada hijo del carrito (mismo total combinado que se le va a cobrar a la familia en un único
+// checkout). Mismo criterio de seguridad: el monto de cada línea se recalcula siempre acá con
+// calcularTotalPedido, nunca se usa un total mandado por el cliente. "external_reference" es el
+// grupoPagoId compartido por todos los pedidos de este carrito (ver /api/pedidos/crear-multiple),
+// no el id de un pedido puntual — así el webhook sabe que tiene que marcar varias filas como
+// pagadas, no una sola.
+app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear-preferencia-multiple', 20, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const { grupoPagoId, items, tutorNombre, tutorEmail, tutorTelefono } = req.body || {};
+
+    if (!grupoPagoId || !Array.isArray(items) || items.length < 2) {
+      return res.status(400).json({ success: false, error: 'Falta el grupo de pago o los ítems del carrito.' });
+    }
+
+    const mpItems: any[] = [];
+    for (const item of items) {
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras);
+      if (totalItem === null) {
+        return res.status(400).json({
+          success: false,
+          error: `Kit no reconocido para ${item?.alumnoNombre || 'uno de los hijos'}.`,
+        });
+      }
+      mpItems.push({
+        id: item?.pedidoId || `PED-${Date.now()}-${mpItems.length}`,
+        title: `Retrato Escolar 2026 - ${item?.kitNombre || 'Kit Fotográfico'} (${item?.alumnoNombre || 'Alumno'})`,
+        description: `Fotos escolares para ${item?.alumnoNombre || 'alumno'} en ${item?.colegioNombre || 'el colegio'}`,
+        quantity: 1,
+        unit_price: totalItem,
+        currency_id: 'ARS',
+      });
+    }
+
+    const mpConfig = getMercadoPagoConfig();
+    if (!mpConfig) {
+      return res.status(200).json({
+        success: false,
+        notConfigured: true,
+        error: 'MERCADOPAGO_ACCESS_TOKEN no está configurada en las variables de entorno del servidor.',
+      });
+    }
+
+    const hostDetectado = req.get('host') || '';
+    const esLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostDetectado);
+    const protocoloFinal = esLocal ? req.protocol : 'https';
+    const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
+    const preference = new Preference(mpConfig);
+
+    const preferenceData = {
+      body: {
+        items: mpItems,
+        payer: {
+          name: tutorNombre || 'Familia',
+          email: tutorEmail && tutorEmail.includes('@') ? tutorEmail : 'pagos@retratoescolar.com.ar',
+          phone: { number: tutorTelefono || '' },
+        },
+        back_urls: {
+          success: `${appUrl}/?mp_status=approved&grupo_pago_id=${grupoPagoId}`,
+          failure: `${appUrl}/?mp_status=rejected&grupo_pago_id=${grupoPagoId}`,
+          pending: `${appUrl}/?mp_status=pending&grupo_pago_id=${grupoPagoId}`,
+        },
+        auto_return: 'approved',
+        external_reference: grupoPagoId,
+        notification_url: `${appUrl}/api/mercadopago/webhook`,
+        statement_descriptor: 'RETRATO ESCOLAR',
+      },
+    };
+
+    const result = await preference.create(preferenceData);
+
+    return res.json({
+      success: true,
+      preferenceId: result.id,
+      initPoint: result.init_point,
+      sandboxInitPoint: result.sandbox_init_point,
+    });
+  } catch (error: any) {
+    console.error('[Mercado Pago Preference Multiple Error]:', error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || 'Error al crear la preferencia de pago combinada en Mercado Pago',
+    });
+  }
+});
+
 // Registra un pedido nuevo (lo llama el Portal de Familias al iniciar el checkout, antes de
 // pagar). Auditoría 2026-09-09: antes esto lo hacía el NAVEGADOR directo contra Supabase con la
 // clave anónima (insertando en 'familias' y 'pedidos'), y esas dos tablas tenían políticas de
@@ -4509,6 +4596,137 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
   }
 });
 
+// Auditoría 2026-09-16 (pedido de Pablo: "el cliente debe poder hacer multiple pedido en una
+// sola sesion, un solo pago"): equivalente a /api/pedidos/crear, pero para el carrito multi-hijo
+// del Código Familiar (ver /api/familia/hijos). Registra UNA fila en "pedidos" por cada hijo del
+// carrito — la tabla sigue siendo una fila por alumno, eso no cambia — pero todas comparten el
+// mismo "grupo_pago_id", que es lo que el webhook de Mercado Pago / Nave usa para marcarlas TODAS
+// como pagadas cuando llega una única confirmación de pago. Mismo criterio de seguridad que el
+// endpoint de a uno: el monto de cada ítem se recalcula siempre acá con calcularTotalPedido, y el
+// pedido nace siempre en "pendiente_pago" — nunca se acepta un total o estado mandado por el
+// cliente. No reemplaza a /api/pedidos/crear: una familia con un solo hijo sigue usando ese
+// camino exactamente como antes.
+app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multiple', 20, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const { tutorNombre, tutorTelefono, tutorEmail, items } = req.body || {};
+
+    if (!Array.isArray(items) || items.length < 2 || items.length > 10) {
+      return res.status(400).json({
+        success: false,
+        error: 'El carrito debe tener entre 2 y 10 hijos para usar el pago conjunto. Con un solo hijo, usá /api/pedidos/crear.',
+      });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const acotar = (valor: unknown, maxLen: number): string => String(valor ?? '').trim().slice(0, maxLen);
+    const acotarJson = (valor: unknown): Record<string, any> => {
+      if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return {};
+      const entradas = Object.entries(valor as Record<string, any>).slice(0, 20);
+      const limpio: Record<string, any> = {};
+      for (const [clave, val] of entradas) {
+        if (typeof val === 'string') limpio[clave] = val.slice(0, 200);
+        else if (typeof val === 'number' && Number.isFinite(val)) limpio[clave] = val;
+        else if (typeof val === 'boolean') limpio[clave] = val;
+      }
+      return limpio;
+    };
+
+    // Un total válido para CADA ítem, calculado siempre del lado del servidor. Si cualquier
+    // ítem tiene un kit no reconocido, se corta todo el carrito antes de escribir nada.
+    let totalGrupo = 0;
+    for (const item of items) {
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras);
+      if (totalItem === null) {
+        return res.status(400).json({
+          success: false,
+          error: `Kit no reconocido para ${item?.alumnoNombre || 'uno de los hijos'}. No se puede registrar el carrito.`,
+        });
+      }
+      totalGrupo += totalItem;
+    }
+
+    let familiaId: string | null = null;
+    const nombreTutor = String(tutorNombre || '').trim();
+    const telefonoTutor = String(tutorTelefono || '').trim();
+    const emailTutor = acotar(tutorEmail, 200);
+    if (nombreTutor || telefonoTutor || emailTutor) {
+      const { data: famData, error: famError } = await supabase
+        .from('familias')
+        .insert({
+          nombre: (nombreTutor || 'Familia').slice(0, 200),
+          whatsapp: telefonoTutor.slice(0, 40),
+          email: emailTutor.includes('@') ? emailTutor : null,
+        })
+        .select('id')
+        .single();
+      if (!famError && famData) familiaId = famData.id;
+    }
+
+    // Referencia compartida por todos los pedidos de este carrito — es lo que Mercado Pago/Nave
+    // nos va a devolver como external_reference / external_payment_id de un único pago.
+    const grupoPagoId = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `GRP-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+
+    const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
+    const filasPedido: Record<string, any>[] = [];
+    for (const item of items) {
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras) as number;
+      const tipoKit = item?.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
+      const extrasValidados = Math.min(20, Math.max(0, Math.floor(Number(item?.carpetasExtras) || 0)));
+      const metodoPagoValida = metodosValidos.includes(item?.metodoPago) ? item.metodoPago : 'mercadopago';
+
+      const fila: Record<string, any> = {
+        familia_id: familiaId,
+        tipo_kit: tipoKit,
+        estado: 'pendiente_pago',
+        total: totalItem,
+        carpetas_impresas: extrasValidados + 1,
+        metodo_pago: metodoPagoValida,
+        grupo_pago_id: grupoPagoId,
+        pedido_friendly_id: acotar(item?.pedidoFriendlyId, 40) || null,
+        colegio_id: acotar(item?.colegioId, 100) || null,
+        colegio_nombre: acotar(item?.colegioNombre, 200) || null,
+        curso_codigo: acotar(item?.cursoCodigo, 60) || null,
+        grado: acotar(item?.grado, 60) || null,
+        division: acotar(item?.division, 60) || null,
+        turno: acotar(item?.turno, 60) || null,
+        alumno_nombre: acotar(item?.alumnoNombre, 200) || null,
+        alumno_numero_lista: Number.isFinite(Number(item?.alumnoNumeroLista)) ? Math.floor(Number(item.alumnoNumeroLista)) : null,
+        codigo_alumno: acotar(item?.codigoAlumno, 200) || null,
+        kit_nombre: acotar(item?.kitNombre, 120) || null,
+        fotos_seleccionadas: acotarJson(item?.fotosSeleccionadas),
+        copias_extras: acotarJson(item?.copiasExtras),
+        link_descarga_hd: acotar(item?.linkDescargaHD, 500) || null,
+      };
+      if (typeof item?.pedidoId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.pedidoId)) {
+        fila.id = item.pedidoId;
+      }
+      filasPedido.push(fila);
+    }
+
+    const { data: pedidosCreados, error: errorPedidos } = await supabase
+      .from('pedidos')
+      .insert(filasPedido)
+      .select('id');
+    if (errorPedidos) throw errorPedidos;
+
+    return res.json({
+      success: true,
+      grupoPagoId,
+      pedidoIds: (pedidosCreados || []).map((p: any) => p.id),
+      total: totalGrupo,
+    });
+  } catch (err: any) {
+    console.error('Error al registrar carrito multi-hijo:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al registrar el carrito' });
+  }
+});
+
 // Webhook de Mercado Pago
 app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) => {
   try {
@@ -4567,7 +4785,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
 
       if (paymentInfo.status === 'approved') {
         if (pedidoId) {
-          let orderData: any = null;
+          let orderRows: any[] = [];
 
           if (supabase) {
             // Actualizar el pedido en Supabase.
@@ -4597,49 +4815,89 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             if (error) {
               console.error('[Mercado Pago Webhook] Error al actualizar pedido en Supabase:', error);
             } else if (data && data.length > 0) {
-              orderData = data[0];
+              orderRows = data;
+            } else {
+              // Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): ningún pedido tiene
+              // ese id — puede ser que "external_reference" no sea el id de UN pedido sino un
+              // grupo_pago_id compartido por varios (ver /api/pedidos/crear-multiple). A
+              // diferencia del caso de arriba, acá NUNCA se sobreescribe "total": cada fila del
+              // grupo ya tiene su propio monto correcto calculado al crear el carrito, y
+              // transaction_amount es la SUMA de todos los hijos, no el de uno solo.
+              const { data: dataGrupo, error: errorGrupo } = await supabase
+                .from('pedidos')
+                .update({
+                  estado: 'pagado',
+                  mp_payment_id: String(paymentId),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('grupo_pago_id', pedidoId)
+                .select('*, familias(nombre, whatsapp, email)');
+              if (errorGrupo) {
+                console.error('[Mercado Pago Webhook] Error al actualizar carrito (grupo_pago_id) en Supabase:', errorGrupo);
+              } else if (dataGrupo && dataGrupo.length > 0) {
+                orderRows = dataGrupo;
+              } else {
+                console.warn(`[Mercado Pago Webhook] No se encontró ningún pedido ni carrito para la referencia ${pedidoId}.`);
+              }
             }
           }
 
-          // Disparar email automático con el comprobante. Desde la auditoría 2026-09-09, el
-          // pedido ya guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre (ver
-          // migración de esa fecha), así que el correo puede mostrar los datos reales del
-          // pedido en vez de los genéricos "tu hijo/a" / "tu colegio" de antes. Se sigue
-          // omitiendo el link de descarga en este correo automático: no existe (todavía) ningún
-          // proceso que genere y suba un .zip por pedido a "fotos-hd" (se confirmó revisando el
-          // storage: ahí solo hay las fotos originales sueltas por curso), así que cualquier
-          // link armado acá apuntaría a un archivo inexistente — el envío manual de las fotos
-          // HD se sigue haciendo como hasta ahora desde el panel.
+          // Disparar email automático con el comprobante — uno por cada pedido actualizado (en
+          // un carrito multi-hijo, cada hijo recibe su propia confirmación con sus propios datos,
+          // aunque el pago haya sido uno solo). Desde la auditoría 2026-09-09, el pedido ya
+          // guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre (ver migración de
+          // esa fecha), así que el correo puede mostrar los datos reales del pedido en vez de
+          // los genéricos "tu hijo/a" / "tu colegio" de antes. Se sigue omitiendo el link de
+          // descarga en este correo automático: no existe (todavía) ningún proceso que genere y
+          // suba un .zip por pedido a "fotos-hd" (se confirmó revisando el storage: ahí solo
+          // están las fotos originales sueltas por curso), así que cualquier link armado acá
+          // apuntaría a un archivo inexistente — el envío manual de las fotos HD se sigue
+          // haciendo como hasta ahora desde el panel.
           // El destinatario preferido es el email que la familia cargó al hacer el pedido (más
           // confiable: es a quien le corresponde el pedido), y sólo si no lo tenemos se usa el
           // email de quien pagó en Mercado Pago (puede ser otra persona, ej. un abuelo pagando).
-          const emailDestino = orderData?.familias?.email || paymentInfo.payer?.email;
-          if (emailDestino && emailDestino.includes('@')) {
-            console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${pedidoId} a ${emailDestino}`);
-            await enviarCorreoFotosHD({
-              to: emailDestino,
-              tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
-              alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
-              colegioNombre: orderData?.colegio_nombre || 'tu colegio',
-              cursoCodigo: orderData?.curso_codigo || undefined,
-              kitNombre: orderData?.kit_nombre || undefined,
-              pedidoId: orderData?.pedido_friendly_id || pedidoId,
-              total: paymentInfo.transaction_amount || 0,
-              whatsappContacto: orderData?.familias?.whatsapp || '',
-            });
+          for (const orderData of orderRows) {
+            const emailDestino = orderData?.familias?.email || paymentInfo.payer?.email;
+            if (emailDestino && emailDestino.includes('@')) {
+              console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${orderData.id} a ${emailDestino}`);
+              await enviarCorreoFotosHD({
+                to: emailDestino,
+                tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
+                alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
+                colegioNombre: orderData?.colegio_nombre || 'tu colegio',
+                cursoCodigo: orderData?.curso_codigo || undefined,
+                kitNombre: orderData?.kit_nombre || undefined,
+                pedidoId: orderData?.pedido_friendly_id || orderData?.id,
+                total: Number(orderData?.total) || 0,
+                whatsappContacto: orderData?.familias?.whatsapp || '',
+              });
+            }
           }
         }
       } else if (paymentInfo.status === 'rejected' || paymentInfo.status === 'cancelled') {
         if (pedidoId && supabase) {
           console.log(`[Mercado Pago Webhook] Marcando pedido ${pedidoId} como rechazado/cancelado.`);
-          await supabase
+          const { data: dataCancelado } = await supabase
             .from('pedidos')
             .update({
               estado: 'cancelado',
               mp_payment_id: String(paymentId),
               updated_at: new Date().toISOString(),
             })
-            .eq('id', pedidoId);
+            .eq('id', pedidoId)
+            .select('id');
+          // Igual que en la rama "approved": si no hay ningún pedido individual con ese id,
+          // puede tratarse de un carrito multi-hijo — se cancelan todas las filas del grupo.
+          if (!dataCancelado || dataCancelado.length === 0) {
+            await supabase
+              .from('pedidos')
+              .update({
+                estado: 'cancelado',
+                mp_payment_id: String(paymentId),
+                updated_at: new Date().toISOString(),
+              })
+              .eq('grupo_pago_id', pedidoId);
+          }
         }
       }
     }
@@ -4753,6 +5011,111 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
   }
 });
 
+// Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): equivalente a
+// /api/nave/crear-intencion, pero arma UNA sola intención de pago con un "product" de línea por
+// cada hijo del carrito, dentro de la MISMA transacción (Nave sí soporta varios productos por
+// transacción) — así Nave cobra el total combinado en un único checkout. Mismo criterio de
+// seguridad: cada monto se recalcula siempre acá con calcularTotalPedido. "external_payment_id"
+// es el grupoPagoId compartido por todos los pedidos del carrito (ver
+// /api/pedidos/crear-multiple) — un uuid entra justo en el límite de 36 caracteres de Nave.
+app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-intencion-multiple', 20, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const { grupoPagoId, items, tutorNombre, tutorEmail, tutorTelefono } = req.body || {};
+
+    if (!grupoPagoId || !Array.isArray(items) || items.length < 2) {
+      return res.status(400).json({ success: false, error: 'Falta el grupo de pago o los ítems del carrito.' });
+    }
+
+    let totalGrupo = 0;
+    const products: any[] = [];
+    for (const item of items) {
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras);
+      if (totalItem === null) {
+        return res.status(400).json({
+          success: false,
+          error: `Kit no reconocido para ${item?.alumnoNombre || 'uno de los hijos'}.`,
+        });
+      }
+      totalGrupo += totalItem;
+      products.push({
+        name: (item?.kitNombre || 'Kit Fotográfico').slice(0, 100),
+        description: `Fotos escolares para ${item?.alumnoNombre || 'alumno'} en ${item?.colegioNombre || 'el colegio'}`.slice(0, 200),
+        quantity: 1,
+        unit_price: { currency: 'ARS', value: totalItem.toFixed(2) },
+      });
+    }
+
+    const credenciales = getNaveCredenciales();
+    if (!credenciales) {
+      return res.status(200).json({
+        success: false,
+        notConfigured: true,
+        error: 'NAVE_CLIENT_ID / NAVE_CLIENT_SECRET / NAVE_POS_ID no están configuradas en las variables de entorno del servidor.',
+      });
+    }
+
+    const accessToken = await obtenerNaveAccessToken();
+    if (!accessToken) {
+      return res.status(502).json({ success: false, error: 'No se pudo autenticar contra la API de Nave.' });
+    }
+
+    const hostDetectado = req.get('host') || '';
+    const esLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostDetectado);
+    const protocoloFinal = esLocal ? req.protocol : 'https';
+    const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
+    const { crearIntencion } = getNaveUrls();
+
+    const body: Record<string, any> = {
+      external_payment_id: String(grupoPagoId).slice(0, 36),
+      seller: { pos_id: credenciales.posId },
+      transactions: [
+        {
+          amount: { currency: 'ARS', value: totalGrupo.toFixed(2) },
+          products,
+        },
+      ],
+      buyer: {
+        name: (tutorNombre || 'Familia').slice(0, 100),
+        user_id: grupoPagoId,
+      },
+      additional_info: {
+        callback_url: `${appUrl}/?nave_status=vuelta&grupo_pago_id=${grupoPagoId}`,
+      },
+    };
+    if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
+    if (tutorTelefono) body.buyer.phone = tutorTelefono;
+
+    const resp = await fetch(crearIntencion, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(body),
+    });
+    const data: any = await resp.json().catch(() => null);
+    if (!resp.ok || !data?.checkout_url) {
+      console.error('[Nave Crear Intención Multiple Error]:', resp.status, data);
+      return res.status(502).json({
+        success: false,
+        error: (data && (data.message || data.error)) || 'Nave rechazó la creación de la intención de pago combinada.',
+      });
+    }
+
+    const supabase = getServerSupabase();
+    if (supabase) {
+      await supabase.from('pedidos').update({ nave_payment_request_id: data.id }).eq('grupo_pago_id', grupoPagoId);
+    }
+
+    return res.json({
+      success: true,
+      checkoutUrl: data.checkout_url,
+      qrData: data.qr_data,
+      naveId: data.id,
+    });
+  } catch (error: any) {
+    console.error('[Nave Crear Intención Multiple Error]:', error);
+    return res.status(500).json({ success: false, error: error?.message || 'Error al crear la intención de pago combinada en Nave' });
+  }
+});
+
 // Webhook de Nave (Banco Galicia). Se registran dos rutas separadas (producción/sandbox) porque
 // así se le pidió a Nave en el alta (dos "notification_url" distintas) — ambas hacen exactamente
 // lo mismo, la única diferencia real es contra qué entorno reconsultan (getNaveEntorno() lee la
@@ -4807,6 +5170,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
     if (estadoNave === 'APPROVED') {
       if (pedidoId && supabase) {
         const montoPagado = Number(pago?.transactions?.[0]?.amount?.value);
+        let orderRows: any[] = [];
         const { data, error } = await supabase
           .from('pedidos')
           .update({
@@ -4823,10 +5187,33 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
         if (error) {
           console.error('[Nave Webhook] Error al actualizar pedido en Supabase:', error);
         } else if (data && data.length > 0) {
-          const orderData = data[0];
-          // Mismo criterio que en el webhook de Mercado Pago: no se manda ningún link de
-          // descarga HD en este correo automático porque no existe (todavía) ningún proceso que
-          // genere y suba un .zip por pedido a "fotos-hd".
+          orderRows = data;
+        } else {
+          // Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): ningún pedido individual
+          // con ese id — "external_payment_id" puede ser un grupo_pago_id compartido por varios
+          // pedidos (ver /api/pedidos/crear-multiple). No se sobreescribe "total" acá: cada fila
+          // del grupo ya tiene su propio monto correcto, y `montoPagado` es la suma de todos.
+          const { data: dataGrupo, error: errorGrupo } = await supabase
+            .from('pedidos')
+            .update({
+              estado: 'pagado',
+              nave_payment_id: String(paymentId),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('grupo_pago_id', pedidoId)
+            .select('*, familias(nombre, whatsapp, email)');
+          if (errorGrupo) {
+            console.error('[Nave Webhook] Error al actualizar carrito (grupo_pago_id) en Supabase:', errorGrupo);
+          } else if (dataGrupo) {
+            orderRows = dataGrupo;
+          }
+        }
+
+        // Mismo criterio que en el webhook de Mercado Pago: no se manda ningún link de descarga
+        // HD en este correo automático porque no existe (todavía) ningún proceso que genere y
+        // suba un .zip por pedido a "fotos-hd". En un carrito multi-hijo, cada pedido actualizado
+        // recibe su propia confirmación por email.
+        for (const orderData of orderRows) {
           const emailDestino = orderData?.familias?.email;
           if (emailDestino && emailDestino.includes('@')) {
             await enviarCorreoFotosHD({
@@ -4836,7 +5223,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
               colegioNombre: orderData?.colegio_nombre || 'tu colegio',
               cursoCodigo: orderData?.curso_codigo || undefined,
               kitNombre: orderData?.kit_nombre || undefined,
-              pedidoId: orderData?.pedido_friendly_id || pedidoId,
+              pedidoId: orderData?.pedido_friendly_id || orderData?.id,
               total: Number(orderData?.total) || 0,
               whatsappContacto: orderData?.familias?.whatsapp || '',
             });
@@ -4846,10 +5233,17 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
     } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '')) {
       if (pedidoId && supabase) {
         console.log(`[Nave Webhook] Marcando pedido ${pedidoId} como cancelado (estado Nave: ${estadoNave}).`);
-        await supabase
+        const { data: dataCancelado } = await supabase
           .from('pedidos')
           .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
-          .eq('id', pedidoId);
+          .eq('id', pedidoId)
+          .select('id');
+        if (!dataCancelado || dataCancelado.length === 0) {
+          await supabase
+            .from('pedidos')
+            .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
+            .eq('grupo_pago_id', pedidoId);
+        }
       }
     }
     // PENDING no tiene resultado final todavía, y REFUNDED es un reembolso sobre un pedido que
