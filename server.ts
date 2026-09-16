@@ -151,6 +151,95 @@ function getMercadoPagoConfig(): MercadoPagoConfig | null {
 }
 
 // ==============================================================================
+// NAVE (Banco Galicia) — segundo medio de pago, sumado el 15/9/2026 a pedido de Pablo.
+// Documentación real relevada ese día (portal de desarrolladores de Nave, sección "Checkout"):
+// autenticación tipo OAuth2 client_credentials contra un servicio propio (no hay SDK server-side
+// oficial, se llama con fetch directo), creación de una "intención de pago" que devuelve un
+// checkout_url hosteado + un qr_data, y notificación asíncrona por webhook. A diferencia de
+// Resend, Nave NO firma sus webhooks (no hay ningún esquema HMAC documentado) — por eso el
+// webhook de acá abajo nunca confía en el estado que venga en el POST: siempre reconsulta el
+// pago con un GET propio (con nuestro access_token) antes de tocar la base.
+const NAVE_AUTH_AUDIENCE = 'https://naranja.com/ranty/merchants/api';
+
+function getNaveEntorno(): 'sandbox' | 'production' {
+  return (process.env.NAVE_ENVIRONMENT || 'sandbox').trim().toLowerCase() === 'production'
+    ? 'production'
+    : 'sandbox';
+}
+
+// URLs reales tomadas de la documentación de Nave (15/9/2026) — ver auditoría arriba.
+function getNaveUrls() {
+  const esSandbox = getNaveEntorno() === 'sandbox';
+  return {
+    auth: esSandbox
+      ? 'https://homoservices.apinaranja.com/security-ms/api/security/auth0/b2b/m2msPrivate'
+      : 'https://services.apinaranja.com/security-ms/api/security/auth0/b2b/m2msPrivate',
+    crearIntencion: esSandbox
+      ? 'https://api-sandbox.ranty.io/api/payment_request/ecommerce'
+      : 'https://api.ranty.io/api/payment_request/ecommerce',
+    // Base para "recuperar un pago" (GET .../ranty-payments/payments/{payment_id}) — se arma acá
+    // en vez de usar el "payment_check_url" que manda la notificación tal cual, para no confiar
+    // en una URL que viene en un POST sin firma (ver comentario del webhook más abajo).
+    pagos: esSandbox
+      ? 'https://api-sandbox.ranty.io/ranty-payments/payments'
+      : 'https://api.ranty.io/ranty-payments/payments',
+    intenciones: esSandbox
+      ? 'https://api-sandbox.ranty.io/api/payment_requests'
+      : 'https://api.ranty.io/api/payment_requests',
+  };
+}
+
+function getNaveCredenciales(): { clientId: string; clientSecret: string; posId: string } | null {
+  const clientId = process.env.NAVE_CLIENT_ID?.trim();
+  const clientSecret = process.env.NAVE_CLIENT_SECRET?.trim();
+  const posId = process.env.NAVE_POS_ID?.trim();
+  if (!clientId || !clientSecret || !posId) return null;
+  return { clientId, clientSecret, posId };
+}
+
+// Cache en memoria del access_token de Nave (dura 24hs según "expires_in") — no hace falta
+// persistirlo: si el proceso del servidor se reinicia, se pide uno nuevo sin drama. Se guarda con
+// 60s de margen para no arriesgarse a usarlo justo cuando expira.
+let naveTokenCache: { token: string; expiraEn: number; entorno: string } | null = null;
+
+async function obtenerNaveAccessToken(): Promise<string | null> {
+  const credenciales = getNaveCredenciales();
+  if (!credenciales) return null;
+  const entorno = getNaveEntorno();
+  if (naveTokenCache && naveTokenCache.entorno === entorno && naveTokenCache.expiraEn > Date.now()) {
+    return naveTokenCache.token;
+  }
+  try {
+    const { auth } = getNaveUrls();
+    const resp = await fetch(auth, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: credenciales.clientId,
+        client_secret: credenciales.clientSecret,
+        audience: NAVE_AUTH_AUDIENCE,
+      }),
+    });
+    if (!resp.ok) {
+      console.error('[Nave] Error al obtener access_token:', resp.status, await resp.text().catch(() => ''));
+      return null;
+    }
+    const data: any = await resp.json();
+    if (!data?.access_token) return null;
+    const expiresInSeg = Number(data.expires_in) || 3600;
+    naveTokenCache = {
+      token: data.access_token,
+      expiraEn: Date.now() + Math.max(0, expiresInSeg - 60) * 1000,
+      entorno,
+    };
+    return naveTokenCache.token;
+  } catch (err) {
+    console.error('[Nave] Error de red al pedir access_token:', err);
+    return null;
+  }
+}
+
+// ==============================================================================
 // 2. AUTENTICACIÓN ADMINISTRATIVA (ADMIN PIN Y TOKENS FIRMADOS)
 // ==============================================================================
 function getAdminPin(): string | null {
@@ -675,11 +764,27 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   const tipo = req.body?.tipo as TipoActualizacionPedido;
   const destinatarios = Array.isArray(req.body?.destinatarios) ? req.body.destinatarios.slice(0, 100) : [];
   if (!['en_produccion', 'listo_retiro'].includes(tipo) || destinatarios.length === 0) return res.status(400).json({ success: false, error: 'Tipo de aviso o destinatarios inválidos.' });
+  // Auditoría 2026-09-15: antes esta ruta sólo mandaba el email de aviso y nunca tocaba la base
+  // de datos, así que el pedido quedaba "en producción"/"listo para retirar" únicamente en la
+  // cabeza del cliente que recibió el mail — el panel seguía mostrándolo igual que antes y no
+  // había forma de filtrar por esa etapa. Se agrega la columna "estado_lab" (pedidos.estado_lab)
+  // y se guarda acá, junto con el envío del email, para que quede reflejado en el panel.
+  const supabase = getServerSupabase();
   let enviados = 0;
   const errores: string[] = [];
   for (const destinatario of destinatarios) {
     if (!destinatario?.to?.includes('@') || !destinatario?.pedidoId) { errores.push(`${destinatario?.alumnoNombre || 'Cliente'}: email o pedido inválido.`); continue; }
-    try { await enviarCorreoActualizacionPedido({ tipo, ...destinatario }); enviados += 1; }
+    try {
+      await enviarCorreoActualizacionPedido({ tipo, ...destinatario });
+      enviados += 1;
+      if (supabase) {
+        const { error: updateError } = await supabase
+          .from('pedidos')
+          .update({ estado_lab: tipo, updated_at: new Date().toISOString() })
+          .eq('id', destinatario.pedidoId);
+        if (updateError) console.warn(`[notificar-estado] Email enviado pero no se pudo guardar estado_lab para ${destinatario.pedidoId}:`, updateError.message);
+      }
+    }
     catch (error: any) { errores.push(`${destinatario.alumnoNombre || destinatario.to}: ${error?.message || 'falló el envío'}`); }
   }
   return res.status(enviados > 0 ? 200 : 502).json({ success: errores.length === 0, enviados, fallidos: errores.length, errores });
@@ -3126,6 +3231,22 @@ app.patch('/api/admin/consultas-familias/:id/estado', requireAdminAuth, async (r
   }
 });
 
+app.delete('/api/admin/consultas-familias/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    const { id } = req.params;
+
+    await supabase.from('consultas_familias_mensajes').delete().eq('consulta_id', id);
+    const { error } = await supabase.from('consultas_familias').delete().eq('id', id);
+    if (error) throw error;
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'No se pudo eliminar la consulta.' });
+  }
+});
+
 app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const mensaje = String(req.body?.mensaje || '').trim();
@@ -4016,7 +4137,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
 
     const tipoKit = kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
     const extrasValidados = Math.min(MAX_CARPETAS_EXTRA, Math.max(0, Math.floor(Number(carpetasExtras) || 0)));
-    const metodosValidos = ['mercadopago', 'transferencia', 'efectivo'];
+    const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
     const metodoPagoValido = metodosValidos.includes(metodoPago) ? metodoPago : 'mercadopago';
 
     const filaPedido: Record<string, any> = {
@@ -4206,6 +4327,217 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
   }
 });
 
+// Crear intención de pago en Nave (Banco Galicia) — equivalente a
+// /api/mercadopago/crear-preferencia, mismo criterio de recalcular siempre el monto en el
+// servidor (nunca confiar en un total mandado por el cliente).
+app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 20, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const {
+      pedidoId, kitId, kitNombre, alumnoNombre, colegioNombre, carpetasExtras,
+      tutorNombre, tutorEmail, tutorTelefono,
+    } = req.body || {};
+
+    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
+    if (totalCalculado === null) {
+      return res.status(400).json({
+        success: false,
+        error: 'Kit no reconocido. No se puede calcular el precio a cobrar.',
+      });
+    }
+
+    const credenciales = getNaveCredenciales();
+    if (!credenciales) {
+      return res.status(200).json({
+        success: false,
+        notConfigured: true,
+        error: 'NAVE_CLIENT_ID / NAVE_CLIENT_SECRET / NAVE_POS_ID no están configuradas en las variables de entorno del servidor.',
+      });
+    }
+
+    const accessToken = await obtenerNaveAccessToken();
+    if (!accessToken) {
+      return res.status(502).json({ success: false, error: 'No se pudo autenticar contra la API de Nave.' });
+    }
+
+    const hostDetectado = req.get('host') || '';
+    const esLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostDetectado);
+    const protocoloFinal = esLocal ? req.protocol : 'https';
+    const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
+
+    const montoStr = totalCalculado.toFixed(2);
+    const { crearIntencion } = getNaveUrls();
+
+    const body: Record<string, any> = {
+      // Nave exige un máximo de 36 caracteres para este campo (ver documentación) — un uuid de
+      // pedido (36 caracteres exactos) entra justo.
+      external_payment_id: String(pedidoId || `PED-${Date.now()}`).slice(0, 36),
+      seller: { pos_id: credenciales.posId },
+      transactions: [
+        {
+          amount: { currency: 'ARS', value: montoStr },
+          products: [
+            {
+              name: (kitNombre || 'Kit Fotográfico').slice(0, 100),
+              description: `Fotos escolares para ${alumnoNombre || 'alumno'} en ${colegioNombre || 'el colegio'}`.slice(0, 200),
+              quantity: 1,
+              unit_price: { currency: 'ARS', value: montoStr },
+            },
+          ],
+        },
+      ],
+      buyer: {
+        name: (tutorNombre || 'Familia').slice(0, 100),
+        user_id: pedidoId,
+      },
+      additional_info: {
+        callback_url: `${appUrl}/?nave_status=vuelta&pedido_id=${pedidoId}`,
+      },
+    };
+    if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
+    if (tutorTelefono) body.buyer.phone = tutorTelefono;
+
+    const resp = await fetch(crearIntencion, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify(body),
+    });
+    const data: any = await resp.json().catch(() => null);
+    if (!resp.ok || !data?.checkout_url) {
+      console.error('[Nave Crear Intención Error]:', resp.status, data);
+      return res.status(502).json({
+        success: false,
+        error: (data && (data.message || data.error)) || 'Nave rechazó la creación de la intención de pago.',
+      });
+    }
+
+    // Se guarda el id de la intención (payment_request_id) para poder reconsultarla o cancelarla
+    // más adelante — mismo rol que mp_preference_id para Mercado Pago.
+    const supabase = getServerSupabase();
+    if (supabase && pedidoId) {
+      await supabase.from('pedidos').update({ nave_payment_request_id: data.id }).eq('id', pedidoId);
+    }
+
+    return res.json({
+      success: true,
+      checkoutUrl: data.checkout_url,
+      qrData: data.qr_data,
+      naveId: data.id,
+    });
+  } catch (error: any) {
+    console.error('[Nave Crear Intención Error]:', error);
+    return res.status(500).json({ success: false, error: error?.message || 'Error al crear la intención de pago en Nave' });
+  }
+});
+
+// Webhook de Nave (Banco Galicia). Se registran dos rutas separadas (producción/sandbox) porque
+// así se le pidió a Nave en el alta (dos "notification_url" distintas) — ambas hacen exactamente
+// lo mismo, la única diferencia real es contra qué entorno reconsultan (getNaveEntorno() lee la
+// misma variable NAVE_ENVIRONMENT para las dos, así que hoy en la práctica sólo una de las dos
+// rutas va a coincidir con el entorno configurado; el día que haya credenciales de producción
+// separadas convendría separar también esta lógica por ruta en vez de por variable de entorno).
+//
+// OJO — a diferencia de Resend y de Mercado Pago (que si se le configura MERCADOPAGO_WEBHOOK_SECRET
+// firma con HMAC), la documentación de Nave relevada el 15/9/2026 no menciona ningún esquema de
+// firma para verificar que esta notificación realmente vino de Nave. Por eso acá NUNCA se usa el
+// estado ni el monto que vengan en el cuerpo del POST para decidir nada — sólo se usa para saber
+// QUÉ pago hay que reconsultar, y el estado real siempre se obtiene con un GET propio (con
+// nuestro access_token) contra la API de Nave. Tampoco se seguye el "payment_check_url" que
+// manda la notificación tal cual: se arma la URL nosotros mismos con nuestra propia base
+// (sandbox o producción, según NAVE_ENVIRONMENT) + el payment_id, para no arriesgarnos a que
+// una notificación falsa con una URL propia nos haga mandarle nuestro access_token a otro lado.
+app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) => {
+  try {
+    const credenciales = getNaveCredenciales();
+    if (!credenciales) {
+      console.warn('[Nave Webhook] Notificación recibida pero NAVE_CLIENT_ID/SECRET/POS_ID no están configuradas.');
+      return res.status(200).send('OK');
+    }
+
+    const paymentId = req.body?.payment_id;
+    if (!paymentId) {
+      return res.status(200).send('OK');
+    }
+
+    const accessToken = await obtenerNaveAccessToken();
+    if (!accessToken) {
+      console.error('[Nave Webhook] No se pudo autenticar contra Nave para reconfirmar el pago.');
+      return res.status(200).send('OK');
+    }
+
+    const { pagos } = getNaveUrls();
+    const resp = await fetch(`${pagos}/${encodeURIComponent(String(paymentId))}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const pago: any = await resp.json().catch(() => null);
+    if (!resp.ok || !pago) {
+      console.error('[Nave Webhook] No se pudo reconsultar el pago', paymentId, resp.status);
+      return res.status(200).send('OK');
+    }
+
+    const estadoNave: string | undefined = pago?.status?.name;
+    const pedidoId: string | undefined = pago?.external_payment_id || req.body?.external_payment_id;
+    console.log(`[Nave Webhook] Pago ${paymentId} — estado: ${estadoNave}, pedido: ${pedidoId}`);
+
+    const supabase = getServerSupabase();
+
+    if (estadoNave === 'APPROVED') {
+      if (pedidoId && supabase) {
+        const montoPagado = Number(pago?.transactions?.[0]?.amount?.value);
+        const { data, error } = await supabase
+          .from('pedidos')
+          .update({
+            estado: 'pagado',
+            nave_payment_id: String(paymentId),
+            // Igual que en el webhook de Mercado Pago: se guarda el monto que realmente informó
+            // Nave, no el que se haya calculado antes.
+            total: Number.isFinite(montoPagado) ? montoPagado : undefined,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', pedidoId)
+          .select('*, familias(nombre, whatsapp, email)');
+
+        if (error) {
+          console.error('[Nave Webhook] Error al actualizar pedido en Supabase:', error);
+        } else if (data && data.length > 0) {
+          const orderData = data[0];
+          // Mismo criterio que en el webhook de Mercado Pago: no se manda ningún link de
+          // descarga HD en este correo automático porque no existe (todavía) ningún proceso que
+          // genere y suba un .zip por pedido a "fotos-hd".
+          const emailDestino = orderData?.familias?.email;
+          if (emailDestino && emailDestino.includes('@')) {
+            await enviarCorreoFotosHD({
+              to: emailDestino,
+              tutorNombre: orderData?.familias?.nombre || 'Familia',
+              alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
+              colegioNombre: orderData?.colegio_nombre || 'tu colegio',
+              cursoCodigo: orderData?.curso_codigo || undefined,
+              kitNombre: orderData?.kit_nombre || undefined,
+              pedidoId: orderData?.pedido_friendly_id || pedidoId,
+              total: Number(orderData?.total) || 0,
+              whatsappContacto: orderData?.familias?.whatsapp || '',
+            });
+          }
+        }
+      }
+    } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '')) {
+      if (pedidoId && supabase) {
+        console.log(`[Nave Webhook] Marcando pedido ${pedidoId} como cancelado (estado Nave: ${estadoNave}).`);
+        await supabase
+          .from('pedidos')
+          .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
+          .eq('id', pedidoId);
+      }
+    }
+    // PENDING no tiene resultado final todavía, y REFUNDED es un reembolso sobre un pedido que
+    // ya se dio por pagado/entregado — ninguno de los dos ameríta tocar el estado acá solo.
+
+    return res.status(200).send('OK');
+  } catch (error: any) {
+    console.error('[Nave Webhook Error]:', error);
+    return res.status(200).send('OK');
+  }
+});
+
 // Endpoint público para que el cliente consulte el estado de pago actualizado de su pedido
 app.get('/api/pedidos/:id/status', async (req, res) => {
   try {
@@ -4224,7 +4556,7 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
     // 2026-09-09.
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, estado, updated_at, mp_payment_id')
+      .select('id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id')
       .eq('id', id)
       .maybeSingle();
 
@@ -4236,13 +4568,55 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
     }
 
-    const esAprobado = data.estado === 'pagado' || data.estado === 'entregado';
-    const esRechazado = data.estado === 'cancelado';
+    // Nave no firma sus webhooks (ver comentario en /api/nave/webhook) y, en teoría, una
+    // notificación puede perderse — la propia documentación de Nave recomienda esta consulta
+    // activa como respaldo ("Consultar una intención de pago... alternativa cuando la
+    // notificación no se recibe"). Se aprovecha este endpoint (que el Portal de Familias ya
+    // consulta con polling mientras el pago está pendiente) para hacer ese respaldo: si el
+    // pedido es de Nave, sigue pendiente, y tenemos el id de la intención, se reconsulta contra
+    // Nave y se autocorrige el estado en la base antes de responder.
+    let estadoFinal = data.estado;
+    if (data.metodo_pago === 'nave' && data.estado === 'pendiente_pago' && data.nave_payment_request_id) {
+      try {
+        const accessToken = await obtenerNaveAccessToken();
+        if (accessToken) {
+          const { intenciones } = getNaveUrls();
+          const resp = await fetch(`${intenciones}/${encodeURIComponent(data.nave_payment_request_id)}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const intencion: any = await resp.json().catch(() => null);
+          const estadoIntencion = intencion?.status?.name;
+          if (resp.ok && estadoIntencion === 'SUCCESS_PROCESSED') {
+            const pagoAprobadoId = intencion?.payment_attempts?.payments?.find((p: any) => p.status === 'APPROVED')?.payment_id;
+            await supabase
+              .from('pedidos')
+              .update({
+                estado: 'pagado',
+                nave_payment_id: pagoAprobadoId ? String(pagoAprobadoId) : undefined,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', id);
+            estadoFinal = 'pagado';
+          } else if (resp.ok && (estadoIntencion === 'FAILURE_PROCESSED' || estadoIntencion === 'EXPIRED' || estadoIntencion === 'BLOCKED')) {
+            await supabase
+              .from('pedidos')
+              .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+              .eq('id', id);
+            estadoFinal = 'cancelado';
+          }
+        }
+      } catch (errNave) {
+        console.warn('[Nave] No se pudo reconsultar la intención de pago como respaldo:', errNave);
+      }
+    }
+
+    const esAprobado = estadoFinal === 'pagado' || estadoFinal === 'entregado';
+    const esRechazado = estadoFinal === 'cancelado';
 
     return res.json({
       success: true,
       pedidoId: data.id,
-      estado: data.estado,
+      estado: estadoFinal,
       estadoPago: esAprobado ? 'aprobado' : esRechazado ? 'rechazado' : 'pendiente',
       actualizadoEl: data.updated_at,
     });
