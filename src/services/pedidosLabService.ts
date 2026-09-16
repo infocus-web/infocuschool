@@ -52,9 +52,9 @@ export interface PedidoEscolarCompleto {
   kitId: string;
   kitNombre: string;
   total: number;
-  metodoPago: 'mercadopago' | 'transferencia' | 'efectivo';
+  metodoPago: 'mercadopago' | 'transferencia' | 'efectivo' | 'nave';
   estadoPago: 'aprobado' | 'pendiente';
-  estadoEntrega: 'en_espera' | 'en_laboratorio' | 'listo_descarga' | 'entregado';
+  estadoEntrega: 'en_espera' | 'en_laboratorio' | 'listo_retiro' | 'listo_descarga' | 'entregado';
   fotosSeleccionadas: {
     individualId: string;
     grupalId: string;
@@ -444,7 +444,7 @@ export async function registrarPedidoDesdePortal(params: {
   kitId: string;
   kitNombre: string;
   total: number;
-  metodoPago: 'mercadopago' | 'transferencia' | 'efectivo';
+  metodoPago: 'mercadopago' | 'transferencia' | 'efectivo' | 'nave';
   fotosSeleccionadas: {
     individualId: string;
     grupalId: string;
@@ -505,7 +505,14 @@ export async function registrarPedidoDesdePortal(params: {
     fotosSeleccionadas: params.fotosSeleccionadas,
     copiasExtras: params.copiasExtras,
     archivosParaLaboratorio: archivosLab,
-    linkDescargaHD: `https://ntkqypxvrljuihbxdrtx.supabase.co/storage/v1/object/public/fotos-hd/2026/${sanitizarParaMinilab(params.cursoCodigo)}/${codigoAlumno}.zip`,
+    // Auditoría 2026-09-15: antes acá se fabricaba un link a un .zip que en la práctica nunca se
+    // genera ni se sube a Storage — no existe (todavía) ningún proceso, manual ni automático,
+    // que arme ese archivo por pedido. El resultado era un enlace roto (404 "Bucket not found")
+    // que igual se guardaba en la base y se mostraba en el portal de familias y en los emails.
+    // Se deja vacío hasta que exista un proceso real de generación de ZIP por pedido; tanto el
+    // portal (PortalFamiliasModal) como el email de fotos HD (server.ts, enviarCorreoFotosHD) ya
+    // están preparados para ocultar el botón de descarga cuando el link viene vacío.
+    linkDescargaHD: '',
     emailEnviado: false,
     fechaEnvioEmail: undefined
   };
@@ -597,14 +604,19 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
 
   // La tabla real sólo tiene un único "estado" (pendiente_pago | pagado | entregado |
   // cancelado); se mapea a los dos campos más granulares que usa hoy la UI del panel.
+  // Auditoría 2026-09-15: se suma "estado_lab" (en_produccion | listo_retiro | null), que es lo
+  // que ahora guarda /api/admin/pedidos/notificar-estado cuando se envían los avisos "En
+  // producción" / "Listo para retirar" desde el panel de Laboratorio — antes esos botones sólo
+  // mandaban el email y no quedaba ningún rastro en la base. "entregado" (el estado final, que
+  // sí tiene columna propia) siempre pisa a estado_lab si ambos están presentes.
   let estadoPago: 'aprobado' | 'pendiente' = 'pendiente';
   let estadoEntrega: PedidoEscolarCompleto['estadoEntrega'] = 'en_espera';
-  if (fila.estado === 'pagado') {
-    estadoPago = 'aprobado';
-    estadoEntrega = 'en_laboratorio';
-  } else if (fila.estado === 'entregado') {
+  if (fila.estado === 'entregado') {
     estadoPago = 'aprobado';
     estadoEntrega = 'entregado';
+  } else if (fila.estado === 'pagado') {
+    estadoPago = 'aprobado';
+    estadoEntrega = fila.estado_lab === 'listo_retiro' ? 'listo_retiro' : 'en_laboratorio';
   }
 
   const fecha = fila.created_at ? new Date(fila.created_at) : new Date();
