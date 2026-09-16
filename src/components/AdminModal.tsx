@@ -5,7 +5,7 @@ import {
   School, RefreshCw, Eye, AlertCircle, ArrowRight, Users, Search, CheckSquare, Square, Download,
   Key, Copy, Check, MessageSquare, Sparkles, Send, ExternalLink, Printer, HardDrive, FileCode, Mail,
   FileSpreadsheet, Scissors, FileText, UserCheck, Trash2, Phone, Save, Database, Globe,
-  Pencil, Loader2, Link2, UploadCloud, ChevronDown
+  Pencil, Loader2, Link2, UploadCloud
 } from 'lucide-react';
 import {
   obtenerConfiguracionWhatsApp,
@@ -1050,29 +1050,26 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   };
 
   const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
-  const pestanasAdmin = [
-    { id: 'subir', label: 'Cargar fotos del curso' },
-    { id: 'cerrar-anio', label: 'Cerrar año' },
-    { id: 'codigos', label: 'Códigos y difusión' },
-    { id: 'colegios', label: 'Colegios y códigos' },
-    { id: 'whatsapp', label: 'Configuración de WhatsApp' },
-    { id: 'estado-pagos', label: 'Estado de pagos por curso' },
-    { id: 'importar-alumnos', label: 'Importar alumnos' },
-    { id: 'inscriptos', label: pendientesInscripcionCount > 0 ? `Inscriptos (${pendientesInscripcionCount} pendientes)` : 'Inscriptos y envío de códigos' },
-    { id: 'laboratorio', label: 'Laboratorio y ensobrado' },
-    { id: 'alumnos', label: `Nómina 2026 (${alumnosNominaReal.length})` },
-    { id: 'padron', label: 'Padrón autorizado' },
-    { id: 'pedidos', label: `Pedidos de familias (${pedidosCompletos.length})` },
-    { id: 'consultas', label: 'Consultas de familias' },
-    { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes de código (${pendientesSolicitudesCodigoCount})` : 'Solicitudes de código' },
-  ] as const;
-  const pestanaActiva = pestanasAdmin.find((pestana) => pestana.id === activeTab);
+  // Auditoría 2026-09-16 (pedido de Pablo): antes había 5 botones "de acceso rápido" arriba
+  // (Inscriptos/Pedidos/Consultas/Laboratorio/Cargar fotos) y el resto de las 14 secciones
+  // quedaba escondido en un <select> aparte. Pablo pidió que TODO quede como botones arriba,
+  // en orden de importancia — se unifica todo en una sola lista (ya no hay `pestanasAdmin` +
+  // `accesosRapidos` por separado) para que cada sección tenga un único botón, siempre visible.
   const accesosRapidos = [
-    { id: 'inscriptos', label: 'Inscriptos', icono: Users },
-    { id: 'pedidos', label: 'Pedidos', icono: Package },
-    { id: 'consultas', label: 'Consultas', icono: Mail },
+    { id: 'inscriptos', label: pendientesInscripcionCount > 0 ? `Inscriptos (${pendientesInscripcionCount})` : 'Inscriptos', icono: Users },
+    { id: 'pedidos', label: `Pedidos (${pedidosCompletos.length})`, icono: Package },
     { id: 'laboratorio', label: 'Laboratorio', icono: Printer },
     { id: 'subir', label: 'Cargar fotos', icono: Upload },
+    { id: 'consultas', label: 'Consultas', icono: Mail },
+    { id: 'solicitudes', label: pendientesSolicitudesCodigoCount > 0 ? `Solicitudes (${pendientesSolicitudesCodigoCount})` : 'Solicitudes', icono: Key },
+    { id: 'estado-pagos', label: 'Estado de pagos', icono: DollarSign },
+    { id: 'codigos', label: 'Códigos y difusión', icono: Send },
+    { id: 'colegios', label: 'Colegios', icono: School },
+    { id: 'padron', label: 'Padrón', icono: UserCheck },
+    { id: 'importar-alumnos', label: 'Importar alumnos', icono: UploadCloud },
+    { id: 'alumnos', label: `Nómina (${alumnosNominaReal.length})`, icono: FileSpreadsheet },
+    { id: 'whatsapp', label: 'WhatsApp', icono: MessageSquare },
+    { id: 'cerrar-anio', label: 'Cerrar año', icono: RefreshCw },
   ] as const;
 
   return (
@@ -1165,17 +1162,28 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
           /* Authenticated Admin Dashboard */
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
 
-            {/* Barra superior fija (auditoría 2026-09, pedido de Pablo): pestañas + métricas +
-                resumen de kits quedan pegadas arriba al scrollear el contenido de la pestaña
-                activa (por ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding
-                negativos hacen que este bloque llegue hasta los bordes del contenedor con
-                scroll (que tiene su propio padding) para que "top-0" pegue justo arriba.
+            {/* Barra superior fija (auditoría 2026-09, pedido de Pablo): pestañas + métricas
+                quedan pegadas arriba al scrollear el contenido de la pestaña activa (por
+                ejemplo, la lista larga de "Nómina 2026"). Los márgenes/padding negativos hacen
+                que este bloque llegue hasta los bordes del contenedor con scroll (que tiene su
+                propio padding) para que "top-0" pegue justo arriba.
                 2026-09-15 (pedido de Pablo: "hay un espacio en blanco que se podría eliminar"
-                entre el header oscuro y esta barra): el padding superior baja de pt-4/pt-6 a
-                pt-2/pt-3, que era lo que dejaba ese hueco antes de la tarjeta "Sección activa". */}
-            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-2 sm:pt-3 pb-3 bg-white space-y-3 border-b border-slate-200">
+                entre el header oscuro y esta barra): el padding superior bajó de pt-4/pt-6 a
+                pt-2/pt-3.
+                2026-09-16 (pedido de Pablo: "la barra fija está tapando filas con información
+                importante" + "quiero que todas esas herramientas queden como botones arriba"):
+                se sacó el <select> con las 14 secciones y la tarjeta "Sección activa" (quedaba
+                redundante: el botón activo ya se resalta en ámbar) — ahora las 14 secciones son
+                botones directos, en una sola lista (`accesosRapidos`, ver arriba) ordenados por
+                importancia y con salto de línea (flex-wrap) en vez de scroll horizontal. Esto
+                además ACHICA la altura total de la barra fija respecto de antes (se perdió la
+                fila entera de "Sección activa" + el <select>), que era lo que hacía que tapara
+                más contenido de lo necesario al quedar pegada arriba. El padding superior bajó
+                otra vez (pt-2/pt-3 → pt-1/pt-1.5) para que los botones queden pegados al header
+                oscuro con la mínima distancia posible. */}
+            <div ref={barraSuperiorRef} className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-1 sm:pt-1.5 pb-2 bg-white space-y-2 border-b border-slate-200">
 
-            <nav aria-label="Accesos rápidos del panel" className="flex items-center gap-2 overflow-x-auto pb-0.5">
+            <nav aria-label="Secciones del panel" className="flex flex-wrap items-center gap-1.5">
               {accesosRapidos.map(({ id, label, icono: Icono }) => {
                 const activo = activeTab === id;
                 return (
@@ -1196,30 +1204,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
               })}
             </nav>
 
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-xs">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-600">Sección activa</p>
-                <h3 className="truncate text-sm font-extrabold text-slate-950 font-['Outfit']">{pestanaActiva?.label}</h3>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 md:ml-auto">
-                <span>Recaudación <strong className="text-slate-950">${totalRecaudado.toLocaleString('es-AR')}</strong></span>
-                <span>Pedidos <strong className="text-slate-950">{pedidosCompletos.length}</strong></span>
-                <span>Colegios <strong className="text-slate-950">{colegiosList.length}</strong></span>
-              </div>
-
-              <label className="relative shrink-0">
-                <span className="sr-only">Funciones del panel</span>
-                <select
-                  value={activeTab}
-                  onChange={(event) => setActiveTab(event.target.value as typeof activeTab)}
-                  className="h-9 min-w-64 appearance-none rounded-lg border border-slate-300 bg-slate-950 pl-3 pr-9 text-xs font-bold text-white shadow-sm outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 cursor-pointer"
-                  aria-label="Funciones del panel"
-                >
-                  {pestanasAdmin.map((pestana) => <option key={pestana.id} value={pestana.id}>{pestana.label}</option>)}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-amber-400" />
-              </label>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600">
+              <span>Recaudación <strong className="text-slate-950">${totalRecaudado.toLocaleString('es-AR')}</strong></span>
+              <span>Pedidos <strong className="text-slate-950">{pedidosCompletos.length}</strong></span>
+              <span>Colegios <strong className="text-slate-950">{colegiosList.length}</strong></span>
             </div>
 
             </div>
