@@ -53,3 +53,49 @@ export async function crearPreferenciaMercadoPago(
     };
   }
 }
+
+export interface ItemPreferenciaMercadoPago {
+  pedidoId: string;
+  kitId: string;
+  kitNombre: string;
+  alumnoNombre: string;
+  colegioNombre: string;
+  carpetasExtras?: number;
+}
+
+export interface DatosPreferenciaMercadoPagoMultiple {
+  grupoPagoId: string;
+  items: ItemPreferenciaMercadoPago[];
+  tutorNombre: string;
+  tutorEmail: string;
+  tutorTelefono?: string;
+}
+
+/**
+ * Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): equivalente a
+ * crearPreferenciaMercadoPago, pero pide UNA sola preferencia con un ítem de línea por cada
+ * hijo del carrito — Mercado Pago cobra el total combinado en un único checkout. Ver
+ * /api/mercadopago/crear-preferencia-multiple en el servidor.
+ */
+export async function crearPreferenciaMercadoPagoMultiple(
+  datos: DatosPreferenciaMercadoPagoMultiple
+): Promise<RespuestaPreferenciaMP> {
+  try {
+    const res = await fetch('/api/mercadopago/crear-preferencia-multiple', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(datos),
+    });
+
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    console.error('Error al solicitar preferencia combinada de Mercado Pago:', err);
+    return {
+      success: false,
+      error: err?.message || 'Error de red al conectar con Mercado Pago',
+    };
+  }
+}

@@ -580,6 +580,109 @@ export async function registrarPedidoDesdePortal(params: {
   return { pedido: nuevoPedido, sincronizado, errorSincronizacion };
 }
 
+/** Un hijo del carrito multi-hijo, listo para registrarse como su propio pedido. */
+export interface ItemCarritoHijo {
+  colegioId: string;
+  colegioNombre: string;
+  cursoCodigo: string;
+  grado: string;
+  division: string;
+  turno: string;
+  alumnoNombre: string;
+  alumnoNumeroLista?: number;
+  kitId: string;
+  kitNombre: string;
+  metodoPago: 'mercadopago' | 'transferencia' | 'efectivo' | 'nave';
+  fotosSeleccionadas: {
+    individualId: string;
+    grupalId: string;
+    docenteId?: string;
+    otrasIds?: string[];
+  };
+  copiasExtras?: CopiasExtrasConfig;
+}
+
+export interface ResultadoRegistroCarrito {
+  grupoPagoId: string;
+  pedidoIds: string[];
+  total: number;
+  sincronizado: boolean;
+  errorSincronizacion?: string;
+}
+
+/**
+ * Auditoría 2026-09-16 (pedido de Pablo: "el cliente debe poder hacer multiple pedido en una
+ * sola sesion, un solo pago"): equivalente a registrarPedidoDesdePortal, pero para el carrito
+ * de familias con más de un hijo (Código Familiar). Registra en un solo llamado al servidor
+ * (/api/pedidos/crear-multiple) UN pedido por cada hijo del carrito, todos agrupados bajo un
+ * mismo "grupoPagoId" — esa referencia es la que después se usa para generar UNA sola
+ * preferencia de Mercado Pago / intención de Nave que cobra el total combinado (ver
+ * mercadoPagoService.ts / naveService.ts), y la que el webhook de pago usa para marcar todos
+ * los pedidos del grupo como pagados con una sola confirmación. No reemplaza a
+ * registrarPedidoDesdePortal: una familia con un solo hijo sigue usando ese camino, sin ningún
+ * cambio de comportamiento.
+ */
+export async function registrarCarritoMultipleDesdePortal(params: {
+  tutorNombre: string;
+  tutorTelefono: string;
+  tutorEmail: string;
+  items: ItemCarritoHijo[];
+}): Promise<ResultadoRegistroCarrito> {
+  try {
+    const res = await fetch('/api/pedidos/crear-multiple', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tutorNombre: params.tutorNombre,
+        tutorTelefono: params.tutorTelefono,
+        tutorEmail: params.tutorEmail,
+        items: params.items.map((item) => ({
+          colegioId: item.colegioId,
+          colegioNombre: item.colegioNombre,
+          cursoCodigo: item.cursoCodigo,
+          grado: item.grado,
+          division: item.division,
+          turno: item.turno,
+          alumnoNombre: item.alumnoNombre,
+          alumnoNumeroLista: item.alumnoNumeroLista,
+          kitId: item.kitId,
+          kitNombre: item.kitNombre,
+          metodoPago: item.metodoPago,
+          fotosSeleccionadas: item.fotosSeleccionadas,
+          copiasExtras: item.copiasExtras,
+          // El servidor calcula el total de cada ítem a partir de kitId + carpetasExtras (mismo
+          // criterio que /api/pedidos/crear) — nunca de un total mandado por el navegador.
+          carpetasExtras: item.copiasExtras?.carpetasExtras || 0,
+        })),
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.success) {
+      return {
+        grupoPagoId: data.grupoPagoId,
+        pedidoIds: data.pedidoIds || [],
+        total: data.total || 0,
+        sincronizado: true,
+      };
+    }
+    return {
+      grupoPagoId: '',
+      pedidoIds: [],
+      total: 0,
+      sincronizado: false,
+      errorSincronizacion: data?.error || `El servidor respondió con un error (HTTP ${res.status}).`,
+    };
+  } catch (e: any) {
+    return {
+      grupoPagoId: '',
+      pedidoIds: [],
+      total: 0,
+      sincronizado: false,
+      errorSincronizacion: e?.message || 'Error de conexión al registrar el carrito en el servidor.',
+    };
+  }
+}
+
 /**
  * Reconstruye un PedidoEscolarCompleto (la forma que usa toda la UI del panel) a partir de una
  * fila real de la tabla "pedidos" de Supabase (tal como la devuelve GET /api/admin/pedidos, con
