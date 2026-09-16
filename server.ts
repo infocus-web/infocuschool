@@ -2296,7 +2296,22 @@ async function obtenerOCrearCodigoSeccion(
     }
   }
   if (!candidato) {
-    candidato = generarCodigoSecretoSeccion();
+    // Auditoría 2026-09-16: antes se usaba el código recién generado al azar sin chequear si ya
+    // pertenecía a otra sección (ese chequeo sólo se hacía para un candidato sugerido a mano,
+    // arriba) — con pocos intentos de reintento acá alcanza para blindarlo también en este caso.
+    for (let intento = 0; intento < 5; intento++) {
+      const propuesto = generarCodigoSecretoSeccion();
+      const { data: enUso } = await supabase
+        .from('codigos_seccion')
+        .select('id')
+        .eq('codigo_secreto', propuesto)
+        .maybeSingle();
+      if (!enUso) {
+        candidato = propuesto;
+        break;
+      }
+    }
+    if (!candidato) candidato = generarCodigoSecretoSeccion();
   }
 
   const { data: creado, error } = await supabase
@@ -2623,6 +2638,27 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     const gradoAprobado = (matchPadre?.grado && String(matchPadre.grado).trim()) || grado;
     const turnoAprobado = (matchPadre?.turno && String(matchPadre.turno).trim()) || turno;
     const divisionAprobada = (matchPadre?.division && String(matchPadre.division).trim()) || division;
+
+    // Auditoría 2026-09-16 (hallazgo reportado por Pablo): si una familia YA aprobada vuelve a
+    // completar este formulario público pero esta vez el curso (colegio/grado/turno/división)
+    // quedó distinto al que tenía guardado — corrigió un error de tipeo, el alumno cambió de
+    // sección, etc. — antes se seguía usando el `codigo_asignado` VIEJO (el de la sección
+    // anterior) aunque la fila quedara con el grado/turno/división nuevos. Eso dejaba a esa
+    // familia con un código que en realidad pertenece a OTRA sección — y por lo tanto a otras
+    // familias — mostrándole datos de gente que no tiene nada que ver (y viceversa: la sección
+    // nueva real de esta familia nunca llegaba a tener su propio código creado). Ahora, si el
+    // curso cambió, se pide (o crea) el código real de la sección nueva en vez de arrastrar el
+    // anterior.
+    if (estado === 'aceptado' && inscripcionExistente) {
+      const cursoCambio =
+        String(inscripcionExistente.colegio_id || '') !== String(colegioId || '') ||
+        String(inscripcionExistente.grado || '').trim() !== gradoAprobado ||
+        String(inscripcionExistente.turno || '').trim() !== turnoAprobado ||
+        String(inscripcionExistente.division || '').trim() !== divisionAprobada;
+      if (cursoCambio) {
+        codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, gradoAprobado, turnoAprobado, divisionAprobada);
+      }
+    }
 
     // Auditoría 2026-09-09 (revisión a fondo, hallazgo reportado por Pablo): hasta acá, con sólo
     // escribir el número de WhatsApp (o el email) de CUALQUIER fila del padrón oficial en este
