@@ -501,3 +501,34 @@ export function guardarFamiliaActiva(familia: InscripcionFamilia | null): void {
 export function cerrarSesionFamilia(): void {
   guardarFamiliaActiva(null);
 }
+
+/**
+ * Auditoría 2026-09-16 (el Código Familiar prometía "ver a todos tus hijos y alternar entre
+ * ellos con un solo toque" incluso en secciones distintas, pero nunca se resolvía un código real
+ * para la sección de cada hermano): dado el Código Familiar ya validado, trae el hijo principal +
+ * cada hermano con SU PROPIO código real de sección (ver `/api/familia/hijos` en el servidor).
+ * El portal de familias usa esto para poder cambiar de galería al elegir otro hijo.
+ */
+export interface HijoConCodigoSeccion {
+  id: string;
+  nombreCompleto: string;
+  colegioNombre?: string;
+  grado?: string;
+  turno?: string;
+  division?: string;
+  codigoSeccion: string;
+}
+
+export async function obtenerHijosDeFamilia(codigoFamiliar: string): Promise<HijoConCodigoSeccion[]> {
+  const codigo = (codigoFamiliar || '').trim();
+  if (!codigo) return [];
+  try {
+    const res = await fetch(`/api/familia/hijos?codigo=${encodeURIComponent(codigo)}`);
+    const data = await res.json();
+    if (!res.ok || !data.success) return [];
+    return data.hijos || [];
+  } catch (err) {
+    console.error('Error al obtener los hijos de la familia:', err);
+    return [];
+  }
+}
