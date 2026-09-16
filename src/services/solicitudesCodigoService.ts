@@ -113,3 +113,25 @@ export async function eliminarSolicitudCodigoAdmin(id: string): Promise<{ succes
     return { success: false, error: err?.message || 'Error de red' };
   }
 }
+
+/**
+ * Panel admin: responde una solicitud por email desde el sistema (mismo remitente oficial que
+ * usa el resto de la plataforma), en vez de tener que escribirle a mano desde el correo personal
+ * del fotógrafo. Al enviarse con éxito, el servidor marca la solicitud como atendida.
+ */
+export async function responderSolicitudCodigoAdmin(
+  id: string,
+  mensaje: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/solicitudes-codigo/${encodeURIComponent(id)}/responder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mensaje }),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red' };
+  }
+}
