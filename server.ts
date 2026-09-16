@@ -2908,6 +2908,81 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
   }
 });
 
+// Auditoría 2026-09-16 (pedido de Pablo: la web y el mail de aprobación prometen "1 solo Código
+// Familiar... vas a poder ver a todos tus hijos y alternar entre ellos con un solo toque", pero
+// el Código Familiar siempre fue, en los hechos, el código de la sección del hijo PRINCIPAL
+// nada más — cada hermano ya se guardaba con su propio grado/turno/división al inscribirse
+// (columna `hermanos`, ver `AlumnoHermano`), pero nunca se le generaba ni resolvía un código de
+// su propia sección, así que no había forma real de ver su galería con el mismo código. Este
+// endpoint es el que le faltaba: dado el Código Familiar ya validado, devuelve el hijo principal
+// + cada hermano con SU PROPIO código real de sección (generándolo recién ahora si esa sección
+// todavía no tenía uno, con la misma función que ya usa "Códigos y difusión"). El frontend
+// (`PortalFamiliasModal.tsx`) usa esto para poder alternar la galería mostrada sin pedirle a la
+// familia un código distinto por cada hijo — nunca se le entrega grado/turno/división "en
+// crudo" al navegador como si fuera la llave: la llave sigue siendo siempre un código secreto.
+app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const codigo = String(req.query.codigo || '').trim().toUpperCase();
+    if (!codigo) {
+      return res.status(400).json({ success: false, error: 'Falta el código familiar.' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    const { data: fila } = await supabase
+      .from('inscripciones')
+      .select('id, colegio_id, colegio_nombre, alumno_nombre, alumno_apellido, grado, division, turno, estado, codigo_asignado, hermanos')
+      .eq('codigo_asignado', codigo)
+      .limit(1)
+      .maybeSingle();
+
+    if (!fila || fila.estado !== 'aceptado' || !fila.codigo_asignado) {
+      return res.status(404).json({ success: false, error: 'Código familiar no encontrado o todavía no aprobado.' });
+    }
+
+    const candidatos = [
+      {
+        id: 'principal',
+        nombreCompleto: `${fila.alumno_nombre || ''} ${fila.alumno_apellido || ''}`.trim() || 'Alumno/a',
+        colegioId: fila.colegio_id,
+        colegioNombre: fila.colegio_nombre,
+        grado: fila.grado,
+        turno: fila.turno,
+        division: fila.division,
+      },
+      ...((Array.isArray(fila.hermanos) ? fila.hermanos : []) as any[]).map((h: any, idx: number) => ({
+        id: h?.id || `hermano-${idx}`,
+        nombreCompleto: `${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`.trim() || 'Hermano/a',
+        colegioId: h?.colegioId || fila.colegio_id,
+        colegioNombre: h?.colegioNombre || fila.colegio_nombre,
+        grado: h?.grado,
+        turno: h?.turno,
+        division: h?.division,
+      })),
+    ].filter((c) => c.colegioId && c.grado && c.turno);
+
+    const hijos = await Promise.all(
+      candidatos.map(async (c) => {
+        const codigoSeccion = await obtenerOCrearCodigoSeccion(supabase, c.colegioId, c.grado, c.turno, c.division || '');
+        return {
+          id: c.id,
+          nombreCompleto: c.nombreCompleto,
+          colegioNombre: c.colegioNombre,
+          grado: c.grado,
+          turno: c.turno,
+          division: c.division,
+          codigoSeccion,
+        };
+      })
+    );
+
+    return res.json({ success: true, hijos });
+  } catch (err: any) {
+    console.error('Error al resolver los hijos del código familiar:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al resolver los hijos de esta familia' });
+  }
+});
+
 // --- Rutas de administración de inscripciones y padrón (protegidas con requireAdminAuth) ---
 
 app.get('/api/admin/inscripciones', requireAdminAuth, async (req: Request, res: Response) => {
