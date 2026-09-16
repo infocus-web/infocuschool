@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { ViewfinderFocusIcon } from './RetratoEscolarLogo';
 import {
   X,
@@ -40,13 +40,21 @@ import {
   RefreshCw,
   Send,
   Images,
+  ShoppingCart,
 } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
-import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto, buscarPedidoPorSeguimiento } from '../services/pedidosLabService';
-import { crearPreferenciaMercadoPago } from '../services/mercadoPagoService';
-import { crearIntencionPagoNave } from '../services/naveService';
+import {
+  registrarPedidoDesdePortal,
+  registrarCarritoMultipleDesdePortal,
+  obtenerPedidosGuardados,
+  PedidoEscolarCompleto,
+  buscarPedidoPorSeguimiento,
+  ItemCarritoHijo,
+} from '../services/pedidosLabService';
+import { crearPreferenciaMercadoPago, crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
+import { crearIntencionPagoNave, crearIntencionPagoNaveMultiple } from '../services/naveService';
 import {
   obtenerFamiliaActiva,
   cerrarSesionFamilia,
@@ -68,6 +76,43 @@ interface PortalFamiliasModalProps {
   preselectedKitId?: string;
   preselectedCodigo?: string;
   onOpenInscripcion?: () => void;
+}
+
+/**
+ * Carrito multi-hijo ("un solo pedido, un solo pago" — pedido de Pablo 2026-09-16): cada vez que
+ * la familia cambia de hijo con el selector del Paso 2, la selección de fotos/kit del hijo que
+ * deja de estar activo se guarda con esta forma — antes se perdía por completo (ver el useEffect
+ * de "Al cambiar de galería", que limpiaba fotoSeleccionadaIndividual/Grupal/Docente cada vez que
+ * cambiaba `fotosDisponibles`, sin distinguir "cambié de hijo" de "esta foto ya no existe"). Al
+ * llegar al pago (Paso 4), se arman todos los pedidos guardados acá más el del hijo actualmente
+ * activo, y si hay más de uno se cobran juntos en un solo checkout combinado.
+ */
+interface SeleccionCarritoHijo {
+  hijoId: string;
+  nombreCompleto: string;
+  colegioNombre?: string;
+  grado?: string;
+  division?: string;
+  turno?: string;
+  codigoSeccion: string;
+  kitId: string;
+  kitNombre: string;
+  extraCarpetas: number;
+  fotoSeleccionadaIndividual: string;
+  fotoSeleccionadaGrupal: string;
+  fotoSeleccionadaDocente: string;
+  fotosSueltasSeleccionadas: string[];
+  total: number;
+  completo: boolean;
+}
+
+// Auditoría 2026-09-16: useState(...) en este archivo no está devolviendo un tipo genérico
+// verificado por TypeScript (a diferencia de lo esperado, el estado sale tipado como `any` acá
+// — algo preexistente en este proyecto, no algo que haya cambiado este carrito). Object.values()
+// sobre un valor `any` infiere `unknown[]` en vez de `SeleccionCarritoHijo[]`, así que se pasa
+// siempre por este helper (con un parámetro anotado de forma concreta) para que el carrito se seleccione con el tipo correcto.
+function valoresDelCarrito(carrito: Record<string, SeleccionCarritoHijo>): SeleccionCarritoHijo[] {
+  return Object.values(carrito);
 }
 
 export default function PortalFamiliasModal({
@@ -445,8 +490,72 @@ export default function PortalFamiliasModal({
     };
   }, [familiaActiva?.codigoAsignado, familiaActiva?.codigoFamiliar]);
 
+  // Carrito multi-hijo (ver interfaz SeleccionCarritoHijo más arriba, fuera del componente).
+  const [carritoHijos, setCarritoHijos] = useState<Record<string, SeleccionCarritoHijo>>({});
+  // Espejo en un ref para poder leer el carrito más reciente dentro de efectos/callbacks sin
+  // tener que agregar `carritoHijos` a sus dependencias (evita relanzar esos efectos de más).
+  const carritoHijosRef = useRef(carritoHijos);
+  useEffect(() => {
+    carritoHijosRef.current = carritoHijos;
+  }, [carritoHijos]);
+
+  // Restaura, si existe, la selección de fotos guardada en el carrito para el hijo que acaba de
+  // quedar activo. Se ejecuta DESPUÉS del efecto de arriba ("Al cambiar de galería..."), que
+  // limpia fotoSeleccionadaIndividual/Grupal/Docente cada vez que cambia `fotosDisponibles` — así
+  // esta restauración no queda pisada por esa limpieza. Sin esto, volver a elegir un hermano ya
+  // configurado obligaba a re-elegir sus 3 fotos de nuevo.
+  useEffect(() => {
+    const guardado = carritoHijosRef.current[hijoSeleccionadoId];
+    if (!guardado) return;
+    const inds = fotosDisponibles.filter((f) => f.categoria === 'individual');
+    const grups = fotosDisponibles.filter((f) => f.categoria === 'grupal');
+    const docs = fotosDisponibles.filter((f) => f.categoria === 'docente');
+    const patio = fotosDisponibles.filter((f) => f.categoria === 'patio');
+    if (guardado.fotoSeleccionadaIndividual && inds.some((f) => f.id === guardado.fotoSeleccionadaIndividual)) {
+      setFotoSeleccionadaIndividual(guardado.fotoSeleccionadaIndividual);
+    }
+    if (guardado.fotoSeleccionadaGrupal && grups.some((f) => f.id === guardado.fotoSeleccionadaGrupal)) {
+      setFotoSeleccionadaGrupal(guardado.fotoSeleccionadaGrupal);
+    }
+    if (guardado.fotoSeleccionadaDocente && docs.some((f) => f.id === guardado.fotoSeleccionadaDocente)) {
+      setFotoSeleccionadaDocente(guardado.fotoSeleccionadaDocente);
+    }
+    if (guardado.fotosSueltasSeleccionadas?.length) {
+      setFotosSueltasSeleccionadas(guardado.fotosSueltasSeleccionadas.filter((fid) => patio.some((f) => f.id === fid)));
+    }
+  }, [fotosDisponibles, hijoSeleccionadoId]);
+
   const seleccionarHijo = (id: string) => {
+    if (id === hijoSeleccionadoId) return;
+
+    setCarritoHijos((prev) => ({
+      ...prev,
+      [hijoSeleccionadoId]: {
+        hijoId: hijoSeleccionadoId,
+        nombreCompleto: nombreAlumno,
+        colegioNombre: selectedColegio?.nombre,
+        grado,
+        division,
+        turno,
+        codigoSeccion: codigoSeccionValidado || '',
+        kitId: selectedKit.id,
+        kitNombre: selectedKit.nombre,
+        extraCarpetas,
+        fotoSeleccionadaIndividual,
+        fotoSeleccionadaGrupal,
+        fotoSeleccionadaDocente,
+        fotosSueltasSeleccionadas,
+        total,
+        completo: Boolean(fotoSeleccionadaIndividual && fotoSeleccionadaGrupal && fotoSeleccionadaDocente),
+      },
+    }));
+
     setHijoSeleccionadoId(id);
+    const guardadoDestino = carritoHijosRef.current[id];
+    const kitGuardado = guardadoDestino ? KITS_DISPONIBLES.find((k) => k.id === guardadoDestino.kitId) : null;
+    setSelectedKit(kitGuardado || KITS_DISPONIBLES.find((k) => k.id === 'kit-clasico') || KITS_DISPONIBLES[0]);
+    setExtraCarpetas(guardadoDestino?.extraCarpetas || 0);
+
     const hijoConCodigo = hijosFamilia.find((h) => h.id === id);
     if (hijoConCodigo) {
       // Esta es la parte que antes faltaba: sin esto, la galería mostrada nunca cambiaba de
@@ -507,6 +616,7 @@ export default function PortalFamiliasModal({
         // eliminar todo dato sensible retenido por la instancia anterior antes de mostrarlo.
         setFamiliaActiva(null);
         setHijoSeleccionadoId('principal');
+        setCarritoHijos({});
         setCodigoAcceso('');
         setCodigoValidadoMsg(null);
         setCodigoErrorMsg(null);
@@ -677,6 +787,14 @@ export default function PortalFamiliasModal({
   const precioCopiasExtras = extraCarpetas * PRECIO_CARPETA_EXTRA;
   const total = precioBase + precioCopiasExtras + (fotosSueltasSeleccionadas.length * PRECIO_FOTO_EVENTO);
 
+  // Carrito multi-hijo: hermanos que ya quedaron con su selección completa guardada (ver
+  // seleccionarHijo) además del hijo activo ahora mismo — es lo que decide si el Paso 4 muestra
+  // un resumen de un solo pedido (de siempre) o de varios pedidos con un pago combinado.
+  const otrosHijosEnCarrito = valoresDelCarrito(carritoHijos).filter(
+    (c) => c.hijoId !== hijoSeleccionadoId && c.completo
+  );
+  const totalCombinadoCarrito = total + otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0);
+
   // Cuántas de las 3 fotos del pack están realmente elegidas (es decir, la selección apunta a una
   // foto que existe de verdad en esta galería, no sólo un ID que quedó de otra galería/curso). El
   // badge de "X de 3 fotos seleccionadas" mostraba siempre "3 de 3" fijo, sin importar si el curso
@@ -781,6 +899,20 @@ export default function PortalFamiliasModal({
     const codCurso =
       codigoAcceso.trim() ||
       determinarCodigoParaInscripcion({ grado, turno, division });
+
+    // Carrito multi-hijo ("el cliente debe poder hacer multiple pedido en una sola sesion, un
+    // solo pago" — pedido de Pablo 2026-09-16): además del hijo activo ahora mismo, puede haber
+    // hermanos con su selección ya guardada (ver seleccionarHijo, más arriba). Si hay más de uno
+    // en total se registran todos juntos y se cobran en un solo checkout combinado; si hay uno
+    // solo, sigue exactamente el camino de siempre (una fila, un pago) sin ningún cambio.
+    const otrosHijosCarrito = valoresDelCarrito(carritoHijos).filter(
+      (c) => c.hijoId !== hijoSeleccionadoId && c.completo
+    );
+
+    if (otrosHijosCarrito.length > 0) {
+      await handleCompletarPagoMultiple(otrosHijosCarrito, numLista, codCurso);
+      return;
+    }
 
     const { pedido: nuevoPedido, sincronizado, errorSincronizacion } = await registrarPedidoDesdePortal({
       colegioId: selectedColegio?.id || 'col-general',
@@ -897,6 +1029,194 @@ export default function PortalFamiliasModal({
       }
     } else {
       // Transferencia bancaria o efectivo: queda en estado 'pendiente' y pasa a la pantalla de confirmación
+      setIsProcessingPayment(false);
+      setStep(5);
+    }
+  };
+
+  /**
+   * Auditoría 2026-09-16 (pedido de Pablo: "el cliente debe poder hacer multiple pedido en una
+   * sola sesion, un solo pago"): arma UN pedido por cada hijo del carrito (el/la que está
+   * activo/a ahora + los que ya quedaron guardados al cambiar de hermano) y los registra todos
+   * juntos con registrarCarritoMultipleDesdePortal — todos comparten un mismo "grupoPagoId" que
+   * después se usa para generar un único checkout de Mercado Pago o Nave por el total combinado.
+   * Sólo la llama handleCompletarPago, y sólo cuando hay más de un hijo en el carrito — con un
+   * solo hijo se sigue usando el camino de siempre (arriba), sin ningún cambio.
+   */
+  const handleCompletarPagoMultiple = async (
+    otrosHijosCarrito: SeleccionCarritoHijo[],
+    numListaActivo: number,
+    codCursoActivo: string
+  ) => {
+    try {
+      const itemActivo: ItemCarritoHijo = {
+        colegioId: selectedColegio?.id || 'col-general',
+        colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
+        cursoCodigo: codCursoActivo,
+        grado: grado || 'Sala 3',
+        division: division || 'Única',
+        turno: turno || 'Mañana',
+        alumnoNombre: nombreAlumno || 'Alumno Escolar',
+        alumnoNumeroLista: numListaActivo,
+        kitId: selectedKit.id,
+        kitNombre: selectedKit.nombre,
+        metodoPago,
+        fotosSeleccionadas: {
+          individualId: fotoSeleccionadaIndividual,
+          grupalId: fotoSeleccionadaGrupal,
+          docenteId: fotoSeleccionadaDocente,
+          otrasIds: fotosSueltasSeleccionadas,
+        },
+        copiasExtras: {
+          carpetasExtras: extraCarpetas,
+          individual15x21: extraCarpetas,
+          grupal20x30: extraCarpetas,
+          docente15x21: extraCarpetas,
+          otras15x21: fotosSueltasSeleccionadas.length,
+        },
+      };
+
+      const itemsOtros: ItemCarritoHijo[] = otrosHijosCarrito.map((c) => ({
+        // Hoy el Código Familiar sólo agrupa hermanos del mismo colegio — se usa el colegio
+        // activo como respaldo si por algún motivo el hermano no trajo el suyo propio.
+        colegioId: selectedColegio?.id || 'col-general',
+        colegioNombre: c.colegioNombre || selectedColegio?.nombre || 'Colegio Escolar',
+        cursoCodigo: determinarCodigoParaInscripcion({
+          grado: c.grado || '',
+          turno: c.turno || '',
+          division: c.division || '',
+        }),
+        grado: c.grado || 'Sala 3',
+        division: c.division || 'Única',
+        turno: c.turno || 'Mañana',
+        alumnoNombre: c.nombreCompleto || 'Alumno Escolar',
+        alumnoNumeroLista: Math.floor(1 + Math.random() * 25),
+        kitId: c.kitId,
+        kitNombre: c.kitNombre,
+        metodoPago,
+        fotosSeleccionadas: {
+          individualId: c.fotoSeleccionadaIndividual,
+          grupalId: c.fotoSeleccionadaGrupal,
+          docenteId: c.fotoSeleccionadaDocente,
+          otrasIds: c.fotosSueltasSeleccionadas,
+        },
+        copiasExtras: {
+          carpetasExtras: c.extraCarpetas,
+          individual15x21: c.extraCarpetas,
+          grupal20x30: c.extraCarpetas,
+          docente15x21: c.extraCarpetas,
+          otras15x21: c.fotosSueltasSeleccionadas.length,
+        },
+      }));
+
+      const todosLosItems = [...itemsOtros, itemActivo];
+
+      const resultadoCarrito = await registrarCarritoMultipleDesdePortal({
+        tutorNombre: tutorNombre.trim(),
+        tutorTelefono: tutorWhatsapp.trim(),
+        tutorEmail: tutorEmail.trim(),
+        items: todosLosItems,
+      });
+
+      // Un pedido "de mentira" (nunca se manda a Supabase) sólo para que la pantalla de
+      // confirmación (Paso 5) tenga algo coherente que mostrar — nombre de todos los hijos,
+      // total combinado — aunque en la base real sean N filas separadas en "pedidos", no una.
+      const pedidoSintetico: PedidoEscolarCompleto = {
+        id: resultadoCarrito.pedidoIds[0] || `GRUPO-${Date.now()}`,
+        supabaseId: resultadoCarrito.pedidoIds[0],
+        fecha: new Date().toLocaleString('es-AR'),
+        colegioId: selectedColegio?.id || 'col-general',
+        colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
+        cursoCodigo: codCursoActivo,
+        grado,
+        division,
+        turno,
+        alumnoNumeroLista: numListaActivo,
+        alumnoNombre: todosLosItems.map((it) => it.alumnoNombre).join(', '),
+        codigoAlumno: '',
+        tutorNombre: tutorNombre.trim(),
+        tutorTelefono: tutorWhatsapp.trim(),
+        tutorEmail: tutorEmail.trim(),
+        kitId: selectedKit.id,
+        kitNombre: `${todosLosItems.length} hijos/as`,
+        total: resultadoCarrito.total || total,
+        metodoPago,
+        estadoPago: 'pendiente',
+        estadoEntrega: 'en_espera',
+        fotosSeleccionadas: { individualId: '', grupalId: '' },
+        archivosParaLaboratorio: [],
+        linkDescargaHD: '',
+        emailEnviado: false,
+      };
+      setPedidoGenerado(pedidoSintetico);
+      setNumeroPedido(resultadoCarrito.pedidoIds.join(', ') || pedidoSintetico.id);
+
+      // Auditoría 2026-09-09 (mismo criterio que el camino de un solo hijo): si el carrito no se
+      // pudo confirmar en el servidor, se corta acá y nunca se avanza al pago combinado.
+      if (!resultadoCarrito.sincronizado) {
+        setPagoError(
+          resultadoCarrito.errorSincronizacion
+            ? `No pudimos registrar tus pedidos antes de continuar con el pago (${resultadoCarrito.errorSincronizacion}). Por favor, intentá nuevamente en unos segundos. Si el problema persiste, contactanos antes de pagar.`
+            : 'No pudimos registrar tus pedidos antes de continuar con el pago. Por favor, intentá nuevamente en unos segundos. Si el problema persiste, contactanos antes de pagar.'
+        );
+        setIsProcessingPayment(false);
+        setStep(5);
+        return;
+      }
+
+      const itemsParaPreferencia = todosLosItems.map((item, idx) => ({
+        pedidoId: resultadoCarrito.pedidoIds[idx] || '',
+        kitId: item.kitId,
+        kitNombre: item.kitNombre,
+        alumnoNombre: item.alumnoNombre,
+        colegioNombre: item.colegioNombre,
+        carpetasExtras: item.copiasExtras?.carpetasExtras || 0,
+      }));
+
+      if (metodoPago === 'mercadopago') {
+        const res = await crearPreferenciaMercadoPagoMultiple({
+          grupoPagoId: resultadoCarrito.grupoPagoId,
+          items: itemsParaPreferencia,
+          tutorNombre: tutorNombre.trim() || 'Tutor',
+          tutorEmail: tutorEmail.trim(),
+          tutorTelefono: tutorWhatsapp.trim() || undefined,
+        });
+        if (res.initPoint) {
+          setMpRedirectUrl(res.initPoint);
+          setIsProcessingPayment(false);
+          setStep(5);
+          window.location.href = res.initPoint;
+          return;
+        }
+        setPagoError(res.error || 'No se pudo generar la preferencia combinada de Mercado Pago.');
+        setIsProcessingPayment(false);
+        setStep(5);
+      } else if (metodoPago === 'nave') {
+        const res = await crearIntencionPagoNaveMultiple({
+          grupoPagoId: resultadoCarrito.grupoPagoId,
+          items: itemsParaPreferencia,
+          tutorNombre: tutorNombre.trim() || 'Tutor',
+          tutorEmail: tutorEmail.trim(),
+          tutorTelefono: tutorWhatsapp.trim() || undefined,
+        });
+        if (res.checkoutUrl) {
+          setNaveRedirectUrl(res.checkoutUrl);
+          setIsProcessingPayment(false);
+          setStep(5);
+          window.location.href = res.checkoutUrl;
+          return;
+        }
+        setPagoError(res.error || 'No se pudo generar la intención de pago combinada de Nave.');
+        setIsProcessingPayment(false);
+        setStep(5);
+      } else {
+        // Transferencia bancaria o efectivo: todos los pedidos del carrito quedan en
+        // 'pendiente_pago' y se pasa a la pantalla de confirmación.
+        setIsProcessingPayment(false);
+        setStep(5);
+      }
+    } catch (err: any) {
+      setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
       setIsProcessingPayment(false);
       setStep(5);
     }
@@ -1489,6 +1809,7 @@ export default function PortalFamiliasModal({
                             cerrarSesionFamilia();
                             setFamiliaActiva(null);
                             setHijoSeleccionadoId('principal');
+                            setCarritoHijos({});
                             setCodigoAcceso('');
                             setCodigoValidadoMsg(null);
                             setCodigoErrorMsg(null);
@@ -1634,25 +1955,46 @@ export default function PortalFamiliasModal({
                   esto es lo que hace real la promesa de "1 solo Código Familiar... alterná entre
                   tus hijos con un solo toque" que ya está en la web (Hero, /proceso, FAQ). */}
               {hijosFamilia.length > 1 && (
-                <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide shrink-0">
-                    Tus hijos/as:
-                  </span>
-                  {hijosFamilia.map((h) => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      onClick={() => seleccionarHijo(h.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
-                        hijoSeleccionadoId === h.id
-                          ? 'bg-amber-500 text-slate-950'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {h.nombreCompleto}
-                      <span className="font-normal opacity-80"> · {h.grado} "{h.division}"</span>
-                    </button>
-                  ))}
+                <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs flex flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide shrink-0">
+                      Tus hijos/as:
+                    </span>
+                    {hijosFamilia.map((h) => {
+                      // Auditoría 2026-09-16 (pedido de Pablo: "un solo pedido, un solo pago"):
+                      // un hijo cuenta como "listo" si ya eligió sus 3 fotos del pack, sea porque
+                      // está siendo el activo ahora mismo o porque ya lo armó antes y quedó
+                      // guardado en el carrito al cambiar de hermano.
+                      const esActivo = hijoSeleccionadoId === h.id;
+                      const listoActivo = esActivo && cantidadFotosPackSeleccionadas === 3;
+                      const listoGuardado = !esActivo && Boolean(carritoHijos[h.id]?.completo);
+                      const listo = listoActivo || listoGuardado;
+                      return (
+                        <button
+                          key={h.id}
+                          type="button"
+                          onClick={() => seleccionarHijo(h.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                            esActivo
+                              ? 'bg-amber-500 text-slate-950'
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {listo && <CheckCircle2 className={`w-3.5 h-3.5 ${esActivo ? 'text-slate-900' : 'text-emerald-600'}`} />}
+                          {h.nombreCompleto}
+                          <span className="font-normal opacity-80"> · {h.grado} "{h.division}"</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {valoresDelCarrito(carritoHijos).some((c) => c.completo) && (
+                    <p className="text-[11px] text-emerald-700 flex items-center gap-1.5">
+                      <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        Ya tenés fotos elegidas para {valoresDelCarrito(carritoHijos).filter((c) => c.completo).length === 1 ? '1 hijo/a' : `${valoresDelCarrito(carritoHijos).filter((c) => c.completo).length} hijos/as`}. Al pagar, vas a poder confirmar todos los pedidos juntos en un solo pago.
+                      </span>
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -2268,11 +2610,18 @@ export default function PortalFamiliasModal({
               {/* Subtotal & Navigation */}
               <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-left">
-                  <span className="text-xs text-slate-500">Total a pagar:</span>
+                  <span className="text-xs text-slate-500">
+                    {otrosHijosEnCarrito.length > 0 ? `Subtotal de ${nombreAlumno}:` : 'Total a pagar:'}
+                  </span>
                   <div className="text-2xl font-black text-slate-900 font-['Outfit']">
                     ${total.toLocaleString('es-AR')}{' '}
                     <span className="text-xs font-normal text-slate-500">ARS</span>
                   </div>
+                  {otrosHijosEnCarrito.length > 0 && (
+                    <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                      + ${otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0).toLocaleString('es-AR')} de {otrosHijosEnCarrito.length === 1 ? 'tu otro hijo/a' : 'tus otros hijos/as'} — se paga todo junto en el próximo paso.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-3">
@@ -2428,13 +2777,34 @@ export default function PortalFamiliasModal({
                   <div className="space-y-4">
                     <div className="border-b border-slate-800 pb-3">
                       <p className="text-[11px] uppercase tracking-wider text-amber-400 font-bold">
-                        Resumen del Pedido
+                        {otrosHijosEnCarrito.length > 0 ? `Resumen del Pedido (${otrosHijosEnCarrito.length + 1} hijos/as)` : 'Resumen del Pedido'}
                       </p>
                       <p className="text-sm font-bold text-white mt-1">{selectedKit.nombre}</p>
                       <p className="text-xs text-slate-400">
                         {nombreAlumno} · {grado} "{division}"
                       </p>
                     </div>
+
+                    {otrosHijosEnCarrito.length > 0 && (
+                      <div className="space-y-2 -mt-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                          <ShoppingCart className="w-3.5 h-3.5" />
+                          <span>También en este pago</span>
+                        </p>
+                        {otrosHijosEnCarrito.map((c) => (
+                          <div key={c.hijoId} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800/70 p-2.5 text-xs">
+                            <div className="min-w-0">
+                              <p className="truncate font-bold text-white">{c.nombreCompleto}</p>
+                              <p className="text-[10px] text-slate-400">{c.kitNombre} · {c.grado} "{c.division}"</p>
+                            </div>
+                            <span className="shrink-0 font-bold text-slate-200">${c.total.toLocaleString('es-AR')}</span>
+                          </div>
+                        ))}
+                        <p className="text-[10px] text-emerald-300/90">
+                          Un solo pago cubre {nombreAlumno} y {otrosHijosEnCarrito.map((c) => c.nombreCompleto).join(', ')}.
+                        </p>
+                      </div>
+                    )}
 
                     <div className="space-y-2">
                       <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Fotos elegidas</p>
@@ -2509,7 +2879,7 @@ export default function PortalFamiliasModal({
                     <div className="pt-3 border-t border-slate-800 flex justify-between items-baseline">
                       <span className="text-xs font-bold text-slate-300">Total a Pagar:</span>
                       <span className="text-2xl font-black text-amber-400 font-['Outfit']">
-                        ${total.toLocaleString('es-AR')}{' '}
+                        ${totalCombinadoCarrito.toLocaleString('es-AR')}{' '}
                         <span className="text-xs text-slate-400 font-normal">ARS</span>
                       </span>
                     </div>
@@ -2535,7 +2905,7 @@ export default function PortalFamiliasModal({
                       ) : (
                         <>
                           <CheckCircle2 className="w-4 h-4 text-slate-950" />
-                          <span>Pagar ${total.toLocaleString('es-AR')} ARS</span>
+                          <span>Pagar ${totalCombinadoCarrito.toLocaleString('es-AR')} ARS</span>
                         </>
                       )}
                     </button>
