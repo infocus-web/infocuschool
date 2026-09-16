@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { MessageCircle, Loader2, Trash2, CheckCircle2, Phone, School, RefreshCw, Filter } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { MessageCircle, Loader2, Trash2, CheckCircle2, Mail, School, RefreshCw, Filter, X, Send } from 'lucide-react';
 import {
   SolicitudCodigo,
   obtenerSolicitudesCodigoAdmin,
   marcarSolicitudCodigoAtendidaAdmin,
   eliminarSolicitudCodigoAdmin,
+  responderSolicitudCodigoAdmin,
 } from '../services/solicitudesCodigoService';
 
 export default function AdminSolicitudesCodigoTab() {
@@ -12,6 +13,14 @@ export default function AdminSolicitudesCodigoTab() {
   const [solicitudes, setSolicitudes] = useState<SolicitudCodigo[]>([]);
   const [cargando, setCargando] = useState(true);
   const [procesandoId, setProcesandoId] = useState<string | null>(null);
+  // Auditoría 2026-09-16 (pedido de Pablo: "quiero que haya un botón para responder por email
+  // del sistema" — el cartel de arriba ya sugería "por WhatsApp o email" pero el email había que
+  // mandarlo a mano desde afuera): mismo patrón inline que ya usa AdminConsultasFamiliasTab.tsx,
+  // adaptado a una fila de tabla en vez de una tarjeta.
+  const [respondiendoId, setRespondiendoId] = useState<string | null>(null);
+  const [respuesta, setRespuesta] = useState('');
+  const [respuestaEnviadaId, setRespuestaEnviadaId] = useState<string | null>(null);
+  const [errorRespuesta, setErrorRespuesta] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -58,14 +67,47 @@ export default function AdminSolicitudesCodigoTab() {
     }
   };
 
+  const handleAbrirRespuesta = (id: string) => {
+    setRespondiendoId(id);
+    setRespuesta('');
+    setErrorRespuesta(null);
+    setRespuestaEnviadaId(null);
+  };
+
+  const handleEnviarRespuesta = async (s: SolicitudCodigo) => {
+    if (respuesta.trim().length < 2) return;
+    setProcesandoId(s.id);
+    setErrorRespuesta(null);
+    try {
+      const resultado = await responderSolicitudCodigoAdmin(s.id, respuesta.trim());
+      if (resultado.success) {
+        setRespondiendoId(null);
+        setRespuesta('');
+        setRespuestaEnviadaId(s.id);
+        // El servidor ya marcó la solicitud como atendida al enviar el email — se refleja acá
+        // sin esperar un refresco manual, igual que hace handleAtender.
+        if (filtro === 'pendiente') {
+          setSolicitudes((prev) => prev.filter((item) => item.id !== s.id));
+        } else {
+          setSolicitudes((prev) => prev.map((item) => (item.id === s.id ? { ...item, estado: 'atendido' } : item)));
+        }
+      } else {
+        setErrorRespuesta(resultado.error || 'No se pudo enviar la respuesta.');
+      }
+    } finally {
+      setProcesandoId(null);
+    }
+  };
+
   return (
     <div className="space-y-4 animate-in fade-in duration-200">
       <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 flex items-start gap-2.5">
         <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
         <p>
           Acá caen las familias que tocaron <strong>"Solicitar mi Código"</strong> en el portal porque no encontraron
-          su código de curso. Respondeles por WhatsApp o email con el dato de contacto que dejaron, y marcá la
-          consulta como atendida para sacarla de la lista.
+          su código de curso. Tocá <strong>"Responder"</strong> para mandarles el código por email directo desde el
+          sistema (queda registrada como atendida automáticamente), o marcala como atendida a mano si preferís
+          resolverlo por WhatsApp.
         </p>
       </div>
 
@@ -128,11 +170,12 @@ export default function AdminSolicitudesCodigoTab() {
               </tr>
             ) : (
               solicitudes.map((s) => (
-                <tr key={s.id} className="hover:bg-slate-50/70">
+                <Fragment key={s.id}>
+                <tr className="hover:bg-slate-50/70">
                   <td className="py-2.5 px-3 font-semibold text-slate-800">{s.nombreSolicitante}</td>
                   <td className="py-2.5 px-3">
                     <span className="flex items-center gap-1 text-slate-600 font-mono">
-                      <Phone className="w-3 h-3 text-emerald-500 shrink-0" /> {s.contacto}
+                      <Mail className="w-3 h-3 text-emerald-500 shrink-0" /> {s.contacto}
                     </span>
                   </td>
                   <td className="py-2.5 px-3 text-slate-600">
@@ -165,6 +208,15 @@ export default function AdminSolicitudesCodigoTab() {
                   </td>
                   <td className="py-2.5 px-3 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => (respondiendoId === s.id ? setRespondiendoId(null) : handleAbrirRespuesta(s.id))}
+                        disabled={procesandoId === s.id}
+                        className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-[10px] font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        Responder
+                      </button>
                       {s.estado !== 'atendido' && (
                         <button
                           type="button"
@@ -192,6 +244,61 @@ export default function AdminSolicitudesCodigoTab() {
                     </div>
                   </td>
                 </tr>
+                {respondiendoId === s.id && (
+                  <tr>
+                    <td colSpan={6} className="py-3 px-3 bg-sky-50/60 border-t border-sky-100">
+                      <div className="flex flex-col gap-2">
+                        <textarea
+                          value={respuesta}
+                          onChange={(e) => setRespuesta(e.target.value)}
+                          minLength={2}
+                          maxLength={5000}
+                          rows={3}
+                          autoFocus
+                          placeholder={`Escribí la respuesta que le va a llegar por email a ${s.contacto}...`}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                        />
+                        {errorRespuesta && (
+                          <p className="text-[11px] font-semibold text-red-600">{errorRespuesta}</p>
+                        )}
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setRespondiendoId(null)}
+                            className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-500 border border-slate-200 rounded-xl text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEnviarRespuesta(s)}
+                            disabled={procesandoId === s.id || respuesta.trim().length < 2}
+                            className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-[10px] font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            {procesandoId === s.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Send className="w-3.5 h-3.5" />
+                            )}
+                            Enviar respuesta
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {respuestaEnviadaId === s.id && respondiendoId !== s.id && (
+                  <tr>
+                    <td colSpan={6} className="py-2 px-3 bg-emerald-50/60 border-t border-emerald-100">
+                      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Respuesta enviada correctamente.
+                      </p>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))
             )}
           </tbody>

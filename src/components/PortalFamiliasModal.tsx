@@ -683,6 +683,23 @@ export default function PortalFamiliasModal({
       setSolicitudCodigoError('Ingresá un email válido.');
       return;
     }
+    // Auditoría 2026-09-16 (pedido de Pablo: vio en el panel una solicitud de Valeria Soledad
+    // Tolosa sin colegio ni alumno cargados, imposible de ubicar): antes colegio y alumno salían
+    // de lo que ya hubiera completado en pantallas anteriores del portal, así que si la familia
+    // tocaba "Solicitar mi Código" directo desde el Paso 1 (que es, de hecho, el motivo más común
+    // para pedirlo — todavía no llegó a esas pantallas) esos dos datos quedaban vacíos y sin ellos
+    // el fotógrafo no tiene forma de saber a qué familia corresponde el pedido. Ahora son
+    // obligatorios acá mismo, en el propio formulario de solicitud (ver los dos campos nuevos más
+    // abajo). Grado/división/turno siguen sin ser obligatorios: son justamente el dato que la
+    // familia no tiene, por eso está pidiendo el código.
+    if (!selectedColegio) {
+      setSolicitudCodigoError('Seleccioná el colegio de tu hijo/a.');
+      return;
+    }
+    if (!nombreAlumno.trim()) {
+      setSolicitudCodigoError('Ingresá el nombre y apellido de tu hijo/a.');
+      return;
+    }
     setEnviandoSolicitudCodigo(true);
     setSolicitudCodigoError(null);
     try {
@@ -1328,6 +1345,32 @@ export default function PortalFamiliasModal({
                           onChange={(e) => setSolicitudContacto(e.target.value)}
                           placeholder="Email usado al registrarte"
                           autoComplete="email"
+                          className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
+                        />
+                      </div>
+                      {/* Auditoría 2026-09-16 (pedido de Pablo): colegio y alumno ahora se piden
+                          acá mismo (y son obligatorios, ver handleEnviarSolicitudCodigo) — antes
+                          dependían de pantallas anteriores que esta familia podía no haber
+                          completado todavía. */}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <select
+                          value={selectedColegio?.id || ''}
+                          onChange={(e) => {
+                            const colegioElegido = colegios.find((c) => c.id === e.target.value) || null;
+                            setSelectedColegio(colegioElegido);
+                          }}
+                          className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
+                        >
+                          <option value="">Colegio de tu hijo/a</option>
+                          {colegios.map((c) => (
+                            <option key={c.id} value={c.id}>{c.nombre}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={nombreAlumno}
+                          onChange={(e) => setNombreAlumno(e.target.value)}
+                          placeholder="Nombre y apellido de tu hijo/a"
                           className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
                         />
                       </div>
