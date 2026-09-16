@@ -46,6 +46,7 @@ import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { registrarPedidoDesdePortal, obtenerPedidosGuardados, PedidoEscolarCompleto, buscarPedidoPorSeguimiento } from '../services/pedidosLabService';
 import { crearPreferenciaMercadoPago } from '../services/mercadoPagoService';
+import { crearIntencionPagoNave } from '../services/naveService';
 import {
   obtenerFamiliaActiva,
   cerrarSesionFamilia,
@@ -101,7 +102,7 @@ export default function PortalFamiliasModal({
   const [nombreAlumno, setNombreAlumno] = useState('');
 
   // Dynamic WhatsApp number: prioritized by selected school, or global configuration
-    const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '';
+  const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
   const [codigoAcceso, setCodigoAcceso] = useState('');
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
   const [codigoErrorMsg, setCodigoErrorMsg] = useState<string | null>(null);
@@ -169,15 +170,17 @@ export default function PortalFamiliasModal({
   const [tutorNombre, setTutorNombre] = useState('');
   const [tutorWhatsapp, setTutorWhatsapp] = useState('');
   const [tutorEmail, setTutorEmail] = useState('');
-  const [metodoPago, setMetodoPago] = useState<'mercadopago' | 'transferencia'>('mercadopago');
+  const [metodoPago, setMetodoPago] = useState<'mercadopago' | 'transferencia' | 'nave'>('mercadopago');
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [numeroPedido, setNumeroPedido] = useState('');
   const [pedidoGenerado, setPedidoGenerado] = useState<PedidoEscolarCompleto | null>(null);
   const [mpRedirectUrl, setMpRedirectUrl] = useState<string | null>(null);
+  const [naveRedirectUrl, setNaveRedirectUrl] = useState<string | null>(null);
   const [pagoError, setPagoError] = useState<string | null>(null);
   const [verificandoPago, setVerificandoPago] = useState(false);
   const [mensajeEstadoPago, setMensajeEstadoPago] = useState<string | null>(null);
   const [generandoLinkPago, setGenerandoLinkPago] = useState(false);
+  const [generandoLinkNave, setGenerandoLinkNave] = useState(false);
 
   /**
    * Genera (o regenera) el link de Checkout Pro de Mercado Pago para un pedido ya registrado.
@@ -215,6 +218,41 @@ export default function PortalFamiliasModal({
       setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
     } finally {
       setGenerandoLinkPago(false);
+    }
+  };
+
+  /**
+   * Genera (o regenera) el link de Checkout de Nave para un pedido ya registrado.
+   * Mismo motivo que generarLinkDePago: el link vive solo en memoria del navegador.
+   */
+  const generarLinkDeNave = async (pedido: PedidoEscolarCompleto, autoRedirigir = false) => {
+    if (generandoLinkNave) return;
+    setGenerandoLinkNave(true);
+    setPagoError(null);
+    try {
+      const res = await crearIntencionPagoNave({
+        pedidoId: pedido.supabaseId || pedido.id,
+        kitId: pedido.kitId,
+        kitNombre: pedido.kitNombre,
+        alumnoNombre: pedido.alumnoNombre || 'Alumno',
+        colegioNombre: pedido.colegioNombre || 'Colegio',
+        carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
+        tutorNombre: pedido.tutorNombre || 'Tutor',
+        tutorEmail: pedido.tutorEmail,
+        tutorTelefono: pedido.tutorTelefono || undefined,
+      });
+      if (res.checkoutUrl) {
+        setNaveRedirectUrl(res.checkoutUrl);
+        if (autoRedirigir) {
+          window.location.href = res.checkoutUrl;
+        }
+      } else {
+        setPagoError(res.error || 'No se pudo generar el link de pago de Nave.');
+      }
+    } catch (err: any) {
+      setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
+    } finally {
+      setGenerandoLinkNave(false);
     }
   };
 
@@ -275,12 +313,68 @@ export default function PortalFamiliasModal({
     generarLinkDePago(pedidoGenerado, false);
   }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, mpRedirectUrl]);
 
+  // Mismo mecanismo que el de arriba, pero para pedidos pagados con Nave.
+  useEffect(() => {
+    if (
+      step !== 5 ||
+      !pedidoGenerado ||
+      pedidoGenerado.metodoPago !== 'nave' ||
+      pedidoGenerado.estadoPago === 'aprobado' ||
+      naveRedirectUrl ||
+      generandoLinkNave
+    ) {
+      return;
+    }
+    generarLinkDeNave(pedidoGenerado, false);
+  }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, naveRedirectUrl]);
+
   // Detección automática al retornar de Mercado Pago (?mp_status=approved&pedido_id=...)
+  // o de Nave (?nave_status=vuelta&pedido_id=...) — Nave no manda el resultado en la URL de
+  // vuelta (ver additional_info.callback_url en server.ts), así que acá sólo se usa para
+  // saber que hay que consultar el estado real contra el servidor.
   useEffect(() => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
       const mpStatus = searchParams.get('mp_status');
+      const naveStatus = searchParams.get('nave_status');
       const pedidoId = searchParams.get('pedido_id');
+
+      if (naveStatus && pedidoId && !mpStatus) {
+        const pedidosGuardados = obtenerPedidosGuardados();
+        const pEncontrado = pedidosGuardados.find(
+          (item) => item.supabaseId === pedidoId || item.id === pedidoId
+        );
+        if (pEncontrado) {
+          setPedidoGenerado(pEncontrado);
+          setNumeroPedido(pEncontrado.id);
+          setStep(5);
+        } else {
+          setNumeroPedido(pedidoId);
+          setPedidoGenerado({
+            id: pedidoId,
+            supabaseId: pedidoId,
+            fecha: new Date().toLocaleDateString(),
+            colegioId: '',
+            colegioNombre: 'Colegio',
+            cursoCodigo: '',
+            grado: '',
+            division: '',
+            alumnoNombre: 'Alumno',
+            tutorNombre: 'Familia',
+            kitId: 'kit-clasico',
+            kitNombre: 'Kit Retrato Escolar',
+            total: 0,
+            metodoPago: 'nave',
+            estadoPago: 'pendiente',
+            estadoEntrega: 'laboratorio_listo',
+            fotosSeleccionadas: {},
+            codigoSeguimiento: pedidoId,
+          });
+          setStep(5);
+        }
+        verificarEstadoRealPedido(pedidoId);
+        return;
+      }
 
       if (mpStatus && pedidoId) {
         const pedidosGuardados = obtenerPedidosGuardados();
@@ -625,6 +719,7 @@ export default function PortalFamiliasModal({
     setIsProcessingPayment(true);
     setPagoError(null);
     setMpRedirectUrl(null);
+    setNaveRedirectUrl(null);
 
     const numLista = Math.floor(1 + Math.random() * 25);
     const codCurso =
@@ -705,6 +800,37 @@ export default function PortalFamiliasModal({
           return;
         } else {
           setPagoError(res.error || 'No se pudo generar la preferencia de Mercado Pago.');
+          setIsProcessingPayment(false);
+          setStep(5);
+        }
+      } catch (err: any) {
+        setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
+        setIsProcessingPayment(false);
+        setStep(5);
+      }
+    } else if (metodoPago === 'nave') {
+      try {
+        const res = await crearIntencionPagoNave({
+          pedidoId: nuevoPedido.supabaseId || nuevoPedido.id,
+          kitId: selectedKit.id,
+          kitNombre: selectedKit.nombre,
+          alumnoNombre: nombreAlumno.trim() || 'Alumno',
+          colegioNombre: selectedColegio?.nombre || 'Colegio',
+          carpetasExtras: extraCarpetas,
+          tutorNombre: tutorNombre.trim() || 'Tutor',
+          tutorEmail: tutorEmail.trim(),
+          tutorTelefono: tutorWhatsapp.trim() || undefined,
+        });
+
+        if (res.checkoutUrl) {
+          setNaveRedirectUrl(res.checkoutUrl);
+          setIsProcessingPayment(false);
+          setStep(5);
+          // Redirección directa al checkout oficial de Nave
+          window.location.href = res.checkoutUrl;
+          return;
+        } else {
+          setPagoError(res.error || 'No se pudo generar la intención de pago de Nave.');
           setIsProcessingPayment(false);
           setStep(5);
         }
@@ -1039,29 +1165,15 @@ export default function PortalFamiliasModal({
                     )}
 
                     <div className="flex gap-2 w-full sm:w-auto">
-                                            {whatsappDestino ? (
-                        <a
-                          href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 sm:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
-                        >
-                          <PhoneCall className="w-3.5 h-3.5" />
-                          <span>Consultar por WhatsApp</span>
-                        </a>
-                      ) : (
-                        <a
-                          href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
-                            `Consulta por pedido ${searchedOrder.id}`
-                          )}&body=${encodeURIComponent(
-                            `Hola Retrato Escolar, consulto por mi pedido ${searchedOrder.id}.`
-                          )}`}
-                          className="flex-1 sm:flex-initial px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
-                        >
-                          <Mail className="w-3.5 h-3.5" />
-                          <span>Escribinos por mail</span>
-                        </a>
-                      )}
+                      <a
+                        href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 sm:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                      >
+                        <PhoneCall className="w-3.5 h-3.5" />
+                        <span>Consultar por WhatsApp</span>
+                      </a>
                       <button
                         type="button"
                         onClick={() => setModalMode('pedido')}
@@ -2121,7 +2233,7 @@ export default function PortalFamiliasModal({
                     2. Método de Pago Online
                   </h4>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => setMetodoPago('mercadopago')}
@@ -2139,6 +2251,25 @@ export default function PortalFamiliasModal({
                       </div>
                       <p className="text-xs font-bold text-slate-900">Mercado Pago</p>
                       <p className="text-[10px] text-slate-500">Débito, crédito o dinero en cuenta</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setMetodoPago('nave')}
+                      className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                        metodoPago === 'nave'
+                          ? 'bg-violet-50 border-violet-400 ring-1 ring-violet-400'
+                          : 'bg-slate-50 border-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <Smartphone className="w-4 h-4 text-violet-600" />
+                        <span className="text-[10px] font-bold bg-violet-100 text-violet-800 px-1.5 py-0.5 rounded">
+                          Inmediato
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-slate-900">Nave</p>
+                      <p className="text-[10px] text-slate-500">Tarjetas y QR (Banco Galicia)</p>
                     </button>
 
                     <button
@@ -2415,6 +2546,58 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
 
+                {/* Nave Redirection / Link */}
+                {metodoPago === 'nave' && naveRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-4 rounded-xl bg-violet-50 border border-violet-300 text-violet-950 space-y-2">
+                    <p className="font-bold text-xs flex items-center gap-1.5 text-violet-900">
+                      <Smartphone className="w-4 h-4 text-violet-600" />
+                      Checkout de Nave
+                    </p>
+                    <p className="text-xs text-violet-800">
+                      Si la ventana de pago no se abrió de forma automática, hacé clic en el botón para completar el pago de forma segura:
+                    </p>
+                    <a
+                      href={naveRedirectUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-500 hover:bg-violet-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>Ir a Pagar ${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} en Nave</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+
+                {/* Sin link de pago a mano (recién llegado, recargó la página, o Nave lo devolvió
+                    sin completar el pago): siempre hay forma de generar uno nuevo. */}
+                {pedidoGenerado?.metodoPago === 'nave' && !naveRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-4 rounded-xl bg-violet-50 border border-violet-300 text-violet-950 space-y-2">
+                    <p className="font-bold text-xs flex items-center gap-1.5 text-violet-900">
+                      <Smartphone className="w-4 h-4 text-violet-600" />
+                      Checkout de Nave
+                    </p>
+                    <p className="text-xs text-violet-800">
+                      {generandoLinkNave
+                        ? 'Generando un link de pago seguro con Nave...'
+                        : 'Todavía no completaste el pago de este pedido. Generá el link para pagarlo ahora:'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => pedidoGenerado && generarLinkDeNave(pedidoGenerado, false)}
+                      disabled={generandoLinkNave}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-500 hover:bg-violet-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-60"
+                    >
+                      {generandoLinkNave ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Smartphone className="w-3.5 h-3.5" />
+                      )}
+                      <span>{generandoLinkNave ? 'Generando...' : `Generar Link de Pago de $${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')}`}</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Verification box & auto-polling status */}
                 {pedidoGenerado?.estadoPago !== 'aprobado' && (
                   <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
@@ -2448,7 +2631,7 @@ export default function PortalFamiliasModal({
                   <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                     <div>
-                      <p className="font-bold">Aviso sobre Mercado Pago:</p>
+                      <p className="font-bold">Aviso sobre el pago:</p>
                       <p className="text-[11px] text-rose-700 mt-0.5">{pagoError}</p>
                     </div>
                   </div>
@@ -2636,8 +2819,26 @@ export default function PortalFamiliasModal({
               )}
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+                {/* WhatsApp como vía principal para avisar el pago: en un mailto: no pasa nada
+                    visible si el dispositivo no tiene un cliente de correo configurado (muy común
+                    cuando el correo se usa solo desde el navegador) — la familia hace clic, no ve
+                    ningún error, y cree que ya avisó cuando en realidad no se mandó nada. WhatsApp
+                    Web/app siempre está disponible, así que queda como opción principal y el email
+                    quedó como alternativa para quien prefiera esa vía (15/9, reporte de Pablo). */}
                 <a
-                  href={`mailto:infocusfotografiayvideo@gmail.com?subject=${encodeURIComponent(
+                  href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
+                    `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>Avisar por WhatsApp</span>
+                </a>
+
+                <a
+                  href={`mailto:alderpol@gmail.com?subject=${encodeURIComponent(
                     `Pedido ${numeroPedido} realizado`
                   )}&body=${encodeURIComponent(
                     `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`
