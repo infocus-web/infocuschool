@@ -2791,15 +2791,29 @@ export default function PortalFamiliasModal({
                           <ShoppingCart className="w-3.5 h-3.5" />
                           <span>También en este pago</span>
                         </p>
-                        {otrosHijosEnCarrito.map((c) => (
-                          <div key={c.hijoId} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800/70 p-2.5 text-xs">
-                            <div className="min-w-0">
-                              <p className="truncate font-bold text-white">{c.nombreCompleto}</p>
-                              <p className="text-[10px] text-slate-400">{c.kitNombre} · {c.grado} "{c.division}"</p>
+                        {otrosHijosEnCarrito.map((c) => {
+                          const categoriasElegidas = [
+                            c.fotoSeleccionadaGrupal && 'Grupal',
+                            c.fotoSeleccionadaIndividual && 'Individual',
+                            c.fotoSeleccionadaDocente && 'Con docente',
+                          ].filter(Boolean) as string[];
+                          return (
+                            <div key={c.hijoId} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800/70 p-2.5 text-xs">
+                              <div className="min-w-0">
+                                <p className="truncate font-bold text-white">{c.nombreCompleto}</p>
+                                <p className="text-[10px] text-slate-400">{c.kitNombre} · {c.grado} "{c.division}"</p>
+                                {categoriasElegidas.length > 0 && (
+                                  <p className="text-[10px] text-slate-500 mt-0.5">
+                                    {categoriasElegidas.join(' + ')}
+                                    {c.fotosSueltasSeleccionadas.length > 0 &&
+                                      ` · +${c.fotosSueltasSeleccionadas.length} foto${c.fotosSueltasSeleccionadas.length > 1 ? 's' : ''} suelta${c.fotosSueltasSeleccionadas.length > 1 ? 's' : ''}`}
+                                  </p>
+                                )}
+                              </div>
+                              <span className="shrink-0 font-bold text-slate-200">${c.total.toLocaleString('es-AR')}</span>
                             </div>
-                            <span className="shrink-0 font-bold text-slate-200">${c.total.toLocaleString('es-AR')}</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                         <p className="text-[10px] text-emerald-300/90">
                           Un solo pago cubre {nombreAlumno} y {otrosHijosEnCarrito.map((c) => c.nombreCompleto).join(', ')}.
                         </p>
@@ -2807,7 +2821,9 @@ export default function PortalFamiliasModal({
                     )}
 
                     <div className="space-y-2">
-                      <p className="text-xs font-bold uppercase tracking-wider text-slate-300">Fotos elegidas</p>
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                        {otrosHijosEnCarrito.length > 0 ? `Fotos elegidas · ${nombreAlumno}` : 'Fotos elegidas'}
+                      </p>
                       {[
                         { foto: fotoGrupalSeleccionada, tipo: 'Grupal', medida: '20x30 cm' },
                         { foto: fotoIndividualSeleccionada, tipo: 'Individual', medida: '15x21 cm' },
