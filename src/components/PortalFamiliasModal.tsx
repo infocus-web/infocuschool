@@ -1122,7 +1122,7 @@ export default function PortalFamiliasModal({
       // confirmación (Paso 5) tenga algo coherente que mostrar — nombre de todos los hijos,
       // total combinado — aunque en la base real sean N filas separadas en "pedidos", no una.
       const pedidoSintetico: PedidoEscolarCompleto = {
-        id: resultadoCarrito.pedidoIds[0] || `GRUPO-${Date.now()}`,
+        id: resultadoCarrito.pedidoFriendlyIds[0] || resultadoCarrito.pedidoIds[0] || `GRUPO-${Date.now()}`,
         supabaseId: resultadoCarrito.pedidoIds[0],
         fecha: new Date().toLocaleString('es-AR'),
         colegioId: selectedColegio?.id || 'col-general',
@@ -1149,7 +1149,11 @@ export default function PortalFamiliasModal({
         emailEnviado: false,
       };
       setPedidoGenerado(pedidoSintetico);
-      setNumeroPedido(resultadoCarrito.pedidoIds.join(', ') || pedidoSintetico.id);
+      // Auditoría 2026-09-17 (Pablo: "por que tiene esos numeros tan extraños y feos?"): antes
+      // acá se mostraban los uuid crudos de la base ("43a0fbe5-0324-45c4-b699-...") pegados con
+      // comas — ahora se usa un "IFS-2026-XXXX" por cada hijo, igual que en el camino de un
+      // solo hijo (ver registrarCarritoMultipleDesdePortal).
+      setNumeroPedido(resultadoCarrito.pedidoFriendlyIds.join(', ') || resultadoCarrito.pedidoIds.join(', ') || pedidoSintetico.id);
 
       // Auditoría 2026-09-09 (mismo criterio que el camino de un solo hijo): si el carrito no se
       // pudo confirmar en el servidor, se corta acá y nunca se avanza al pago combinado.
@@ -3140,7 +3144,17 @@ export default function PortalFamiliasModal({
                       Datos para completar la transferencia bancaria:
                     </p>
                     <p className="text-slate-700">
-                      <strong>Monto total:</strong> ${total.toLocaleString('es-AR')} ARS
+                      {/* Auditoría 2026-09-17 (Pablo: "como es que elegi un kit... si elegi las
+                          fotos de mis 2 hijos y me cobro 60 mil pesos?"): acá abajo usaba "total",
+                          el precio del hijo que haya quedado activo en pantalla en ESE momento
+                          (line 788), no el monto real del pedido que se acaba de confirmar —
+                          con 2+ hijos podía mostrar un número que no tenía nada que ver con lo
+                          efectivamente cobrado. "pedidoGenerado.total" es el monto congelado al
+                          momento de crear el pedido (combinado si son varios hijos), que es lo
+                          que corresponde mostrar acá. El cobro real nunca estuvo mal — lo
+                          calcula siempre el servidor — esto era sólo un problema de qué número
+                          se le mostraba a la familia. */}
+                      <strong>Monto total:</strong> ${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} ARS
                     </p>
                     <p className="text-slate-700">
                       <strong>Banco:</strong> Galicia
@@ -3256,7 +3270,11 @@ export default function PortalFamiliasModal({
 
                 <div className="text-xs text-slate-600 space-y-1">
                   <p>
-                    <strong>Kit:</strong> {selectedKit.nombre} (${total.toLocaleString('es-AR')} ARS)
+                    {/* Mismo fix que "Monto total" arriba: usa el kit/total congelados del
+                        pedido ya confirmado (pedidoGenerado), no el estado en vivo de la
+                        pantalla — que con 2+ hijos ya dice "2 hijos/as" en vez del kit de uno
+                        solo (ver pedidoSintetico más arriba en este archivo). */}
+                    <strong>Kit:</strong> {pedidoGenerado?.kitNombre ?? selectedKit.nombre} (${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} ARS)
                   </p>
                   <p>
                     <strong>Curso:</strong> {grado} "{division}" · Turno {turno}
