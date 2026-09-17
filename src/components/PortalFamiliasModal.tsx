@@ -1632,9 +1632,22 @@ export default function PortalFamiliasModal({
                         <p className="text-xs font-bold text-emerald-950">
                           {codigoValidadoMsg}
                         </p>
-                        <p className="text-[11px] text-emerald-800 mt-0.5">
-                          Asignado: {grado} · División {division} · Turno {turno}. Podés confirmar o cambiar los datos a continuación y seleccionar a tu hijo/a.
-                        </p>
+                        {hijosFamilia.length > 1 ? (
+                          <div className="mt-1 space-y-0.5">
+                            {hijosFamilia.map((h) => (
+                              <p key={h.id} className="text-[11px] text-emerald-800">
+                                <span className="font-bold">{h.nombreCompleto}:</span> {h.grado || '—'} · División {h.division || '—'} · Turno {h.turno || '—'}
+                              </p>
+                            ))}
+                            <p className="text-[11px] text-emerald-800">
+                              Podés confirmar o cambiar los datos a continuación y seleccionar a cada hijo/a.
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-emerald-800 mt-0.5">
+                            Asignado: {grado} · División {division} · Turno {turno}. Podés confirmar o cambiar los datos a continuación y seleccionar a tu hijo/a.
+                          </p>
+                        )}
                       </div>
                     </div>
                     <span className="px-2 py-0.5 bg-emerald-200 text-emerald-900 text-[10px] font-extrabold rounded-md uppercase">
