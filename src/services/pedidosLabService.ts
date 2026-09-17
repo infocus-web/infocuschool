@@ -605,6 +605,11 @@ export interface ItemCarritoHijo {
 export interface ResultadoRegistroCarrito {
   grupoPagoId: string;
   pedidoIds: string[];
+  // Auditoría 2026-09-17 (Pablo: "por que tiene esos numeros tan extraños y feos?"): un
+  // "IFS-2026-XXXX" por cada hijo, generado acá con el mismo criterio que
+  // registrarPedidoDesdePortal (antes esta función no generaba ninguno, y la pantalla de
+  // confirmación terminaba mostrando los uuid crudos de "pedidoIds" pegados con comas).
+  pedidoFriendlyIds: string[];
   total: number;
   sincronizado: boolean;
   errorSincronizacion?: string;
@@ -628,6 +633,11 @@ export async function registrarCarritoMultipleDesdePortal(params: {
   tutorEmail: string;
   items: ItemCarritoHijo[];
 }): Promise<ResultadoRegistroCarrito> {
+  // Un "IFS-2026-XXXX" por cada hijo, generado antes de mandar el carrito (mismo formato que
+  // registrarPedidoDesdePortal) — el servidor ya sabe guardarlo (acepta "pedidoFriendlyId" por
+  // ítem en /api/pedidos/crear-multiple desde que se agregó ese endpoint), sólo que hasta ahora
+  // esta función nunca se lo mandaba.
+  const pedidoFriendlyIds = params.items.map(() => `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   try {
     const res = await fetch('/api/pedidos/crear-multiple', {
       method: 'POST',
@@ -636,7 +646,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
         tutorNombre: params.tutorNombre,
         tutorTelefono: params.tutorTelefono,
         tutorEmail: params.tutorEmail,
-        items: params.items.map((item) => ({
+        items: params.items.map((item, idx) => ({
           colegioId: item.colegioId,
           colegioNombre: item.colegioNombre,
           cursoCodigo: item.cursoCodigo,
@@ -650,6 +660,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
           metodoPago: item.metodoPago,
           fotosSeleccionadas: item.fotosSeleccionadas,
           copiasExtras: item.copiasExtras,
+          pedidoFriendlyId: pedidoFriendlyIds[idx],
           // El servidor calcula el total de cada ítem a partir de kitId + carpetasExtras (mismo
           // criterio que /api/pedidos/crear) — nunca de un total mandado por el navegador.
           carpetasExtras: item.copiasExtras?.carpetasExtras || 0,
@@ -661,6 +672,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
       return {
         grupoPagoId: data.grupoPagoId,
         pedidoIds: data.pedidoIds || [],
+        pedidoFriendlyIds,
         total: data.total || 0,
         sincronizado: true,
       };
@@ -668,6 +680,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
     return {
       grupoPagoId: '',
       pedidoIds: [],
+      pedidoFriendlyIds,
       total: 0,
       sincronizado: false,
       errorSincronizacion: data?.error || `El servidor respondió con un error (HTTP ${res.status}).`,
@@ -676,6 +689,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
     return {
       grupoPagoId: '',
       pedidoIds: [],
+      pedidoFriendlyIds,
       total: 0,
       sincronizado: false,
       errorSincronizacion: e?.message || 'Error de conexión al registrar el carrito en el servidor.',
