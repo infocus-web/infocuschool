@@ -502,26 +502,48 @@ export default function ModalInscripcionFamilia({
                     </span>
                     <span className="text-xs text-slate-500 font-medium">1 Código para toda la familia</span>
                   </div>
-                  <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
-                    ¡Hola {tutorDisplay}! Registramos a tu familia
-                  </h3>
-                  <div className="text-xs text-slate-700 space-y-0.5">
-                    <p className="font-semibold text-slate-800">
-                      • {alumnoDisplay} ({gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay})
-                    </p>
-                    {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0 && (
-                      familiaCreada.hermanos.map((h, i) => (
-                        <p key={h.id || i} className="font-semibold text-slate-800">
-                          • {h.alumnoNombre} {h.alumnoApellido} ({h.grado} "{h.division}" · Turno {h.turno})
+                  {/* Auditoría 2026-09-16: cuando el código ya lo comparte más de una familia (es un
+                      código de curso, no uno exclusivo), el servidor no manda ningún dato personal
+                      de esa familia — así que acá nunca hay que saludar a nadie por su nombre ni
+                      mostrar el alumno/hermanos de otra familia: sólo el curso al que da acceso. */}
+                  {familiaCreada?.codigoCompartido ? (
+                    <>
+                      <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
+                        Código de curso verificado
+                      </h3>
+                      <div className="text-xs text-slate-700 space-y-0.5">
+                        <p className="font-semibold text-slate-800">
+                          • {gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay}
                         </p>
-                      ))
-                    )}
-                    {familiaCreada?.solicitaFotoHermanos && (
-                      <span className="inline-block mt-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
-                        📸 Foto especial de hermanos juntos: Solicitada
-                      </span>
-                    )}
-                  </div>
+                        <p className="text-slate-500">
+                          Este código lo comparten varias familias del curso — te lleva directo a la galería de fotos, sin mostrar los datos de nadie más.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
+                        ¡Hola {tutorDisplay}! Registramos a tu familia
+                      </h3>
+                      <div className="text-xs text-slate-700 space-y-0.5">
+                        <p className="font-semibold text-slate-800">
+                          • {alumnoDisplay} ({gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay})
+                        </p>
+                        {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0 && (
+                          familiaCreada.hermanos.map((h, i) => (
+                            <p key={h.id || i} className="font-semibold text-slate-800">
+                              • {h.alumnoNombre} {h.alumnoApellido} ({h.grado} "{h.division}" · Turno {h.turno})
+                            </p>
+                          ))
+                        )}
+                        {familiaCreada?.solicitaFotoHermanos && (
+                          <span className="inline-block mt-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
+                            📸 Foto especial de hermanos juntos: Solicitada
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -545,9 +567,15 @@ export default function ModalInscripcionFamilia({
                       {/* Auditoría 2026-09-09: por seguridad, el código real ya no se muestra acá salvo
                           que la propia familia lo haya escrito ella misma (pestaña "Ya me inscribí" con
                           el código real) — cuando la aprobación es automática, sólo avisamos que se
-                          mandó por correo, nunca lo mostramos ni lo entregamos por acá. */}
+                          mandó por correo, nunca lo mostramos ni lo entregamos por acá.
+                          Auditoría 2026-09-16: si el código ya es compartido por el curso, jamás hay
+                          un email "tuyo" que mostrar acá — el servidor ni siquiera lo manda. */}
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Verificamos tus datos contra el padrón del colegio y ya te despachamos tu <strong>Código de Acceso</strong> por correo a <strong>{familiaCreada.email}</strong>.
+                        {familiaCreada.codigoCompartido ? (
+                          <>Este código de curso ya está activo — entrá directo a ver la galería de fotos.</>
+                        ) : (
+                          <>Verificamos tus datos contra el padrón del colegio y ya te despachamos tu <strong>Código de Acceso</strong> por correo a <strong>{familiaCreada.email}</strong>.</>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -961,17 +989,10 @@ export default function ModalInscripcionFamilia({
                 </div>
 
                 {hermanos.length === 0 ? (
-                  <div className="p-3.5 bg-amber-50/50 rounded-xl border border-dashed border-amber-300 flex items-center justify-between gap-3 text-xs text-amber-900">
+                  <div className="p-3.5 bg-amber-50/50 rounded-xl border border-dashed border-amber-300 text-xs text-amber-900">
                     <span className="text-[11px] text-slate-600">
                       Si tenés otro hijo/a en otra sala, grado o turno, hacé clic en <strong>+ Agregar Hermano/a</strong>.
                     </span>
-                    <button
-                      type="button"
-                      onClick={handleAgregarHermano}
-                      className="text-xs font-extrabold text-amber-700 hover:text-amber-900 underline shrink-0 cursor-pointer"
-                    >
-                      Agregar ahora
-                    </button>
                   </div>
                 ) : (
                   <div className="space-y-3">
