@@ -37,6 +37,11 @@ export interface InscripcionFamilia {
   fechaAprobacion?: string;
   notificacionWhatsAppEnviada?: boolean;
   notificacionEmailEnviada?: boolean;
+  // Auditoría 2026-09-16: true cuando este código de acceso ya lo comparte más de una familia
+  // (es un código de curso, no uno exclusivo) — en ese caso el servidor NUNCA manda nombre,
+  // apellido del alumno, email, teléfono ni DNI de la familia que lo tenga; sólo los datos del
+  // curso (colegio/grado/turno/división) para poder abrir la galería.
+  codigoCompartido?: boolean;
 }
 
 /** Fila del padrón de padres autorizados (cargado por el colegio vía Excel/CSV) */
@@ -254,7 +259,9 @@ export async function buscarMiInscripcion(query: string): Promise<ResultadoBusca
     const data = await res.json();
     if (!res.ok) return { encontrada: false };
     if (data.success && data.inscripcion) {
-      return { encontrada: true, inscripcion: mapearFilaSupabaseAInscripcion(data.inscripcion) };
+      const inscripcion = mapearFilaSupabaseAInscripcion(data.inscripcion);
+      inscripcion.codigoCompartido = Boolean(data.codigoCompartido);
+      return { encontrada: true, inscripcion };
     }
     if (data.yaRegistrado) {
       return {
