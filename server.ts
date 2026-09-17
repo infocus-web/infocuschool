@@ -2863,16 +2863,45 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
     const qTel = normalizarTelefonoServidor(q);
 
     // Paso 1: ¿lo que se escribió ES el código real? Coincidencia exacta = prueba de posesión.
+    // Auditoría 2026-09-16 (hallazgo en vivo, Pablo probando el sitio como un cliente más):
+    // este código lo puede compartir MÁS DE UNA familia a propósito — es, en los hechos, el
+    // código de la sección (colegio+grado+turno+división) que el colegio reparte por WhatsApp a
+    // todo el curso — pero acá se devolvía la fila completa de la PRIMERA familia que apareciera
+    // con ese código (nombre, apellido del alumno, email, teléfono, DNI) a CUALQUIERA que
+    // escribiera el mismo código, sin importar si era esa familia o una compañera de curso. Se
+    // pide con `limit(2)` (no 1) para poder distinguir "este código lo tiene una sola familia
+    // todavía" (fila completa, como antes) de "ya lo comparten dos o más" (sólo se manda lo
+    // necesario para abrir la galería del curso — nunca el nombre ni el contacto de nadie).
     let encontrada: any = null;
+    let codigoCompartido = false;
     const tryEqCodigo = async (column: string, value: string) => {
       if (encontrada || !value) return;
-      const { data } = await supabase.from('inscripciones').select('*').eq(column, value).limit(1);
-      if (data && data.length > 0) encontrada = data[0];
+      const { data } = await supabase.from('inscripciones').select('*').eq(column, value).limit(2);
+      if (data && data.length > 0) {
+        encontrada = data[0];
+        codigoCompartido = data.length > 1;
+      }
     };
     await tryEqCodigo('codigo_asignado', qUpper);
     await tryEqCodigo('codigo_familiar', qUpper);
 
     if (encontrada) {
+      if (codigoCompartido) {
+        return res.json({
+          success: true,
+          codigoCompartido: true,
+          inscripcion: {
+            estado: encontrada.estado,
+            codigo_asignado: encontrada.codigo_asignado,
+            codigo_familiar: encontrada.codigo_familiar,
+            colegio_id: encontrada.colegio_id,
+            colegio_nombre: encontrada.colegio_nombre,
+            grado: encontrada.grado,
+            division: encontrada.division,
+            turno: encontrada.turno,
+          },
+        });
+      }
       return res.json({ success: true, inscripcion: encontrada });
     }
 
