@@ -801,6 +801,27 @@ export async function obtenerPedidosAdminDesdeSupabase(): Promise<PedidoEscolarC
 }
 
 /**
+ * Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): esto ya se intenta
+ * solo apenas se confirma el pago (en los webhooks del servidor). Esta función es el reintento
+ * manual desde el panel — para cuando esa generación automática falló (por ejemplo, si en ese
+ * momento todavía no estaban cargadas las fotos del curso) — usada por "Reenviar Email HD".
+ */
+export async function generarZipHDAdmin(pedidoSupabaseId: string): Promise<{ success: boolean; linkDescargaHD?: string; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/pedidos/${encodeURIComponent(pedidoSupabaseId)}/generar-zip-hd`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo generar el .zip HD.' };
+    }
+    return { success: true, linkDescargaHD: data.linkDescargaHD };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al generar el .zip HD.' };
+  }
+}
+
+/**
  * Combina los pedidos reales de Supabase con cualquier pedido que sólo exista en el
  * localStorage de este navegador (por ejemplo, uno creado hace un instante cuya sincronización
  * con el servidor todavía no se refleja en una lectura posterior). Supabase es la fuente de la
