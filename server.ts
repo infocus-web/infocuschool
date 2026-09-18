@@ -4046,16 +4046,22 @@ interface DatosCorreoFotosHD {
 
 type TipoActualizacionPedido = 'en_produccion' | 'listo_retiro';
 
-async function enviarCorreoActualizacionPedido(datos: { tipo: TipoActualizacionPedido; to: string; tutorNombre: string; alumnoNombre: string; colegioNombre: string; pedidoId: string }) {
+async function enviarCorreoActualizacionPedido(datos: { tipo: TipoActualizacionPedido; to: string; tutorNombre: string; alumnoNombre: string; colegioNombre: string; pedidoId: string; pedidoFriendlyId?: string }) {
   const resend = getResendClient();
   if (!resend) throw new Error('RESEND_API_KEY no está configurada.');
   const esProduccion = datos.tipo === 'en_produccion';
   const titulo = esProduccion ? 'Tu pedido está en producción' : 'Tu pedido está listo para retirar';
   const mensaje = esProduccion ? `El pedido de fotografías de <strong>${escapeHtml(datos.alumnoNombre)}</strong> ya ingresó al laboratorio y se encuentra en producción.` : `El pedido de fotografías de <strong>${escapeHtml(datos.alumnoNombre)}</strong> ya está listo. Podés retirarlo en <strong>${escapeHtml(datos.colegioNombre)}</strong>.`;
   const detalle = esProduccion ? 'Te enviaremos un nuevo aviso cuando esté disponible para retirar en el colegio.' : 'Consultá en la institución los días y horarios habilitados para la entrega.';
+  // Auditoría 2026-09-18 (reporte de Pablo): este correo mostraba "datos.pedidoId" tal cual, que
+  // es el UUID interno de Supabase (necesario para que el servidor encuentre la fila), no el
+  // número de pedido legible (IFS-2026-XXXX) que ve el cliente en el resto de los correos y en
+  // el Portal. Se muestra "pedidoFriendlyId" cuando viene informado, y sólo si falta se cae al
+  // UUID (mejor eso que no mostrar nada).
+  const pedidoMostrado = datos.pedidoFriendlyId || datos.pedidoId;
   const resultado = await resend.emails.send({
     from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>', replyTo: resendReplyTo, to: [datos.to], subject: `${titulo} — ${datos.alumnoNombre}`,
-    html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">${titulo}</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(datos.tutorNombre || 'Familia')}</strong>,</p><p style="line-height:1.6">${mensaje}</p><div style="margin:22px 0;padding:16px;background:${esProduccion ? '#eef2ff' : '#ecfdf5'};border-radius:12px;line-height:1.5">${detalle}</div><p style="font-size:12px;color:#64748b">Pedido: <strong>${escapeHtml(datos.pedidoId)}</strong></p></div></div></body></html>`,
+    html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">${titulo}</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(datos.tutorNombre || 'Familia')}</strong>,</p><p style="line-height:1.6">${mensaje}</p><div style="margin:22px 0;padding:16px;background:${esProduccion ? '#eef2ff' : '#ecfdf5'};border-radius:12px;line-height:1.5">${detalle}</div><p style="font-size:12px;color:#64748b">Pedido: <strong>${escapeHtml(pedidoMostrado)}</strong></p></div></div></body></html>`,
   }, { headers: { 'Idempotency-Key': `estado-${datos.tipo}-${datos.pedidoId}-${new Date().toISOString().slice(0, 10)}` } });
   if (resultado.error) throw new Error(resultado.error.message);
   return resultado;
