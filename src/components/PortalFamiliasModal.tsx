@@ -65,6 +65,7 @@ import {
 } from '../services/inscripcionesService';
 import { enviarSolicitudCodigo } from '../services/solicitudesCodigoService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
+import { irAConsultasConDatos } from '../utils/consultaPrefill';
 import { Colegio, KitProducto, Foto } from '../types';
 
 interface PortalFamiliasModalProps {
@@ -1271,7 +1272,7 @@ export default function PortalFamiliasModal({
           estadoTexto: infoEstado.texto,
           descripcionEstado:
             pedidoServidor.estado === 'cancelado'
-              ? 'Este pedido fue cancelado. Si creés que es un error, contactanos por WhatsApp.'
+              ? 'Este pedido fue cancelado. Si creés que es un error, escribinos por email o desde el formulario de Consultas del sitio.'
               : pedidoServidor.estado === 'pendiente_pago'
               ? 'Todavía estamos esperando la acreditación de tu pago (por ejemplo, la confirmación de la transferencia bancaria). En cuanto se acredite, tus fotos pasan a laboratorio para el revelado químico profesional en papel satinado 260g y corte computarizado.'
               : 'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.',
@@ -1546,14 +1547,32 @@ export default function PortalFamiliasModal({
                       {/* Auditoría 2026-09-18 (pedido de Pablo): se sacó "Consultar por
                           WhatsApp" — las familias no deben tener ningún punto de contacto por
                           WhatsApp en la web, solo por email o el sistema de mensajería propio
-                          del sitio (Consultas). */}
-                      <a
-                        href={`mailto:alderpol@gmail.com?subject=${encodeURIComponent(`Consulta sobre mi pedido ${searchedOrder.id}`)}`}
-                        className="flex-1 sm:flex-initial px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                          del sitio (Consultas). Auditoría 2026-09-18 (reporte de Pablo, mismo
+                          día): un mailto: no hace nada visible si el navegador no tiene un
+                          cliente de correo configurado — Pablo lo probó y "no se abre nada,
+                          solo vuelve a la web". Ahora lleva directo al formulario de Consultas
+                          del sitio (con los datos del pedido precargados), que sí manda un
+                          mensaje real. Ver src/utils/consultaPrefill.ts. */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          irAConsultasConDatos(
+                            {
+                              nombre: searchedOrder.tutor || '',
+                              telefono: searchedOrder.telefono || '',
+                              colegio: searchedOrder.colegio || '',
+                              numeroPedido: searchedOrder.id || '',
+                              asunto: 'Consulta sobre las fotos de mi hijo/a',
+                              mensaje: `Hola, tengo una consulta sobre mi pedido ${searchedOrder.id} (${searchedOrder.alumno}).`,
+                            },
+                            onClose
+                          )
+                        }
+                        className="flex-1 sm:flex-initial px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
                       >
                         <Mail className="w-3.5 h-3.5" />
                         <span>Consultar por Email</span>
-                      </a>
+                      </button>
                       <button
                         type="button"
                         onClick={() => setModalMode('pedido')}
@@ -3373,22 +3392,29 @@ export default function PortalFamiliasModal({
                 {/* Auditoría 2026-09-18 (pedido de Pablo): se sacó el botón de WhatsApp — las
                     familias no deben tener ningún punto de contacto por WhatsApp en la web,
                     solo por el sistema de mensajería propio del sitio (Consultas) o por email.
-                    OJO: esto reintroduce la limitación que el botón de WhatsApp evitaba — un
-                    mailto: no muestra ningún error si el dispositivo no tiene cliente de correo
-                    configurado, así que la familia puede creer que avisó y en realidad no se
-                    mandó nada. Si eso se vuelve un problema, la solución correcta es reemplazar
-                    este botón por el formulario de Consultas del sitio, no volver a WhatsApp. */}
-                <a
-                  href={`mailto:alderpol@gmail.com?subject=${encodeURIComponent(
-                    `Pedido ${numeroPedido} realizado`
-                  )}&body=${encodeURIComponent(
-                    `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`
-                  )}`}
-                  className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
+                    Auditoría 2026-09-18 (reporte de Pablo, mismo día): confirmado en vivo — el
+                    mailto: no abría nada, "solo vuelve a la web". Reemplazado por el formulario
+                    de Consultas del sitio (con los datos ya precargados). Ver
+                    src/utils/consultaPrefill.ts. */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    irAConsultasConDatos(
+                      {
+                        nombre: nombreAlumno ? `Familia de ${nombreAlumno}` : '',
+                        colegio: selectedColegio?.nombre || '',
+                        numeroPedido,
+                        asunto: 'Consulta sobre pagos o transferencias',
+                        mensaje: `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`,
+                      },
+                      onClose
+                    )
+                  }
+                  className="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Mail className="w-4 h-4" />
                   <span>Avisar por email</span>
-                </a>
+                </button>
 
                 <button
                   onClick={onClose}

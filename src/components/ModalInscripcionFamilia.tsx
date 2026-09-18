@@ -34,6 +34,7 @@ import {
 } from '../services/inscripcionesService';
 import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
+import { irAConsultasConDatos } from '../utils/consultaPrefill';
 
 // Deja sólo los dígitos del DNI (acepta que la familia lo escriba con puntos, ej: "38.456.789")
 // y valida que tenga un largo razonable (los DNI argentinos tienen 7 u 8 dígitos).
@@ -701,18 +702,29 @@ export default function ModalInscripcionFamilia({
                         las familias no deben tener ningún punto de contacto por WhatsApp en la
                         web, solo por email o el sistema de mensajería propio del sitio
                         (Consultas). Antes esto elegía WhatsApp automáticamente cuando el
-                        colegio tenía un número configurado; ahora siempre usa mail. */}
-                    <a
-                      href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
-                        `Consulta de inscripción - ${colegioDisplay}`
-                      )}&body=${encodeURIComponent(
-                        `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
-                      )}`}
+                        colegio tenía un número configurado; ahora siempre usa mail.
+                        Auditoría 2026-09-18 (reporte de Pablo, mismo día): un mailto: no hace
+                        nada visible sin cliente de correo configurado — reemplazado por el
+                        formulario de Consultas del sitio, con los datos ya precargados. Ver
+                        src/utils/consultaPrefill.ts. */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        irAConsultasConDatos(
+                          {
+                            nombre: tutorDisplay || '',
+                            colegio: colegioDisplay,
+                            asunto: 'Otro motivo',
+                            mensaje: `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`,
+                          },
+                          onClose
+                        )
+                      }
                       className="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                     >
                       <Mail className="w-4 h-4" />
                       <span>Escribinos por mail</span>
-                    </a>
+                    </button>
                   </div>
 
                   {mensajeVerificacionEstado && (

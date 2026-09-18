@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { MapPin, Mail, Clock, Send, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { enviarConsultaFamilia } from '../services/consultasFamiliasService';
+import { leerYLimpiarConsultaPrefill } from '../utils/consultaPrefill';
 
 export default function ContactoSection() {
   const [nombre, setNombre] = useState('');
@@ -14,6 +15,20 @@ export default function ContactoSection() {
   const [enviado, setEnviado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
+
+  // Auditoría 2026-09-18: cuando la familia llega acá desde uno de los botones "Escribinos"
+  // del Portal (en vez de un mailto: roto), se precargan los datos que ya conocíamos (pedido,
+  // alumno, colegio) para que no tenga que volver a tipearlos.
+  useEffect(() => {
+    const prefill = leerYLimpiarConsultaPrefill();
+    if (!prefill) return;
+    if (prefill.nombre) setNombre(prefill.nombre);
+    if (prefill.telefono) setTelefono(prefill.telefono);
+    if (prefill.colegio) setColegio(prefill.colegio);
+    if (prefill.numeroPedido) setNumeroPedido(prefill.numeroPedido);
+    if (prefill.asunto) setAsunto(prefill.asunto);
+    if (prefill.mensaje) setMensaje(prefill.mensaje);
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
