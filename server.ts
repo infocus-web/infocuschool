@@ -1072,7 +1072,18 @@ app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => 
     const { data, error } = await supabase.from('pedidos').update(updates).eq('id', id).select();
     if (error) throw error;
 
-    return res.json({ success: true, pedido: data?.[0] });
+    // Auditoría 2026-09-18 (reporte de Pablo): la automatización del .zip HD solo estaba
+    // conectada a los webhooks de Mercado Pago y Nave. Cuando el admin aprueba un pago a mano
+    // desde este botón (pagos en efectivo/transferencia), el pedido pasaba a "pagado" pero nunca
+    // se generaba el .zip ni se guardaba el link de descarga — por eso el email salía sin el
+    // link y el portal quedaba en "preparando tu descarga" para siempre. Se genera acá también,
+    // igual que en los webhooks, cada vez que un pedido pasa a "pagado" por esta vía.
+    let linkDescargaHD: string | null = null;
+    if (nuevoEstado === 'pagado' && data?.[0]) {
+      linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, data[0]);
+    }
+
+    return res.json({ success: true, pedido: data?.[0], linkDescargaHD: linkDescargaHD || undefined });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al actualizar pedido' });
   }
