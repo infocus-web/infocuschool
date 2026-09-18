@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Clock3, Inbox, Loader2, Mail, RefreshCw, Search, Send, X } from 'lucide-react';
+import { CheckCircle2, Clock3, Inbox, Loader2, Mail, RefreshCw, Search, Send, Sparkles, X } from 'lucide-react';
 import {
   actualizarEstadoConsultaFamiliaAdmin,
   ConsultaFamilia,
   EstadoConsultaFamilia,
   obtenerConsultasFamiliasAdmin,
   responderConsultaFamiliaAdmin,
+  sugerirRespuestaConsultaFamiliaAdmin,
 } from '../services/consultasFamiliasService';
 
 const etiquetasEstado: Record<EstadoConsultaFamilia, string> = {
@@ -24,6 +25,7 @@ export default function AdminConsultasFamiliasTab() {
   const [respondiendoId, setRespondiendoId] = useState<string | null>(null);
   const [respuesta, setRespuesta] = useState('');
   const [respuestaEnviadaId, setRespuestaEnviadaId] = useState<string | null>(null);
+  const [generandoSugerenciaId, setGenerandoSugerenciaId] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -63,6 +65,18 @@ export default function AdminConsultasFamiliasTab() {
       setError(err?.message || 'No se pudo actualizar la consulta.');
     } finally {
       setProcesandoId(null);
+    }
+  };
+
+  const generarSugerencia = async (consulta: ConsultaFamilia) => {
+    setGenerandoSugerenciaId(consulta.id);
+    setError('');
+    try {
+      setRespuesta(await sugerirRespuestaConsultaFamiliaAdmin(consulta.id));
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo generar una sugerencia.');
+    } finally {
+      setGenerandoSugerenciaId(null);
     }
   };
 
@@ -172,13 +186,18 @@ export default function AdminConsultasFamiliasTab() {
                       <p className="text-xs font-bold text-sky-950">Responder a {consulta.email}</p>
                       <button type="button" onClick={() => { setRespondiendoId(null); setRespuesta(''); }} className="rounded-lg p-1 text-slate-500 hover:bg-white cursor-pointer" aria-label="Cerrar respuesta"><X className="h-4 w-4" /></button>
                     </div>
-                    <textarea autoFocus value={respuesta} onChange={(event) => setRespuesta(event.target.value)} minLength={2} maxLength={5000} rows={5} placeholder="Escribí la respuesta para la familia..." className="w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200" />
-                    <div className="mt-2 flex justify-end">
+                    <textarea autoFocus value={respuesta} onChange={(event) => setRespuesta(event.target.value)} minLength={2} maxLength={5000} rows={5} placeholder="Escribí la respuesta para la familia, o generá un borrador con IA..." className="w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200" />
+                    <div className="mt-2 flex justify-between items-center gap-3">
+                      <button type="button" disabled={generandoSugerenciaId === consulta.id} onClick={() => void generarSugerencia(consulta)} className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-white px-3 py-2 text-xs font-bold text-sky-700 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer">
+                        {generandoSugerenciaId === consulta.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                        {generandoSugerenciaId === consulta.id ? 'Generando...' : 'Sugerir con IA'}
+                      </button>
                       <button type="button" disabled={respuesta.trim().length < 2 || procesandoId === consulta.id} onClick={() => void enviarRespuesta(consulta)} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer">
                         {procesandoId === consulta.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                         {procesandoId === consulta.id ? 'Enviando...' : 'Enviar respuesta'}
                       </button>
                     </div>
+                    <p className="mt-1.5 text-[10px] text-slate-400">La IA solo redacta un borrador acá — revisalo (y editalo si hace falta) antes de enviarlo, nunca se manda solo.</p>
                   </div>
                 )}
               </article>
