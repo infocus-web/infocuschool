@@ -5609,7 +5609,7 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
     // 2026-09-09.
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id')
+      .select('id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, link_descarga_hd')
       .eq('id', id)
       .maybeSingle();
 
@@ -5666,12 +5666,19 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
     const esAprobado = estadoFinal === 'pagado' || estadoFinal === 'entregado';
     const esRechazado = estadoFinal === 'cancelado';
 
+    // Auditoría 2026-09-18 (reporte de Pablo): el Portal de Familias deja de consultar este
+    // endpoint apenas el pago queda "aprobado" (ver PortalFamiliasModal.tsx), así que el botón
+    // "Descarga Inmediata" se quedaba para siempre en "Preparando..." si el .zip HD tardaba
+    // aunque sea unos segundos más que el pago en confirmarse — nunca había una segunda consulta
+    // que pudiera enterarse de que el link ya estaba listo. Se agrega el link acá para que el
+    // portal pueda activarlo sin esperar al email.
     return res.json({
       success: true,
       pedidoId: data.id,
       estado: estadoFinal,
       estadoPago: esAprobado ? 'aprobado' : esRechazado ? 'rechazado' : 'pendiente',
       actualizadoEl: data.updated_at,
+      linkDescargaHD: data.link_descarga_hd || undefined,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al consultar estado del pedido' });
