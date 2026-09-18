@@ -7,6 +7,7 @@ import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import sharp from 'sharp';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import JSZip from 'jszip';
 
 dotenv.config();
 
@@ -4228,6 +4229,96 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
   };
 }
 
+/**
+ * Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD, en vez de que el
+ * link de descarga quede vacío hasta que alguien lo suba a mano). Arma un .zip con los originales
+ * en alta resolución (sin marca de agua) de las fotos que ESE pedido puntual compró — mismo
+ * criterio de selección que generarArchivosParaLaboratorio() en el frontend
+ * (src/services/pedidosLabService.ts), pero un solo archivo por foto distinta: una copia extra
+ * impresa (copias_extras) es una copia física de más, no un archivo digital repetido.
+ *
+ * Sube el .zip al mismo bucket privado 'fotos-hd' (bajo "zips-pedidos/") y devuelve un link
+ * firmado temporal para que la familia lo descargue directamente, sin exponer el bucket.
+ *
+ * Se llama automáticamente apenas se confirma un pago (Mercado Pago o Nave, más abajo). Si algo
+ * falla acá (todavía no se cargaron las fotos de ese curso, error de red con Storage, etc.) esto
+ * resuelve a null y el resto del flujo de pago sigue sin verse afectado: el pedido igual queda
+ * "pagado" y el correo se manda con el texto de "en breve" en vez del link, como pasaba antes de
+ * esta auditoría. El fotógrafo puede reintentarlo a mano una vez resuelto lo que haya fallado
+ * (botón "Reenviar Email HD" en el panel de Laboratorio, que primero reintenta armar el .zip).
+ */
+async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: any): Promise<string | null> {
+  try {
+    if (!pedido?.colegio_id || !pedido?.curso_codigo) return null;
+
+    const { data: fotosCurso, error: errorFotos } = await supabase
+      .from('fotos')
+      .select('id, categoria, storage_path')
+      .eq('colegio_id', pedido.colegio_id)
+      .eq('codigo_curso', pedido.curso_codigo);
+    if (errorFotos) throw errorFotos;
+    if (!fotosCurso || fotosCurso.length === 0) return null;
+
+    const buscarFoto = (id: string | undefined, categoria: string) =>
+      id ? fotosCurso.find((f: any) => f.id === id && f.categoria === categoria) : undefined;
+
+    const seleccion = (pedido.fotos_seleccionadas && typeof pedido.fotos_seleccionadas === 'object')
+      ? pedido.fotos_seleccionadas
+      : {};
+
+    const elegidas: { nombre: string; foto: any }[] = [];
+    const individual = buscarFoto(seleccion.individualId, 'individual');
+    if (individual) elegidas.push({ nombre: 'Individual.jpg', foto: individual });
+    const grupal = buscarFoto(seleccion.grupalId, 'grupal');
+    if (grupal) elegidas.push({ nombre: 'Grupal.jpg', foto: grupal });
+    const docente = seleccion.docenteId ? buscarFoto(seleccion.docenteId, 'docente') : undefined;
+    if (docente) elegidas.push({ nombre: 'Con_la_seño.jpg', foto: docente });
+    const otrasIds: string[] = Array.isArray(seleccion.otrasIds) ? seleccion.otrasIds : [];
+    otrasIds.forEach((id: string, indice: number) => {
+      const foto = buscarFoto(id, 'patio');
+      if (foto) elegidas.push({ nombre: `Otra_${indice + 1}.jpg`, foto });
+    });
+
+    if (elegidas.length === 0) return null;
+
+    const zip = new JSZip();
+    let algunaDescargada = false;
+    for (const item of elegidas) {
+      if (!item.foto.storage_path) continue;
+      const { data: archivo, error: errorDescarga } = await supabase.storage
+        .from('fotos-hd')
+        .download(item.foto.storage_path);
+      if (errorDescarga || !archivo) {
+        console.warn(`[ZIP HD] No se pudo descargar ${item.nombre} (pedido ${pedido.id}):`, errorDescarga?.message);
+        continue;
+      }
+      zip.file(item.nombre, Buffer.from(await archivo.arrayBuffer()));
+      algunaDescargada = true;
+    }
+    if (!algunaDescargada) return null;
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const nombreZip = `zips-pedidos/${pedido.pedido_friendly_id || pedido.id}.zip`;
+    const { error: errorSubida } = await supabase.storage
+      .from('fotos-hd')
+      .upload(nombreZip, zipBuffer, { contentType: 'application/zip', upsert: true });
+    if (errorSubida) throw errorSubida;
+
+    // 90 días: de sobra para que la familia lo baje; si llega a vencer, "Reenviar Email HD"
+    // desde el panel vuelve a generar el .zip y firma un link nuevo.
+    const { data: firmado, error: errorFirma } = await supabase.storage
+      .from('fotos-hd')
+      .createSignedUrl(nombreZip, 60 * 60 * 24 * 90);
+    if (errorFirma || !firmado?.signedUrl) throw errorFirma || new Error('No se pudo firmar el link de descarga');
+
+    await supabase.from('pedidos').update({ link_descarga_hd: firmado.signedUrl }).eq('id', pedido.id);
+    return firmado.signedUrl;
+  } catch (err: any) {
+    console.error(`[ZIP HD] Falló la generación automática para el pedido ${pedido?.id}:`, err?.message || err);
+    return null;
+  }
+}
+
 interface DatosCorreoCodigoAcceso {
   to: string;
   padreNombre: string;
@@ -4365,6 +4456,34 @@ app.post(['/api/enviar-fotos-hd', '/enviar-fotos-hd'], requireAdminAuth, async (
       success: false,
       error: error?.message || 'Error inesperado al enviar el correo mediante Resend',
     });
+  }
+});
+
+// Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): reintento manual
+// desde el panel de Laboratorio para cuando la generación automática (en los webhooks de pago)
+// falló — por ejemplo, si en ese momento todavía no se habían cargado las fotos del curso. El
+// botón "Reenviar Email HD" llama primero a esta ruta y, si consigue un link, lo usa; si no,
+// sigue mandando el correo con lo que ya hubiera guardado (o el texto de "en breve").
+app.post('/api/admin/pedidos/:id/generar-zip-hd', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    const { data: pedido, error } = await supabase
+      .from('pedidos')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!pedido) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+
+    const link = await generarYSubirZipHDParaPedido(supabase, pedido);
+    if (!link) {
+      return res.status(422).json({ success: false, error: 'No se pudo armar el .zip — revisá que las fotos de ese curso ya estén cargadas.' });
+    }
+    return res.json({ success: true, linkDescargaHD: link });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al generar el .zip HD' });
   }
 });
 
@@ -5033,19 +5152,26 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
           // aunque el pago haya sido uno solo). Desde la auditoría 2026-09-09, el pedido ya
           // guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre (ver migración de
           // esa fecha), así que el correo puede mostrar los datos reales del pedido en vez de
-          // los genéricos "tu hijo/a" / "tu colegio" de antes. Se sigue omitiendo el link de
-          // descarga en este correo automático: no existe (todavía) ningún proceso que genere y
-          // suba un .zip por pedido a "fotos-hd" (se confirmó revisando el storage: ahí solo
-          // están las fotos originales sueltas por curso), así que cualquier link armado acá
-          // apuntaría a un archivo inexistente — el envío manual de las fotos HD se sigue
-          // haciendo como hasta ahora desde el panel.
+          // los genéricos "tu hijo/a" / "tu colegio" de antes.
+          // Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): antes se
+          // omitía siempre el link de descarga porque no existía ningún proceso que generara y
+          // subiera un .zip por pedido a "fotos-hd". Ahora se intenta armar y subir ese .zip acá
+          // mismo (generarYSubirZipHDParaPedido) antes de mandar el correo. Si falla — todavía no
+          // se cargaron las fotos de ese curso, error de red, etc. — no se corta el flujo de
+          // pago: el correo se manda igual, sólo que con el texto de "en breve" en vez del botón
+          // de descarga, como pasaba antes de esta auditoría.
           // El destinatario preferido es el email que la familia cargó al hacer el pedido (más
           // confiable: es a quien le corresponde el pedido), y sólo si no lo tenemos se usa el
           // email de quien pagó en Mercado Pago (puede ser otra persona, ej. un abuelo pagando).
-          for (const orderData of orderRows) {
+          // Auditoría 2026-09-18: en un carrito multi-hijo esto ahora hace bastante más trabajo
+          // por pedido (bajar cada foto HD, armar el .zip, subirlo, firmar el link) — se corre en
+          // paralelo por hijo (Promise.all) en vez de uno por uno, para no acumular el tiempo de
+          // cada .zip y arriesgar el límite de duración de la función serverless.
+          await Promise.all(orderRows.map(async (orderData: any) => {
             const emailDestino = orderData?.familias?.email || paymentInfo.payer?.email;
             if (emailDestino && emailDestino.includes('@')) {
-              console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${orderData.id} a ${emailDestino}`);
+              const linkDescargaHD = supabase ? await generarYSubirZipHDParaPedido(supabase, orderData) : null;
+              console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${orderData.id} a ${emailDestino}${linkDescargaHD ? ' (con .zip HD)' : ' (sin .zip HD todavía)'}`);
               await enviarCorreoFotosHD({
                 to: emailDestino,
                 tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
@@ -5055,9 +5181,10 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                 kitNombre: orderData?.kit_nombre || undefined,
                 pedidoId: orderData?.pedido_friendly_id || orderData?.id,
                 total: Number(orderData?.total) || 0,
+                linkDescargaHD: linkDescargaHD || undefined,
               });
             }
-          }
+          }));
         }
       } else if (paymentInfo.status === 'rejected' || paymentInfo.status === 'cancelled') {
         if (pedidoId && supabase) {
@@ -5403,13 +5530,16 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
           }
         }
 
-        // Mismo criterio que en el webhook de Mercado Pago: no se manda ningún link de descarga
-        // HD en este correo automático porque no existe (todavía) ningún proceso que genere y
-        // suba un .zip por pedido a "fotos-hd". En un carrito multi-hijo, cada pedido actualizado
-        // recibe su propia confirmación por email.
-        for (const orderData of orderRows) {
+        // Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): mismo
+        // criterio que en el webhook de Mercado Pago — se intenta armar y subir el .zip HD del
+        // pedido antes de mandar el correo; si falla, el correo se manda igual con el texto de
+        // "en breve" en vez del link. En un carrito multi-hijo, cada pedido actualizado recibe su
+        // propio .zip y su propia confirmación por email — en paralelo (Promise.all) para no
+        // acumular el tiempo de cada .zip y arriesgar el límite de duración de la función.
+        await Promise.all(orderRows.map(async (orderData: any) => {
           const emailDestino = orderData?.familias?.email;
           if (emailDestino && emailDestino.includes('@')) {
+            const linkDescargaHD = supabase ? await generarYSubirZipHDParaPedido(supabase, orderData) : null;
             await enviarCorreoFotosHD({
               to: emailDestino,
               tutorNombre: orderData?.familias?.nombre || 'Familia',
@@ -5419,9 +5549,10 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
               kitNombre: orderData?.kit_nombre || undefined,
               pedidoId: orderData?.pedido_friendly_id || orderData?.id,
               total: Number(orderData?.total) || 0,
+              linkDescargaHD: linkDescargaHD || undefined,
             });
           }
-        }
+        }));
       }
     } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '')) {
       if (pedidoId && supabase) {
