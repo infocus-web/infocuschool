@@ -5,11 +5,12 @@ import {
   Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, AlertTriangle, FileSpreadsheet,
   Globe, ShieldCheck, Send, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
-import { 
-  PedidoEscolarCompleto, 
-  descargarLoteLaboratorioZip, 
+import {
+  PedidoEscolarCompleto,
+  descargarLoteLaboratorioZip,
   guardarPedidosEnStorage,
-  formatearCodigoCliente
+  formatearCodigoCliente,
+  generarZipHDAdmin
 } from '../services/pedidosLabService';
 import { 
   enviarFotosPorEmail, 
@@ -364,7 +365,22 @@ export default function AdminLaboratorioTab({
 
     const ahora = new Date();
     const fechaHora = `${ahora.toLocaleDateString('es-AR')} ${ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
-    
+
+    // Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): el .zip ya se
+    // intenta armar solo apenas se confirma el pago (en el webhook). Si por lo que sea no está
+    // listo todavía (linkDescargaHD vacío), este botón reintenta armarlo antes de mandar el
+    // correo, en vez de mandar el mail sin link como pasaba siempre antes de esta auditoría.
+    let linkDescargaHD = pedido.linkDescargaHD;
+    if (!linkDescargaHD && pedido.supabaseId) {
+      setEmailFeedbackMsg('Generando el .zip HD con las fotos de este pedido...');
+      const resultadoZip = await generarZipHDAdmin(pedido.supabaseId);
+      if (resultadoZip.success && resultadoZip.linkDescargaHD) {
+        linkDescargaHD = resultadoZip.linkDescargaHD;
+      } else {
+        console.warn('No se pudo generar el .zip HD automáticamente:', resultadoZip.error);
+      }
+    }
+
     setEmailFeedbackMsg(`Enviando fotos HD a ${pedido.tutorEmail} desde fotos@retratoescolar.com.ar...`);
 
     try {
@@ -377,7 +393,7 @@ export default function AdminLaboratorioTab({
         pedidoId: pedido.id,
         kitNombre: pedido.kitNombre,
         total: pedido.total,
-        linkDescargaHD: pedido.linkDescargaHD,
+        linkDescargaHD,
         esImpreso: pedido.kitId === 'kit-clasico',
       });
 
@@ -386,7 +402,8 @@ export default function AdminLaboratorioTab({
           return {
             ...p,
             emailEnviado: true,
-            fechaEnvioEmail: fechaHora
+            fechaEnvioEmail: fechaHora,
+            linkDescargaHD: linkDescargaHD || p.linkDescargaHD,
           };
         }
         return p;
