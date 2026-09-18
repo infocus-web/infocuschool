@@ -39,7 +39,13 @@ export interface EstadoResend {
 export type TipoActualizacionPedido = 'en_produccion' | 'listo_retiro';
 
 export interface DestinatarioActualizacionPedido {
+  // Auditoría 2026-09-18 (reporte de Pablo): "pedidoId" tiene que seguir siendo el UUID real de
+  // Supabase porque el servidor lo usa para encontrar la fila (.eq('id', pedidoId)) — pero ese
+  // mismo valor se estaba mostrando tal cual en el email al cliente ("Pedido: ef97bafb-6f4b-..."),
+  // en vez del número de pedido legible (IFS-2026-XXXX) que se usa en todos los demás correos.
+  // Se agrega "pedidoFriendlyId" aparte, solo para mostrar, sin tocar el que usa la búsqueda.
   pedidoId: string;
+  pedidoFriendlyId?: string;
   to: string;
   tutorNombre: string;
   alumnoNombre: string;
