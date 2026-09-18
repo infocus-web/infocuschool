@@ -4041,7 +4041,6 @@ interface DatosCorreoFotosHD {
   kitNombre?: string;
   total?: number;
   linkDescargaHD?: string;
-  whatsappContacto?: string;
   esImpreso?: boolean;
 }
 
@@ -4073,7 +4072,6 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
     kitNombre,
     total,
     linkDescargaHD,
-    whatsappContacto,
     esImpreso,
   } = datos;
 
@@ -4100,7 +4098,6 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
   const kitNombreStr = escapeHtml(kitNombre?.trim() || 'Kit Escolar');
   const pedidoIdStr = escapeHtml(pedidoId?.trim() || 'IFS-2026');
   const cursoCodigoStr = escapeHtml(cursoCodigo?.trim() || '2026');
-  const whatsappContactoStr = whatsappContacto ? escapeHtml(whatsappContacto) : '';
   // IMPORTANTE: ya no se inventa un link cuando no se pasa uno explícito. Antes se armaba acá
   // mismo una URL con el patrón "/object/public/fotos-hd/..." que apuntaba a un archivo que
   // nunca existe (el bucket es privado y, además, hoy no hay ningún proceso que genere un .zip
@@ -4197,11 +4194,6 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
         <p style="margin: 0 0 8px 0;">
           💡 <strong>Recomendación:</strong> Guarda una copia de las fotos en tu Google Drive o en tu computadora para conservarlas siempre con su máxima calidad.
         </p>
-        ${whatsappContactoStr ? `
-        <p style="margin: 0;">
-          ¿Tienes alguna duda con la descarga? Puedes contactar directamente a nuestro equipo por WhatsApp al <strong>+${whatsappContactoStr}</strong>.
-        </p>
-        ` : ''}
       </div>
     </div>
 
@@ -4971,6 +4963,14 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             // existen en la tabla real — Postgres rechazaba el update completo (columna
             // inexistente) y el pedido JAMÁS se marcaba como pagado en Supabase, aunque Mercado
             // Pago sí hubiera aprobado el cobro. Se corrige a los nombres reales de columna.
+            // Auditoría 2026-09-18 (encontrado en revisión de código): Mercado Pago puede
+            // reenviar la misma notificación "approved" más de una vez (reintentos si el
+            // servidor tarda en responder, entre otros casos — comportamiento documentado de
+            // Mercado Pago, no un caso raro). Antes este update() no chequeaba el estado
+            // anterior, así que cada reenvío volvía a mandar el mail de "tus fotos están
+            // listas" a la familia de nuevo. Con .neq('estado', 'pagado') el update solo pega
+            // (y solo se manda el mail) la primera vez que el pedido pasa a pagado — un reenvío
+            // que ya encuentra el pedido en 'pagado' no devuelve filas y no reenvía nada.
             const { data, error } = await supabase
               .from('pedidos')
               .update({
@@ -4983,6 +4983,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                 updated_at: new Date().toISOString(),
               })
               .eq('id', pedidoId)
+              .neq('estado', 'pagado')
               .select('*, familias(nombre, whatsapp, email)');
 
             if (error) {
@@ -4990,6 +4991,11 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             } else if (data && data.length > 0) {
               orderRows = data;
             } else {
+              // 0 filas acá significa una de dos cosas: no existe ningún pedido con ese id, O
+              // ya estaba pagado (reenvío de Mercado Pago) — en ambos casos no hay nada más que
+              // hacer, así que se sigue probando por grupo_pago_id por si es un carrito
+              // multi-hijo, con la misma protección contra reenvíos.
+              //
               // Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): ningún pedido tiene
               // ese id — puede ser que "external_reference" no sea el id de UN pedido sino un
               // grupo_pago_id compartido por varios (ver /api/pedidos/crear-multiple). A
@@ -5004,6 +5010,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                   updated_at: new Date().toISOString(),
                 })
                 .eq('grupo_pago_id', pedidoId)
+                .neq('estado', 'pagado')
                 .select('*, familias(nombre, whatsapp, email)');
               if (errorGrupo) {
                 console.error('[Mercado Pago Webhook] Error al actualizar carrito (grupo_pago_id) en Supabase:', errorGrupo);
@@ -5042,7 +5049,6 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                 kitNombre: orderData?.kit_nombre || undefined,
                 pedidoId: orderData?.pedido_friendly_id || orderData?.id,
                 total: Number(orderData?.total) || 0,
-                whatsappContacto: orderData?.familias?.whatsapp || '',
               });
             }
           }
@@ -5344,6 +5350,11 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
       if (pedidoId && supabase) {
         const montoPagado = Number(pago?.transactions?.[0]?.amount?.value);
         let orderRows: any[] = [];
+        // Auditoría 2026-09-18 (encontrado en revisión de código): igual que Mercado Pago, Nave
+        // puede reenviar la misma notificación de pago aprobado más de una vez. Sin chequear el
+        // estado anterior, cada reenvío volvía a marcar "pagado" y a reenviar el mail de "tus
+        // fotos están listas". Con .neq('estado', 'pagado') el update solo pega (y solo se manda
+        // el mail) la primera vez.
         const { data, error } = await supabase
           .from('pedidos')
           .update({
@@ -5355,6 +5366,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
             updated_at: new Date().toISOString(),
           })
           .eq('id', pedidoId)
+          .neq('estado', 'pagado')
           .select('*, familias(nombre, whatsapp, email)');
 
         if (error) {
@@ -5366,6 +5378,8 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
           // con ese id — "external_payment_id" puede ser un grupo_pago_id compartido por varios
           // pedidos (ver /api/pedidos/crear-multiple). No se sobreescribe "total" acá: cada fila
           // del grupo ya tiene su propio monto correcto, y `montoPagado` es la suma de todos.
+          // Misma protección contra reenvíos que arriba (0 filas acá puede ser "no existe" o "ya
+          // estaba pagado" — en ambos casos no hay nada más que hacer).
           const { data: dataGrupo, error: errorGrupo } = await supabase
             .from('pedidos')
             .update({
@@ -5374,6 +5388,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
               updated_at: new Date().toISOString(),
             })
             .eq('grupo_pago_id', pedidoId)
+            .neq('estado', 'pagado')
             .select('*, familias(nombre, whatsapp, email)');
           if (errorGrupo) {
             console.error('[Nave Webhook] Error al actualizar carrito (grupo_pago_id) en Supabase:', errorGrupo);
@@ -5398,7 +5413,6 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
               kitNombre: orderData?.kit_nombre || undefined,
               pedidoId: orderData?.pedido_friendly_id || orderData?.id,
               total: Number(orderData?.total) || 0,
-              whatsappContacto: orderData?.familias?.whatsapp || '',
             });
           }
         }
