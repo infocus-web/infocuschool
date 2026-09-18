@@ -1378,11 +1378,29 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                   setPedidosCompletos(actualizados);
                                   guardarPedidosEnStorage(actualizados);
 
-                                  // Sincronizar con el servidor y Supabase mediante token admin
-                                  actualizarEstadoPedidoAdmin(p.supabaseId || p.id, {
-                                    estadoPago: 'aprobado',
-                                    estadoEntrega: 'laboratorio_listo',
-                                  }).catch((e) => console.warn('Error al sincronizar estado con backend:', e));
+                                  // Sincronizar con el servidor y Supabase mediante token admin. Auditoría
+                                  // 2026-09-18 (reporte de Pablo): esta llamada no se esperaba (fire-and-forget)
+                                  // y el email se mandaba enseguida con "p.linkDescargaHD", que en un pedido
+                                  // recién aprobado a mano todavía está vacío — el servidor ahora genera el
+                                  // .zip HD automáticamente al marcar "pagado" y devuelve el link en la
+                                  // respuesta, así que hay que esperarla y usar ese link para el email.
+                                  let linkDescargaHDGenerado: string | undefined;
+                                  try {
+                                    const resultadoEstado = await actualizarEstadoPedidoAdmin(p.supabaseId || p.id, {
+                                      estadoPago: 'aprobado',
+                                      estadoEntrega: 'laboratorio_listo',
+                                    });
+                                    linkDescargaHDGenerado = resultadoEstado.linkDescargaHD;
+                                    if (linkDescargaHDGenerado) {
+                                      const conLink = pedidosCompletos.map(item =>
+                                        item.id === p.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
+                                      );
+                                      setPedidosCompletos(conLink);
+                                      guardarPedidosEnStorage(conLink);
+                                    }
+                                  } catch (e) {
+                                    console.warn('Error al sincronizar estado con backend:', e);
+                                  }
 
                                   if (p.tutorEmail && p.tutorEmail.includes('@')) {
                                     try {
@@ -1395,7 +1413,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                         pedidoId: p.id,
                                         kitNombre: p.kitNombre,
                                         total: p.total,
-                                        linkDescargaHD: p.linkDescargaHD,
+                                        linkDescargaHD: linkDescargaHDGenerado || p.linkDescargaHD,
                                         esImpreso: p.kitId === 'kit-clasico',
                                       });
                                     } catch (e) {
