@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Printer, Download, Mail, CheckCircle2, FolderDown, FileCode,
-  Layers, Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, AlertTriangle, FileSpreadsheet,
+  Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, AlertTriangle, FileSpreadsheet,
   Globe, ShieldCheck, Send, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
 import {
@@ -86,23 +86,6 @@ export default function AdminLaboratorioTab({
       setIsEnviandoPrueba(false);
     }
   };
-
-  // Selected photo to preview backprint (defaults to the user's exact example)
-  const [fotoPreviewDorso, setFotoPreviewDorso] = useState<{
-    nombreArchivo: string;
-    alumnoNombre: string;
-    codigoCurso: string;
-    tamano: string;
-    tipo: string;
-    urlMuestra?: string;
-    sinFotoReal?: boolean;
-  }>({
-    nombreArchivo: '3ATT_FABRICIO_PEREZ.jpg',
-    alumnoNombre: 'Fabricio Pérez',
-    codigoCurso: '3ATT',
-    tamano: '15x21 cm',
-    tipo: 'Retrato Individual'
-  });
 
   const pedidosAprobados = useMemo(() => {
     return pedidos.filter(p => p.estadoPago === 'aprobado');
@@ -688,72 +671,6 @@ export default function AdminLaboratorioTab({
         </div>
       </div>
 
-      {/* Interactive Backprint Simulator (Visual Dorso del Papel Químico) */}
-      <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-200 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-amber-600" />
-            <span className="text-xs font-bold text-amber-950 uppercase tracking-wider">
-              Simulador del Dorso de Impresión Química (Backprint del Minilab)
-            </span>
-          </div>
-          <span className="text-[11px] text-amber-800 font-medium">
-            Hacé clic en cualquier foto abajo para inspeccionar cómo sale del laboratorio
-          </span>
-        </div>
-
-        {/* Paper Back Graphic Card */}
-        <div className="relative max-w-2xl mx-auto rounded-xl bg-gradient-to-b from-stone-100 to-stone-200 p-6 border-2 border-dashed border-stone-300 shadow-inner font-mono text-stone-700 select-none overflow-hidden">
-          {/* Faint manufacturer paper pattern watermark */}
-          <div className="absolute inset-0 opacity-15 pointer-events-none flex flex-wrap gap-8 items-center justify-center -rotate-12 text-[11px] font-bold tracking-widest text-stone-900">
-            <span>FUJICOLOR CRYSTAL ARCHIVE</span>
-            <span>KODAK ROYAL PAPER</span>
-            <span>FUJICOLOR CRYSTAL ARCHIVE</span>
-            <span>KODAK ROYAL PAPER</span>
-          </div>
-
-          {/* Minilab Inkjet dot matrix backprint stamping simulation */}
-          <div className="relative z-10 flex flex-col sm:flex-row gap-4 bg-white/70 backdrop-blur-xs p-4 rounded-lg border border-stone-300">
-            {/* Foto real elegida por la familia (no es una simulación — es la imagen que se va a imprimir) */}
-            <div className="shrink-0 mx-auto sm:mx-0">
-              {fotoPreviewDorso.sinFotoReal || !fotoPreviewDorso.urlMuestra ? (
-                <div className="w-28 h-28 rounded-lg border-2 border-dashed border-red-300 bg-red-50 flex flex-col items-center justify-center gap-1 text-red-500">
-                  <AlertTriangle className="w-5 h-5" />
-                  <span className="text-[9px] font-bold uppercase text-center px-1">Falta foto real</span>
-                </div>
-              ) : (
-                <img
-                  src={fotoPreviewDorso.urlMuestra}
-                  alt={`Foto real: ${fotoPreviewDorso.nombreArchivo}`}
-                  className="w-28 h-28 object-cover rounded-lg border border-stone-300 shadow-xs bg-white"
-                />
-              )}
-            </div>
-
-            <div className="flex-1 space-y-2 min-w-0">
-              <div className="flex items-center justify-between text-[11px] text-stone-500 pb-1 border-b border-stone-200">
-                <span>REVERSO DEL PAPEL FOTOGRÁFICO 260g</span>
-                <span className="font-semibold text-emerald-700">NORITSU QSS-3701HD · LÍNEA 1</span>
-              </div>
-
-              <div className="py-2 px-3 bg-stone-900 text-emerald-400 rounded font-mono text-xs sm:text-sm font-black tracking-widest break-all shadow-inner border border-stone-800">
-                &gt; {fotoPreviewDorso.nombreArchivo} &lt;
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-stone-600 pt-1">
-                <span><strong>Alumno:</strong> {fotoPreviewDorso.alumnoNombre}</span>
-                <span><strong>Toma:</strong> {fotoPreviewDorso.tipo} ({fotoPreviewDorso.tamano})</span>
-                <span><strong>Curso:</strong> {fotoPreviewDorso.codigoCurso}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <p className="text-[11px] text-amber-900 text-center">
-          💡 <strong>Beneficio clave para el fotógrafo:</strong> Al salir las copias de la canasta del minilab, el operador o tú solo tienen que leer la inscripción del reverso para saber exactamente a qué alumno pertenece la foto y guardarla en su sobre conmemorativo sin confusiones.
-        </p>
-      </div>
-
       {/* Filters & Search Toolbar */}
       {/* min-w-0 en la fila de pills es lo que evita que la lista de cursos se
           desborde y quede tapada por/tapando el buscador cuando ambos comparten la fila
@@ -870,27 +787,15 @@ export default function AdminLaboratorioTab({
                       <td className="py-3.5 px-4">
                         <div className="space-y-1 max-w-md">
                           {pedido.archivosParaLaboratorio.map((archivo) => {
-                            const isSelectedInPreview = fotoPreviewDorso.nombreArchivo === archivo.nombreArchivoLab;
                             return (
-                              <button
+                              <div
                                 key={archivo.id}
-                                onClick={() => setFotoPreviewDorso({
-                                  nombreArchivo: archivo.nombreArchivoLab,
-                                  alumnoNombre: pedido.alumnoNombre,
-                                  codigoCurso: pedido.cursoCodigo,
-                                  tamano: archivo.tamanoImpresion,
-                                  tipo: archivo.tipo === 'individual' ? 'Retrato Individual' : archivo.tipo === 'grupal' ? 'Foto Grupal' : 'Foto Docente',
-                                  urlMuestra: archivo.urlMuestra,
-                                  sinFotoReal: archivo.sinFotoReal
-                                })}
-                                className={`w-full text-left p-1.5 rounded-lg border text-[11px] font-mono flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                                className={`w-full text-left p-1.5 rounded-lg border text-[11px] font-mono flex items-center justify-between gap-2 ${
                                   archivo.sinFotoReal
                                     ? 'bg-red-50 border-red-300 text-red-900 font-bold'
-                                    : isSelectedInPreview
-                                    ? 'bg-amber-100 border-amber-400 text-amber-950 font-bold shadow-xs'
-                                    : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                                    : 'bg-slate-50 border-slate-200 text-slate-700'
                                 }`}
-                                title={archivo.sinFotoReal ? 'Falta la foto real elegida por la familia — revisar a mano' : 'Ver en simulador de dorso'}
+                                title={archivo.sinFotoReal ? 'Falta la foto real elegida por la familia — revisar a mano' : undefined}
                               >
                                 <div className="flex items-center gap-1.5 truncate">
                                   {/* Miniatura real de la foto — para poder confirmar de un vistazo
@@ -933,7 +838,7 @@ export default function AdminLaboratorioTab({
                                     {archivo.tamanoImpresion}
                                   </span>
                                 </div>
-                              </button>
+                              </div>
                             );
                           })}
                         </div>
