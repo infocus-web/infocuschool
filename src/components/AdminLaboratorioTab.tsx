@@ -181,7 +181,12 @@ export default function AdminLaboratorioTab({
     setEnviandoActualizacion(tipo);
     setEmailFeedbackMsg(`Enviando ${seleccionados.length} email${seleccionados.length === 1 ? '' : 's'}...`);
     const resultado = await enviarActualizacionPedidos(tipo, seleccionados.map((pedido) => ({
+      // "pedidoId" es el UUID real (para que el servidor encuentre la fila); "pedidoFriendlyId"
+      // es el número de pedido legible (IFS-2026-XXXX) que sí debe ver el cliente en el email —
+      // antes se mandaba el UUID como si fuera el número de pedido (auditoría 2026-09-18,
+      // reporte de Pablo: "Pedido: ef97bafb-6f4b-4e08-a9d9-6703de4000a7" en el correo real).
       pedidoId: pedido.supabaseId || pedido.id,
+      pedidoFriendlyId: pedido.id,
       to: pedido.tutorEmail,
       tutorNombre: pedido.tutorNombre,
       alumnoNombre: pedido.alumnoNombre,
