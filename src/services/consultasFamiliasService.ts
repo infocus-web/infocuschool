@@ -109,3 +109,14 @@ export async function responderConsultaFamiliaAdmin(id: string, mensaje: string)
   const data = await response.json();
   if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo enviar la respuesta.');
 }
+
+// Solo redacta un borrador con IA — nunca envía nada. El fotógrafo lo revisa (y edita si
+// hace falta) en el textarea de respuesta antes de mandarlo con responderConsultaFamiliaAdmin.
+export async function sugerirRespuestaConsultaFamiliaAdmin(id: string): Promise<string> {
+  const response = await fetchAdminAutenticado(`/api/admin/consultas-familias/${encodeURIComponent(id)}/sugerir-respuesta`, {
+    method: 'POST',
+  });
+  const data = await response.json();
+  if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo generar una sugerencia.');
+  return data.sugerencia as string;
+}
