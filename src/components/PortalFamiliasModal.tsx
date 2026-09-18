@@ -313,10 +313,25 @@ export default function PortalFamiliasModal({
       const data = await res.json();
       if (data.success) {
         if (data.estadoPago === 'aprobado') {
+          // Auditoría 2026-09-18 (reporte de Pablo): "el botón de descarga inmediata no se
+          // activa" — el .zip HD se termina de generar unos segundos después de que el pago
+          // queda aprobado, así que acá se suma el link apenas el servidor lo tiene (además de
+          // llegar por email), en vez de obligar a la familia a esperar el correo.
           setPedidoGenerado((prev) =>
-            prev ? { ...prev, estadoPago: 'aprobado', estadoEntrega: 'laboratorio_listo' } : null
+            prev
+              ? {
+                  ...prev,
+                  estadoPago: 'aprobado',
+                  estadoEntrega: 'laboratorio_listo',
+                  linkDescargaHD: data.linkDescargaHD || prev.linkDescargaHD,
+                }
+              : null
           );
-          setMensajeEstadoPago('¡Pago confirmado y acreditado con éxito!');
+          setMensajeEstadoPago(
+            data.linkDescargaHD
+              ? '¡Pago confirmado! Ya podés descargar tus fotos en alta resolución.'
+              : '¡Pago confirmado y acreditado con éxito!'
+          );
         } else if (data.estadoPago === 'rechazado') {
           setPedidoGenerado((prev) =>
             prev ? { ...prev, estadoPago: 'rechazado' } : null
@@ -333,14 +348,28 @@ export default function PortalFamiliasModal({
     }
   };
 
-  // Polling automático cuando la pantalla está en el paso 5 con pago pendiente
+  // Polling automático cuando la pantalla está en el paso 5 con pago pendiente. Auditoría
+  // 2026-09-18 (reporte de Pablo): antes esto paraba apenas el pago quedaba "aprobado", así que
+  // el botón de descarga inmediata se quedaba en "Preparando..." para siempre si el .zip HD
+  // tardaba en generarse — nadie volvía a preguntarle al servidor si ya estaba listo. Ahora, si
+  // ya está aprobado pero todavía no llegó el link, se lo sigue consultando (con un intervalo más
+  // espaciado, y con un límite de intentos para no dejarlo sondeando para siempre si algo falla).
   useEffect(() => {
-    if (step !== 5 || !pedidoGenerado || pedidoGenerado.estadoPago === 'aprobado') return;
+    if (step !== 5 || !pedidoGenerado) return;
+    const pagoPendiente = pedidoGenerado.estadoPago !== 'aprobado' && pedidoGenerado.estadoPago !== 'rechazado';
+    const aprobadoSinLink = pedidoGenerado.estadoPago === 'aprobado' && !pedidoGenerado.linkDescargaHD;
+    if (!pagoPendiente && !aprobadoSinLink) return;
+
+    const intervaloMs = aprobadoSinLink ? 8000 : 4000;
+    const maxIntentos = aprobadoSinLink ? 45 : Infinity; // ~6 minutos esperando el .zip antes de dejar de insistir
+    let intentos = 0;
     const interval = setInterval(() => {
+      intentos += 1;
       verificarEstadoRealPedido();
-    }, 4000);
+      if (intentos >= maxIntentos) clearInterval(interval);
+    }, intervaloMs);
     return () => clearInterval(interval);
-  }, [step, pedidoGenerado?.estadoPago, pedidoGenerado?.id, pedidoGenerado?.supabaseId]);
+  }, [step, pedidoGenerado?.estadoPago, pedidoGenerado?.linkDescargaHD, pedidoGenerado?.id, pedidoGenerado?.supabaseId]);
 
   // Si se llega al paso 5 con un pedido de Mercado Pago pendiente pero sin link de pago a mano
   // (por ejemplo, al volver de Mercado Pago con el pago rechazado/pendiente, o tras recargar la
