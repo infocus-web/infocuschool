@@ -91,7 +91,7 @@ export async function fetchAdminAutenticado(url: string, options: RequestInit = 
 export async function actualizarEstadoPedidoAdmin(
   pedidoId: string,
   updates: { estadoPago?: string; estadoEntrega?: string }
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; linkDescargaHD?: string; pedido?: any }> {
   try {
     const res = await fetchAdminAutenticado(`/api/admin/pedidos/${encodeURIComponent(pedidoId)}/estado`, {
       method: 'POST',
