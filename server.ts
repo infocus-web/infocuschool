@@ -3711,7 +3711,7 @@ Redactá la respuesta ahora.
       `.trim();
 
       const resultadoIA = await gemini.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.6-flash',
         contents: promptConsulta,
         config: { systemInstruction: CONTEXTO_NEGOCIO_CONSULTAS },
       });
