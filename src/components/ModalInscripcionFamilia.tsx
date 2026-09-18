@@ -697,31 +697,22 @@ export default function ModalInscripcionFamilia({
                       )}
                       <span>Verificar si ya fue aprobada</span>
                     </button>
-                                        {whatsappDestino ? (
-                      <a
-                        href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
-                          `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 py-3 px-4 bg-[#25D366] hover:bg-[#20ba5a] text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-                      >
-                        <MessageCircle className="w-4 h-4 fill-white" />
-                        <span>Consultar por WhatsApp</span>
-                      </a>
-                    ) : (
-                      <a
-                        href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
-                          `Consulta de inscripción - ${colegioDisplay}`
-                        )}&body=${encodeURIComponent(
-                          `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
-                        )}`}
-                        className="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
-                      >
-                        <Mail className="w-4 h-4" />
-                        <span>Escribinos por mail</span>
-                      </a>
-                    )}
+                                        {/* Auditoría 2026-09-18 (pedido de Pablo): se sacó la rama de WhatsApp —
+                        las familias no deben tener ningún punto de contacto por WhatsApp en la
+                        web, solo por email o el sistema de mensajería propio del sitio
+                        (Consultas). Antes esto elegía WhatsApp automáticamente cuando el
+                        colegio tenía un número configurado; ahora siempre usa mail. */}
+                    <a
+                      href={`mailto:fotos@retratoescolar.com.ar?subject=${encodeURIComponent(
+                        `Consulta de inscripción - ${colegioDisplay}`
+                      )}&body=${encodeURIComponent(
+                        `Hola, completé la inscripción para las fotos de ${alumnoDisplay} (${gradoDisplay} "${divisionDisplay}", Turno ${turnoDisplay}, ${colegioDisplay}). ¿Podrían confirmarme si mi inscripción ya fue validada? ¡Muchas gracias!`
+                      )}`}
+                      className="flex-1 py-3 px-4 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                    >
+                      <Mail className="w-4 h-4" />
+                      <span>Escribinos por mail</span>
+                    </a>
                   </div>
 
                   {mensajeVerificacionEstado && (

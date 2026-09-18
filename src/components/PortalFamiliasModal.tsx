@@ -15,7 +15,6 @@ import {
   ArrowRight,
   ArrowLeft,
   Download,
-  PhoneCall,
   Smartphone,
   ShieldCheck,
   Heart,
@@ -34,7 +33,6 @@ import {
   Copy,
   Plus,
   Minus,
-  MessageCircle,
   ChevronDown,
   Users,
   RefreshCw,
@@ -1545,14 +1543,16 @@ export default function PortalFamiliasModal({
                     )}
 
                     <div className="flex gap-2 w-full sm:w-auto">
+                      {/* Auditoría 2026-09-18 (pedido de Pablo): se sacó "Consultar por
+                          WhatsApp" — las familias no deben tener ningún punto de contacto por
+                          WhatsApp en la web, solo por email o el sistema de mensajería propio
+                          del sitio (Consultas). */}
                       <a
-                        href={`https://wa.me/${whatsappDestino}?text=Hola%20Retrato%20Escolar,%20consulto%20por%20mi%20pedido%20${searchedOrder.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex-1 sm:flex-initial px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                        href={`mailto:alderpol@gmail.com?subject=${encodeURIComponent(`Consulta sobre mi pedido ${searchedOrder.id}`)}`}
+                        className="flex-1 sm:flex-initial px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
                       >
-                        <PhoneCall className="w-3.5 h-3.5" />
-                        <span>Consultar por WhatsApp</span>
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Consultar por Email</span>
                       </a>
                       <button
                         type="button"
@@ -3302,7 +3302,13 @@ export default function PortalFamiliasModal({
               </div>
 
               {/* Instant Download Action */}
-              {pedidoGenerado?.estadoPago === 'aprobado' ? (
+              {/* Auditoría 2026-09-18 (reporte de Pablo): antes esta rama solo miraba
+                  estadoPago === 'aprobado' y mostraba el botón activo con href={linkDescargaHD}
+                  aunque ese link todavía estuviera vacío (se carga después, a mano, desde el
+                  panel de Laboratorio) — un <a> con href="" y target="_blank" abre una pestaña
+                  nueva de la propia página en vez de descargar algo, que es justo lo que
+                  reportó. Ahora exige también que el link ya exista. */}
+              {pedidoGenerado?.estadoPago === 'aprobado' && pedidoGenerado.linkDescargaHD ? (
                 <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-left flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div>
                     <p className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
@@ -3322,6 +3328,25 @@ export default function PortalFamiliasModal({
                     <Download className="w-3.5 h-3.5" />
                     <span>Descargar Fotos HD</span>
                   </a>
+                </div>
+              ) : pedidoGenerado?.estadoPago === 'aprobado' ? (
+                <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 text-left flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-sky-600" />
+                      Pago acreditado — preparando tu descarga
+                    </p>
+                    <p className="text-[11px] text-sky-700">
+                      Ya confirmamos tu pago. El link de descarga en alta resolución se está terminando de cargar y te va a llegar por email apenas esté listo.
+                    </p>
+                  </div>
+                  <button
+                    disabled
+                    className="px-4 py-2 bg-sky-200 text-sky-800 text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 cursor-not-allowed opacity-75"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Preparando...</span>
+                  </button>
                 </div>
               ) : (
                 <div className="p-4 rounded-2xl bg-slate-100 border border-slate-300 text-left flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -3345,24 +3370,14 @@ export default function PortalFamiliasModal({
               )}
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
-                {/* WhatsApp como vía principal para avisar el pago: en un mailto: no pasa nada
-                    visible si el dispositivo no tiene un cliente de correo configurado (muy común
-                    cuando el correo se usa solo desde el navegador) — la familia hace clic, no ve
-                    ningún error, y cree que ya avisó cuando en realidad no se mandó nada. WhatsApp
-                    Web/app siempre está disponible, así que queda como opción principal y el email
-                    quedó como alternativa para quien prefiera esa vía (15/9, reporte de Pablo). */}
-                <a
-                  href={`https://wa.me/${whatsappDestino}?text=${encodeURIComponent(
-                    `Hola Retrato Escolar, hice el pedido ${numeroPedido} para ${nombreAlumno}.`
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>Avisar por WhatsApp</span>
-                </a>
-
+                {/* Auditoría 2026-09-18 (pedido de Pablo): se sacó el botón de WhatsApp — las
+                    familias no deben tener ningún punto de contacto por WhatsApp en la web,
+                    solo por el sistema de mensajería propio del sitio (Consultas) o por email.
+                    OJO: esto reintroduce la limitación que el botón de WhatsApp evitaba — un
+                    mailto: no muestra ningún error si el dispositivo no tiene cliente de correo
+                    configurado, así que la familia puede creer que avisó y en realidad no se
+                    mandó nada. Si eso se vuelve un problema, la solución correcta es reemplazar
+                    este botón por el formulario de Consultas del sitio, no volver a WhatsApp. */}
                 <a
                   href={`mailto:alderpol@gmail.com?subject=${encodeURIComponent(
                     `Pedido ${numeroPedido} realizado`
