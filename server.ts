@@ -6,6 +6,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import sharp from 'sharp';
 import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
 
@@ -121,6 +122,57 @@ function getResendClient(): Resend | null {
   }
   return new Resend(apiKey.trim());
 }
+
+// Lazy client para Gemini (borrador de respuestas a consultas de familias — ver
+// "4C. CONSULTAS DE FAMILIAS" más abajo). Solo redacta texto; nunca envía nada por su cuenta.
+let geminiInstance: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey.trim() === '') {
+    return null;
+  }
+  if (!geminiInstance) {
+    geminiInstance = new GoogleGenAI({ apiKey: apiKey.trim() });
+  }
+  return geminiInstance;
+}
+
+// Catálogo y reglas de negocio que la IA usa para redactar sugerencias de respuesta.
+// OJO: si cambiás precios, kits o reglas (ver src/data/colegiosData.ts para los precios
+// reales que ve el cliente), actualizá también este texto — no se lee de un solo lugar.
+const CONTEXTO_NEGOCIO_CONSULTAS = `
+Sos parte del equipo de atención al cliente de "Retrato Escolar" (retratoescolar.com.ar), un
+servicio de fotografía escolar en Argentina.
+
+Catálogo (precios en pesos argentinos):
+- Kit Impreso + Digital ($30.000): 1 foto grupal impresa 20x30cm + 1 foto individual y 1 con
+  la seño/docente, ambas 15x21cm, en una carpeta de presentación exclusiva. Incluye de regalo
+  la descarga digital en alta resolución (HD) de las 3 fotos.
+- Solo Digital HD ($15.000): las mismas 3 fotos (grupal, individual, con la seño), solo en
+  descarga digital HD, sin impresión.
+- Fotos Sueltas de Eventos ($5.000 c/u): fotos digitales individuales sueltas de actos,
+  deportes, salidas o muestras (esta opción NO incluye foto grupal).
+- La foto grupal de grado NUNCA se vende por separado: solo viene incluida dentro de los dos
+  kits de arriba.
+
+Cómo funciona:
+- Cada familia recibe un Código Familiar único por email al aprobarse su inscripción, que le
+  permite ver y elegir las fotos de su/s hijo/a/s (si tiene más de uno, un solo código alcanza
+  para todos, aunque estén en cursos distintos).
+- Las fotos de un curso se cargan al sistema después de que se toman las fotografías en el
+  colegio. Hasta que eso pasa, la familia no puede elegir fotos ni pagar todavía, y se le avisa
+  por email automáticamente en cuanto estén disponibles — no hace falta que vuelva a registrarse.
+- El pago se hace online (Mercado Pago o Nave) dentro del mismo portal, una vez elegidas las 3
+  fotos del kit.
+
+Tu tarea: redactar una respuesta breve, cálida y clara en español rioplatense (tratamiento
+"vos"), para la consulta de una familia que llegó por el formulario web. Contestá solo lo que
+se pueda responder con la información de arriba. Si la consulta necesita datos puntuales que no
+tenés acá (el estado real de un pedido, si ya se cargaron las fotos de un curso específico,
+reclamos de pago, fechas de entrega, etc.), decilo con honestidad y avisale que el equipo va a
+confirmarle ese dato — NUNCA inventes estados de pedidos, fechas o datos que no te dieron.
+Devolvé SOLO el cuerpo del mensaje, sin saludo final ni firma (eso lo agrega el sistema aparte).
+`.trim();
 
 const resendReplyTo = process.env.RESEND_REPLY_TO_EMAIL || 'infocusfotografiayvideo@gmail.com';
 
@@ -3617,6 +3669,62 @@ app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async 
     return res.status(500).json({ success: false, error: 'No pudimos enviar la respuesta. Intentá nuevamente.' });
   }
 });
+
+// Redacta un borrador de respuesta con IA para que el fotógrafo lo revise y envíe a mano
+// desde el botón "Responder" de arriba — esta ruta NUNCA envía el mensaje ni lo guarda en
+// consultas_familias_mensajes, solo devuelve el texto sugerido.
+app.post(
+  '/api/admin/consultas-familias/:id/sugerir-respuesta',
+  requireAdminAuth,
+  limitarFrecuencia('sugerir-respuesta', 20, 10 * 60 * 1000),
+  async (req: Request, res: Response) => {
+    try {
+      const gemini = getGeminiClient();
+      if (!gemini) {
+        return res.status(503).json({ success: false, error: 'La IA no está configurada (falta GEMINI_API_KEY en el servidor).' });
+      }
+
+      const supabase = getServerSupabase();
+      if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+      const { data: consulta, error } = await supabase
+        .from('consultas_familias')
+        .select('id,nombre,colegio,numero_pedido,asunto,mensaje,consultas_familias_mensajes(direccion,contenido,created_at)')
+        .eq('id', req.params.id)
+        .single();
+      if (error || !consulta) return res.status(404).json({ success: false, error: 'No encontramos la consulta.' });
+
+      const historial = (consulta.consultas_familias_mensajes || [])
+        .sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)))
+        .map((m: any) => `${m.direccion === 'entrante' ? 'Familia' : 'Retrato Escolar'}: ${m.contenido}`)
+        .join('\n');
+
+      const promptConsulta = `
+Datos de la consulta:
+- Nombre: ${consulta.nombre}
+- Colegio mencionado: ${consulta.colegio || 'no especificado'}
+- Número de pedido mencionado: ${consulta.numero_pedido || 'ninguno'}
+- Asunto: ${consulta.asunto}
+- Mensaje: ${consulta.mensaje}
+${historial ? `\nConversación previa:\n${historial}` : ''}
+
+Redactá la respuesta ahora.
+      `.trim();
+
+      const resultadoIA = await gemini.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: promptConsulta,
+        config: { systemInstruction: CONTEXTO_NEGOCIO_CONSULTAS },
+      });
+      const sugerencia = resultadoIA.text?.trim();
+      if (!sugerencia) throw new Error('La IA no devolvió texto.');
+
+      return res.json({ success: true, sugerencia });
+    } catch (err: any) {
+      console.error('[Consultas] Error al sugerir respuesta con IA:', err);
+      return res.status(500).json({ success: false, error: 'No pudimos generar una sugerencia. Intentá nuevamente o escribila a mano.' });
+    }
+  }
+);
 
 // ==============================================================================
 // 4D. SOLICITUDES DE CÓDIGO DE CURSO (reemplaza el botón "Solicitar por WhatsApp")
