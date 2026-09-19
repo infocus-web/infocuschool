@@ -1392,11 +1392,25 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                     });
                                     linkDescargaHDGenerado = resultadoEstado.linkDescargaHD;
                                     if (linkDescargaHDGenerado) {
-                                      const conLink = pedidosCompletos.map(item =>
-                                        item.id === p.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
-                                      );
-                                      setPedidosCompletos(conLink);
-                                      guardarPedidosEnStorage(conLink);
+                                      // Auditoría 2026-09-19 (encontrada en revisión de código): esto usaba
+                                      // "pedidosCompletos" capturado por el closure del onClick — que sigue
+                                      // siendo el array de ANTES del click, con este pedido todavía en
+                                      // "pendiente" — en vez del array recién actualizado ("actualizados",
+                                      // dos líneas arriba). Como esta llamada se resuelve después del
+                                      // "await", pisaba el "aprobado" recién puesto y devolvía el pedido a
+                                      // "pendiente" en el estado de React y en localStorage (solo el link
+                                      // quedaba bien puesto), lo que hacía reaparecer el botón "Aprobar
+                                      // Pago" y arriesgaba mandar el email de fotos HD dos veces si alguien
+                                      // lo tocaba de nuevo pensando que no había funcionado. Se usa la forma
+                                      // funcional de setState (prev => ...) para partir siempre del estado
+                                      // más reciente, nunca del closure viejo.
+                                      setPedidosCompletos((prev) => {
+                                        const conLink = prev.map(item =>
+                                          item.id === p.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
+                                        );
+                                        guardarPedidosEnStorage(conLink);
+                                        return conLink;
+                                      });
                                     }
                                   } catch (e) {
                                     console.warn('Error al sincronizar estado con backend:', e);
