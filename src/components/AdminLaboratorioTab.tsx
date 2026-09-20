@@ -23,6 +23,14 @@ import {
 import { descargarLibroExcel } from '../services/excelDownloadHelper';
 import ModalPlanillaExcelLab from './ModalPlanillaExcelLab';
 
+/** Formatea un timestamp ISO de Supabase como "18/09" (día/mes corto) para las fichas de estado. */
+function formatearFechaCorta(iso?: string | null): string | null {
+  if (!iso) return null;
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return null;
+  return fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+}
+
 interface AdminLaboratorioTabProps {
   pedidos: PedidoEscolarCompleto[];
   onActualizarPedidos: (pedidos: PedidoEscolarCompleto[]) => void;
@@ -134,6 +142,19 @@ export default function AdminLaboratorioTab({
   const todosSeleccionados = pedidosFiltradosConEmail.length > 0
     && pedidosFiltradosConEmail.every((pedido) => pedidosSeleccionados.has(pedido.id));
 
+  // Auditoría 2026-09-20 (pedido de Pablo): el botón de "En producción" ya no se desactiva
+  // cuando el pedido tildado ya había recibido ese aviso antes — ahora se puede reenviar, pero
+  // el texto avisa que es un reenvío (y la fecha de la primera vez se muestra aparte, por fila).
+  // Mismo criterio, simétrico, para "Listo para retirar".
+  const pedidosSeleccionadosArr = useMemo(
+    () => pedidos.filter((pedido) => pedidosSeleccionados.has(pedido.id)),
+    [pedidos, pedidosSeleccionados]
+  );
+  const todosYaEnProduccion = pedidosSeleccionadosArr.length > 0
+    && pedidosSeleccionadosArr.every((pedido) => Boolean(pedido.estadoLab));
+  const todosYaListoRetiro = pedidosSeleccionadosArr.length > 0
+    && pedidosSeleccionadosArr.every((pedido) => pedido.estadoLab === 'listo_retiro');
+
   const alternarSeleccionPedido = (pedidoId: string) => {
     setPedidosSeleccionados((actuales) => {
       const siguientes = new Set(actuales);
@@ -182,6 +203,29 @@ export default function AdminLaboratorioTab({
       setPedidosSeleccionados(new Set());
     } else {
       setEmailFeedbackMsg(`⚠️ Se enviaron ${resultado.enviados}; fallaron ${resultado.fallidos}. ${resultado.error || resultado.errores?.[0] || ''}`);
+    }
+    // Auditoría 2026-09-20 (bug real reportado por Pablo): antes, después de mandar el aviso, el
+    // pedido en memoria (el array "pedidos" que vive en el componente padre) nunca se actualizaba
+    // — así que si el fotógrafo destildaba y volvía a tildar el mismo pedido, el panel no tenía
+    // forma de saber que ya se le había avisado "En producción" y el botón volvía a comportarse
+    // como si fuera la primera vez. Ahora, apenas el servidor confirma qué quedó guardado
+    // (resultado.resultados, con la fecha de PRIMER envío ya resuelta ahí), se refleja al toque
+    // en el estado local — sin esperar a que se vuelva a abrir la pestaña.
+    if (resultado.resultados && resultado.resultados.length > 0) {
+      const porId = new Map(resultado.resultados.map((r) => [r.pedidoId, r]));
+      onActualizarPedidos(
+        pedidos.map((pedido) => {
+          const actualizado = porId.get(pedido.supabaseId || pedido.id);
+          if (!actualizado) return pedido;
+          return {
+            ...pedido,
+            estadoLab: actualizado.estadoLab,
+            fechaEnvioProduccion: actualizado.fechaEnvioProduccion || pedido.fechaEnvioProduccion,
+            fechaEnvioListoRetiro: actualizado.fechaEnvioListoRetiro || pedido.fechaEnvioListoRetiro,
+            estadoEntrega: actualizado.estadoLab === 'listo_retiro' ? 'listo_retiro' : pedido.estadoEntrega,
+          };
+        })
+      );
     }
   };
 
@@ -725,11 +769,11 @@ export default function AdminLaboratorioTab({
           <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 text-xs font-bold text-sky-800 cursor-pointer">
             {todosSeleccionados ? 'Quitar selección' : 'Seleccionar todos'}
           </button>
-          <button type="button" onClick={() => handleEnviarActualizacion('en_produccion')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-            {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Enviar “En producción”
+          <button type="button" onClick={() => handleEnviarActualizacion('en_produccion')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} title={todosYaEnProduccion ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.' : undefined} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+            {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} {todosYaEnProduccion ? 'Volver a enviar “En producción”' : 'Enviar “En producción”'}
           </button>
-          <button type="button" onClick={() => handleEnviarActualizacion('listo_retiro')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-            {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Enviar “Listo para retirar”
+          <button type="button" onClick={() => handleEnviarActualizacion('listo_retiro')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} title={todosYaListoRetiro ? 'Ya se le había avisado "Listo para retirar" a todos los seleccionados — esto manda el aviso de nuevo.' : undefined} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+            {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {todosYaListoRetiro ? 'Volver a enviar “Listo para retirar”' : 'Enviar “Listo para retirar”'}
           </button>
         </div>
       </div>
@@ -775,6 +819,22 @@ export default function AdminLaboratorioTab({
                             {pedido.codigoAlumno}
                           </span>
                         </div>
+                        {/* Auditoría 2026-09-20 (pedido de Pablo): estado real de los avisos de
+                            laboratorio, con la fecha del PRIMER envío (no se pisa si se reenvía). */}
+                        {(pedido.estadoLab || pedido.fechaEnvioProduccion) && (
+                          <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {pedido.fechaEnvioProduccion && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded-full border border-indigo-200">
+                                <Printer className="w-2.5 h-2.5" /> Producción {formatearFechaCorta(pedido.fechaEnvioProduccion)}
+                              </span>
+                            )}
+                            {pedido.fechaEnvioListoRetiro && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200">
+                                <CheckCircle2 className="w-2.5 h-2.5" /> Retiro {formatearFechaCorta(pedido.fechaEnvioListoRetiro)}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
