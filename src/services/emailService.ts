@@ -10,6 +10,11 @@ export interface DatosEnvioFotosHD {
   colegioNombre: string;
   cursoCodigo: string;
   pedidoId: string;
+  // Auditoría 2026-09-20 (bug real: el link HD nunca se grababa en Supabase después de un
+  // reenvío manual): "pedidoId" de acá arriba es el ID legible (IFS-2026-XXXX) que se muestra
+  // en el correo, no sirve para encontrar la fila. Este campo aparte manda el UUID real de
+  // Supabase para que el servidor pueda guardar el resultado del envío contra el pedido correcto.
+  pedidoSupabaseId?: string;
   kitNombre: string;
   total: number;
   linkDescargaHD: string;
