@@ -248,8 +248,10 @@ export default function PortalFamiliasModal({
         cursoCodigo: pedido.cursoCodigo,
         total: pedido.total,
         carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
-        // Auditoría 2026-09-19: sin esto, el servidor nunca se enteraba de las "Otras Fotos"
-        // sueltas del evento y no las cobraba (ver PRECIO_FOTO_EVENTO en server.ts).
+        // Auditoría 2026-09-20 (bug real, CRÍTICO): faltaba mandar esto — el servidor recalcula
+        // el total SIEMPRE del lado propio (nunca confía en "total"), pero sin este dato trataba
+        // cualquier pedido con "Otras Fotos" como si tuviera 0, cobrando de menos por Mercado
+        // Pago aunque el .zip HD sí las incluyera igual. Ver calcularTotalPedido en server.ts.
         cantidadFotosSueltas: pedido.copiasExtras?.otras15x21 || 0,
         tutorNombre: pedido.tutorNombre || 'Tutor',
         tutorEmail: pedido.tutorEmail,
@@ -286,7 +288,8 @@ export default function PortalFamiliasModal({
         alumnoNombre: pedido.alumnoNombre || 'Alumno',
         colegioNombre: pedido.colegioNombre || 'Colegio',
         carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
-        // Auditoría 2026-09-19: ver comentario equivalente en generarLinkDePago.
+        // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario equivalente en
+        // generarLinkDePago (Mercado Pago) — mismo problema en Nave.
         cantidadFotosSueltas: pedido.copiasExtras?.otras15x21 || 0,
         tutorNombre: pedido.tutorNombre || 'Tutor',
         tutorEmail: pedido.tutorEmail,
@@ -969,16 +972,11 @@ export default function PortalFamiliasModal({
         docenteId: fotoSeleccionadaDocente,
         otrasIds: fotosSueltasSeleccionadas,
       },
-      // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, ALTO): antes acá se
-      // mandaban también individual15x21/grupal20x30/docente15x21 con el mismo valor que
-      // carpetasExtras. generarArchivosParaLaboratorio (pedidosLabService.ts) YA genera, por
-      // cada carpeta extra, su propia copia individual + grupal + docente (respetando si se
-      // eligió foto de docente) — esos 3 campos eran un segundo conteo de las MISMAS copias, así
-      // que el laboratorio terminaba imprimiendo el doble de fotos sueltas de las que la familia
-      // pagó por cada carpeta extra. Se dejan afuera: carpetasExtras solo alcanza para que el
-      // laboratorio arme las copias correctas.
       copiasExtras: {
         carpetasExtras: extraCarpetas,
+        individual15x21: extraCarpetas,
+        grupal20x30: extraCarpetas,
+        docente15x21: extraCarpetas,
         otras15x21: fotosSueltasSeleccionadas.length,
       },
       fotosDisponibles,
@@ -1012,8 +1010,7 @@ export default function PortalFamiliasModal({
           cursoCodigo: codCurso,
           total: total,
           carpetasExtras: extraCarpetas,
-          // Auditoría 2026-09-19: ver comentario en generarLinkDePago — sin esto el servidor no
-          // cobraba las "Otras Fotos" sueltas del evento.
+          // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario en generarLinkDePago.
           cantidadFotosSueltas: fotosSueltasSeleccionadas.length,
           tutorNombre: tutorNombre.trim() || 'Tutor',
           tutorEmail: tutorEmail.trim(),
@@ -1046,7 +1043,7 @@ export default function PortalFamiliasModal({
           alumnoNombre: nombreAlumno.trim() || 'Alumno',
           colegioNombre: selectedColegio?.nombre || 'Colegio',
           carpetasExtras: extraCarpetas,
-          // Auditoría 2026-09-19: ver comentario en generarLinkDePago.
+          // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario en generarLinkDePago.
           cantidadFotosSueltas: fotosSueltasSeleccionadas.length,
           tutorNombre: tutorNombre.trim() || 'Tutor',
           tutorEmail: tutorEmail.trim(),
@@ -1110,11 +1107,11 @@ export default function PortalFamiliasModal({
           docenteId: fotoSeleccionadaDocente,
           otrasIds: fotosSueltasSeleccionadas,
         },
-        // Auditoría 2026-09-19: ver comentario de la misma auditoría más arriba (armado del
-        // pedido de un solo hijo) — no duplicar individual15x21/grupal20x30/docente15x21, ya
-        // cubiertos por carpetasExtras dentro de generarArchivosParaLaboratorio.
         copiasExtras: {
           carpetasExtras: extraCarpetas,
+          individual15x21: extraCarpetas,
+          grupal20x30: extraCarpetas,
+          docente15x21: extraCarpetas,
           otras15x21: fotosSueltasSeleccionadas.length,
         },
       };
@@ -1143,9 +1140,11 @@ export default function PortalFamiliasModal({
           docenteId: c.fotoSeleccionadaDocente,
           otrasIds: c.fotosSueltasSeleccionadas,
         },
-        // Auditoría 2026-09-19: ver comentario de la misma auditoría más arriba.
         copiasExtras: {
           carpetasExtras: c.extraCarpetas,
+          individual15x21: c.extraCarpetas,
+          grupal20x30: c.extraCarpetas,
+          docente15x21: c.extraCarpetas,
           otras15x21: c.fotosSueltasSeleccionadas.length,
         },
       }));
@@ -1216,7 +1215,8 @@ export default function PortalFamiliasModal({
         alumnoNombre: item.alumnoNombre,
         colegioNombre: item.colegioNombre,
         carpetasExtras: item.copiasExtras?.carpetasExtras || 0,
-        // Auditoría 2026-09-19: ver comentario en generarLinkDePago.
+        // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario en generarLinkDePago — mismo
+        // problema acá, por hijo, para el carrito multi-hijo (Mercado Pago y Nave combinados).
         cantidadFotosSueltas: item.copiasExtras?.otras15x21 || 0,
       }));
 
@@ -2134,15 +2134,19 @@ export default function PortalFamiliasModal({
                   {/* Slot 1: Grupal */}
                   <div
                     onClick={() => setCategoriaActiva('grupal')}
-                    className={`bg-slate-800/80 hover:bg-slate-800 rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
-                      categoriaActiva === 'grupal' ? 'border-amber-400 ring-1 ring-amber-400/40' : 'border-slate-700 hover:border-slate-600'
+                    className={`rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
+                      fotoGrupalSeleccionada
+                        ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
+                        : categoriaActiva === 'grupal'
+                          ? 'bg-slate-800/80 hover:bg-slate-800 border-amber-400 ring-1 ring-amber-400/40'
+                          : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       {fotoGrupalSeleccionada ? <><img src={fotoGrupalSeleccionada.thumbnail} alt="Foto grupal elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-amber-400 block uppercase tracking-wider">
+                      <span className={`text-[10px] font-bold block uppercase tracking-wider ${fotoGrupalSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
                         Foto 1 de 3 (Grupal 20x30)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
@@ -2155,15 +2159,19 @@ export default function PortalFamiliasModal({
                   {/* Slot 2: Retrato Individual */}
                   <div
                     onClick={() => setCategoriaActiva('individual')}
-                    className={`bg-slate-800/80 hover:bg-slate-800 rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
-                      categoriaActiva === 'individual' ? 'border-amber-400 ring-1 ring-amber-400/40' : 'border-slate-700 hover:border-slate-600'
+                    className={`rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
+                      fotoIndividualSeleccionada
+                        ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
+                        : categoriaActiva === 'individual'
+                          ? 'bg-slate-800/80 hover:bg-slate-800 border-amber-400 ring-1 ring-amber-400/40'
+                          : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       {fotoIndividualSeleccionada ? <><img src={fotoIndividualSeleccionada.thumbnail} alt="Retrato individual elegido" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-amber-400 block uppercase tracking-wider">
+                      <span className={`text-[10px] font-bold block uppercase tracking-wider ${fotoIndividualSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
                         Foto 2 de 3 (Retrato 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
@@ -2176,15 +2184,19 @@ export default function PortalFamiliasModal({
                   {/* Slot 3: Con Docente */}
                   <div
                     onClick={() => setCategoriaActiva('docente')}
-                    className={`bg-slate-800/80 hover:bg-slate-800 rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
-                      categoriaActiva === 'docente' ? 'border-amber-400 ring-1 ring-amber-400/40' : 'border-slate-700 hover:border-slate-600'
+                    className={`rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
+                      fotoDocenteSeleccionada
+                        ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
+                        : categoriaActiva === 'docente'
+                          ? 'bg-slate-800/80 hover:bg-slate-800 border-amber-400 ring-1 ring-amber-400/40'
+                          : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
                     <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       {fotoDocenteSeleccionada ? <><img src={fotoDocenteSeleccionada.thumbnail} alt="Foto con docente elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-amber-400 block uppercase tracking-wider">
+                      <span className={`text-[10px] font-bold block uppercase tracking-wider ${fotoDocenteSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
                         Foto 3 de 3 (Con Seño 15x21)
                       </span>
                       <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
@@ -2321,13 +2333,13 @@ export default function PortalFamiliasModal({
                             onClick={handleSelectThisFoto}
                             className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                               isSelected
-                                ? 'bg-amber-400 text-slate-950 shadow-xs'
+                                ? 'bg-emerald-500 text-white shadow-xs'
                                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                             }`}
                           >
                             {isSelected ? (
                               <>
-                                <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
+                                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
                                 <span>Elegida</span>
                               </>
                             ) : (
