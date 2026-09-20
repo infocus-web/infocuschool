@@ -992,6 +992,24 @@ app.get('/api/admin/pedidos', requireAdminAuth, async (req, res) => {
   }
 });
 
+// Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo). El pipeline físico de un
+// pedido pagado tiene 3 etapas ordenadas — antes cada botón del panel las trataba por separado y
+// nada impedía saltear una (ver bug real: se pudo marcar "listo_retiro" sin pasar por
+// "en_produccion"). Esta es la única lista de orden: cualquier validación de "¿puedo avanzar a
+// esta etapa?" en todo el archivo se apoya en ella, en vez de tener el orden repetido a mano en
+// cada endpoint.
+const ETAPAS_LAB = ['en_produccion', 'listo_retiro', 'entregado'] as const;
+type EtapaLab = typeof ETAPAS_LAB[number];
+
+/** true si "siguiente" es una etapa a la que se puede avanzar desde "actual" — es decir, la
+ * inmediatamente próxima en ETAPAS_LAB, o la misma etapa (reenvío del mismo aviso). No permite
+ * saltear etapas ni retroceder. */
+function puedeAvanzarEtapaLab(actual: EtapaLab | null | undefined, siguiente: EtapaLab): boolean {
+  const indiceSiguiente = ETAPAS_LAB.indexOf(siguiente);
+  const indiceActual = actual ? ETAPAS_LAB.indexOf(actual) : -1;
+  return indiceSiguiente === indiceActual || indiceSiguiente === indiceActual + 1;
+}
+
 app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Request, res: Response) => {
   const tipo = req.body?.tipo as TipoActualizacionPedido;
   const destinatarios = Array.isArray(req.body?.destinatarios) ? req.body.destinatarios.slice(0, 100) : [];
@@ -1037,8 +1055,14 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   }
   for (const destinatario of destinatarios) {
     if (!destinatario?.to?.includes('@') || !destinatario?.pedidoId) { errores.push(`${destinatario?.alumnoNombre || 'Cliente'}: email o pedido inválido.`); continue; }
-    if (supabase && tipo === 'listo_retiro' && !estadosActuales.get(destinatario.pedidoId)) {
-      errores.push(`${destinatario.alumnoNombre || destinatario.to}: no se puede avisar "Listo para retirar" sin haber pasado antes por "En producción".`);
+    // Auditoría 2026-09-20: esto también cierra un problema emparentado que no había reportado
+    // Pablo todavía: antes, reenviar "En producción" a un pedido que YA estaba en "Listo para
+    // retirar" pisaba estado_lab de vuelta a 'en_produccion' en la base (el UPDATE de más abajo
+    // no distinguía "avanzar" de "retroceder"). puedeAvanzarEtapaLab bloquea ambos casos: saltear
+    // una etapa hacia adelante, y retroceder una ya alcanzada.
+    if (supabase && !puedeAvanzarEtapaLab(estadosActuales.get(destinatario.pedidoId) as EtapaLab | null, tipo)) {
+      const etapaLegible = tipo === 'en_produccion' ? 'En producción' : 'Listo para retirar';
+      errores.push(`${destinatario.alumnoNombre || destinatario.to}: no se puede pasar a "${etapaLegible}" desde el estado actual de ese pedido (evita saltos y retrocesos de etapa).`);
       continue;
     }
     try {
@@ -1077,27 +1101,76 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   return res.status(enviados > 0 ? 200 : 502).json({ success: errores.length === 0, enviados, fallidos: errores.length, errores, resultados });
 });
 
+// Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo): hasta hoy no existía
+// NINGÚN botón ni endpoint que registrara "la familia ya vino y retiró su pedido" — el pipeline
+// del panel de Laboratorio se quedaba en "Listo para retirar" para siempre, sin forma de cerrar
+// el círculo. El único lugar que modelaba un estado "entregado" era el valor 'entregado' de la
+// columna de PAGO "estado" (mezclando cobro con entrega física), y nada lo escribía nunca. Este
+// endpoint es la pieza que faltaba: usa estado_lab (el mismo campo de todo el pipeline físico,
+// ver ETAPAS_LAB) en vez de tocar el estado de pago, y exige haber pasado por "listo_retiro"
+// antes — no se puede marcar como retirado un pedido que nunca avisamos que estaba listo.
+app.post('/api/admin/pedidos/:id/marcar-retirado', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    const { data: pedido, error: errorLectura } = await supabase
+      .from('pedidos')
+      .select('id, estado_lab')
+      .eq('id', id)
+      .maybeSingle();
+    if (errorLectura) throw errorLectura;
+    if (!pedido) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+
+    if (!puedeAvanzarEtapaLab(pedido.estado_lab as EtapaLab | null, 'entregado')) {
+      return res.status(409).json({
+        success: false,
+        error: 'Este pedido todavía no pasó por "Listo para retirar" — avisale a la familia antes de marcarlo como retirado.',
+      });
+    }
+
+    const ahora = new Date().toISOString();
+    // La fecha de retiro se graba una sola vez (igual que fecha_envio_produccion/listo_retiro),
+    // por si en algún momento se necesita "reabrir" y volver a marcar sin perder la fecha real.
+    await supabase.from('pedidos').update({ fecha_entregado: ahora }).eq('id', id).is('fecha_entregado', null);
+    const { data: filaActualizada, error: errorUpdate } = await supabase
+      .from('pedidos')
+      .update({ estado_lab: 'entregado', updated_at: ahora })
+      .eq('id', id)
+      .select('id, estado_lab, fecha_entregado')
+      .single();
+    if (errorUpdate) throw errorUpdate;
+
+    return res.json({ success: true, estadoLab: filaActualizada.estado_lab, fechaEntregado: filaActualizada.fecha_entregado });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al marcar el pedido como retirado' });
+  }
+});
+
 // Actualizar estado de pedido (Pago o Entrega)
 app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { estadoPago, estadoEntrega } = req.body;
+    const { estadoPago } = req.body;
     const supabase = getServerSupabase();
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
 
-    // OJO: la tabla "pedidos" solo tiene UNA columna de estado ("estado": pendiente_pago |
-    // pagado | entregado | cancelado) — no existen columnas separadas "estado_pago" ni
-    // "estado_entrega". Antes este endpoint escribía en esas dos columnas inexistentes: como
-    // Postgres rechaza el UPDATE completo si cualquiera de las columnas no existe, este botón
-    // del panel (marcar pedido pagado/entregado a mano, pensado sobre todo para pagos en
-    // efectivo) nunca guardaba nada en Supabase, aunque sí quedara guardado en el localStorage
-    // del navegador del admin. Se mapea todo al único estado real. Ver auditoría 2026-09-09.
+    // OJO: la tabla "pedidos" solo tiene UNA columna de estado de PAGO ("estado": pendiente_pago |
+    // pagado | entregado (legado, ver abajo) | cancelado) — no existe columna separada
+    // "estado_pago". Antes este endpoint escribía en columnas inexistentes: como Postgres rechaza
+    // el UPDATE completo si cualquiera de las columnas no existe, este botón del panel (marcar
+    // pedido pagado a mano, pensado sobre todo para pagos en efectivo) nunca guardaba nada en
+    // Supabase, aunque sí quedara guardado en el localStorage del navegador del admin. Se mapea al
+    // único estado real. Ver auditoría 2026-09-09.
+    // Auditoría 2026-09-20: se retira acá el manejo de "estadoEntrega === 'entregado'" que
+    // escribía 'entregado' en ESTA columna de pago — nada en el panel llegó a usarlo nunca (era
+    // código muerto) y mezclaba "se cobró" con "se retiró físicamente". Ese paso ahora es
+    // POST /api/admin/pedidos/:id/marcar-retirado, que graba en estado_lab (ver más arriba).
     let nuevoEstado: string | undefined;
-    if (estadoEntrega === 'entregado') {
-      nuevoEstado = 'entregado';
-    } else if (estadoPago === 'aprobado' || estadoPago === 'pagado') {
+    if (estadoPago === 'aprobado' || estadoPago === 'pagado') {
       nuevoEstado = 'pagado';
     } else if (estadoPago === 'rechazado' || estadoPago === 'cancelado') {
       nuevoEstado = 'cancelado';
@@ -4450,6 +4523,88 @@ async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: an
     return null;
   }
 }
+
+/**
+ * Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo: "avancemos con el cron").
+ * Hasta ahora, si el .zip HD fallaba al momento del pago, la ÚNICA forma de que la familia
+ * recibiera su link real era que Pablo abriera el panel de Laboratorio, notara la alerta y
+ * apretara "Reintentar" a mano. Esta función es el reintento automático: busca pedidos pagados
+ * sin link real hace más de `graciaMinutos` (para no pisarle los talones al intento que ya hace
+ * el webhook de pago en el momento) y repite el mismo proceso que ese webhook — generar el .zip,
+ * mandar el correo, grabar el resultado. La llama tanto el endpoint de cron de más abajo como
+ * cualquier otro lugar que en el futuro quiera un reintento en lote sin pasar por HTTP.
+ */
+async function reintentarPedidosConHDPendiente(
+  supabase: SupabaseClient,
+  opciones: { limite?: number; graciaMinutos?: number } = {}
+): Promise<{ revisados: number; resueltos: number; fallidos: number }> {
+  const limite = opciones.limite ?? 20;
+  const graciaMinutos = opciones.graciaMinutos ?? 10;
+  const cortaFecha = new Date(Date.now() - graciaMinutos * 60 * 1000).toISOString();
+
+  const { data: pendientes, error } = await supabase
+    .from('pedidos')
+    .select('*, familias(nombre, whatsapp, email)')
+    .eq('estado', 'pagado')
+    .or('link_descarga_hd.is.null,link_descarga_hd.eq.')
+    .lt('created_at', cortaFecha)
+    .limit(limite);
+  if (error) {
+    console.error('[cron reintentar-hd] Error buscando pedidos pendientes:', error.message);
+    return { revisados: 0, resueltos: 0, fallidos: 0 };
+  }
+  if (!pendientes || pendientes.length === 0) return { revisados: 0, resueltos: 0, fallidos: 0 };
+
+  let resueltos = 0;
+  let fallidos = 0;
+  // En serie, no en paralelo: a diferencia del webhook (que procesa como mucho los pedidos de UN
+  // pago), acá puede haber varios pedidos de distintos pagos juntos, y no tiene sentido armar
+  // todos los .zip al mismo tiempo dentro de una función serverless con tiempo límite.
+  for (const pedido of pendientes) {
+    const emailDestino = pedido?.familias?.email;
+    if (!emailDestino || !emailDestino.includes('@')) continue;
+    try {
+      const linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, pedido);
+      if (!linkDescargaHD) { fallidos += 1; continue; }
+      const resultadoEnvio = await enviarCorreoFotosHD({
+        to: emailDestino,
+        tutorNombre: pedido?.familias?.nombre || 'Familia',
+        alumnoNombre: pedido?.alumno_nombre || 'tu hijo/a',
+        colegioNombre: pedido?.colegio_nombre || 'tu colegio',
+        cursoCodigo: pedido?.curso_codigo || undefined,
+        kitNombre: pedido?.kit_nombre || undefined,
+        pedidoId: pedido?.pedido_friendly_id || pedido?.id,
+        total: Number(pedido?.total) || 0,
+        linkDescargaHD,
+      });
+      await registrarEnvioCorreoHD(supabase, pedido?.id, linkDescargaHD, resultadoEnvio?.success === true);
+      if (resultadoEnvio?.success === true) resueltos += 1; else fallidos += 1;
+    } catch (err: any) {
+      fallidos += 1;
+      console.warn(`[cron reintentar-hd] Falló el reintento para el pedido ${pedido?.id}:`, err?.message || err);
+    }
+  }
+  return { revisados: pendientes.length, resueltos, fallidos };
+}
+
+// Auditoría 2026-09-20: endpoint que dispara Vercel Cron (ver vercel.json) para que el reintento
+// del .zip HD no dependa de que alguien abra el panel de Laboratorio. Protegido con CRON_SECRET:
+// Vercel manda automáticamente "Authorization: Bearer <CRON_SECRET>" en las llamadas programadas
+// cuando esa variable de entorno existe — hay que crearla en el proyecto de Vercel (cualquier
+// texto largo al azar sirve) para que este endpoint acepte las llamadas. Sin esa variable
+// configurada, el endpoint sigue existiendo pero rechaza todo (falla cerrado, no abierto).
+app.get('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
+  const secretoEsperado = process.env.CRON_SECRET;
+  const autorizacion = req.headers.authorization;
+  if (!secretoEsperado || autorizacion !== `Bearer ${secretoEsperado}`) {
+    return res.status(401).json({ success: false, error: 'No autorizado.' });
+  }
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+  const resultado = await reintentarPedidosConHDPendiente(supabase);
+  console.log('[cron reintentar-hd]', resultado);
+  return res.json({ success: true, ...resultado });
+});
 
 // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): el link de descarga
 // HD se firma por 90 días al generar el .zip (ver arriba) y ese mismo valor quedaba guardado en
