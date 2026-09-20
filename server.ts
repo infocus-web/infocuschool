@@ -1495,8 +1495,22 @@ app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
 });
 
 // Vacía por completo el catálogo de fotos (se usa junto con el botón "Limpiar Supabase" que ya vacía los buckets)
+// Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): este endpoint borra
+// TODO el catálogo de fotos de TODOS los colegios de una sola vez, sin ningún tipo de
+// confirmación más allá de tener sesión de admin — a diferencia de "Cerrar año", que exige
+// escribir a mano una frase exacta antes de borrar nada. Un solo click accidental (o un token de
+// admin filtrado) borra el catálogo completo sin posibilidad de deshacer. Se agrega la misma
+// frase de seguridad que usa "Cerrar año".
 app.delete('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response) => {
   try {
+    const confirmacion = (req.body && (req.body as any).confirmacion) || (req.query.confirmacion as string) || '';
+    const normalizar = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (normalizar(confirmacion) !== normalizar('borrar todas las fotos')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Falta confirmar. Tenés que mandar la frase exacta: "BORRAR TODAS LAS FOTOS".',
+      });
+    }
     const supabase = getServerSupabase();
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado' });
@@ -1589,11 +1603,22 @@ app.post('/api/admin/storage/eliminar-archivos', requireAdminAuth, async (req: R
 });
 
 // Vacía por completo un bucket (botón "Limpiar Supabase" del panel, antes de subir un lote nuevo).
+// Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): mismo problema que
+// DELETE /api/admin/fotos — vacía un bucket entero (potencialmente todas las fotos HD o web del
+// negocio) sin más confirmación que la sesión de admin. Se agrega la misma frase de seguridad
+// que usa "Cerrar año", específica del bucket para evitar confundir cuál se va a vaciar.
 app.post('/api/admin/storage/limpiar-bucket', requireAdminAuth, async (req: Request, res: Response) => {
   try {
-    const { bucket, prefix } = req.body || {};
+    const { bucket, prefix, confirmacion } = req.body || {};
     if (!BUCKETS_FOTOS_PERMITIDOS.has(bucket)) {
       return res.status(400).json({ success: false, error: 'Bucket no permitido' });
+    }
+    const normalizar = (s: string) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (normalizar(confirmacion) !== normalizar(`borrar bucket ${bucket}`)) {
+      return res.status(400).json({
+        success: false,
+        error: `Falta confirmar. Tenés que mandar la frase exacta: "BORRAR BUCKET ${String(bucket).toUpperCase()}".`,
+      });
     }
     const supabase = getServerSupabase();
     if (!supabase) {
@@ -1720,15 +1745,17 @@ async function idsDeColegioParaCierre(
 
   let pedidosQuery = supabase.from('pedidos').select('id');
   if (!todos) {
-    const filtros: string[] = [];
+    // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): esto filtraba
+    // sólo por familia_id/alumno_id, pero esas dos columnas del pedido casi nunca se completan
+    // (sólo se llenan cuando la familia deja nombre/whatsapp/email, y alumno_id ni se usa hoy);
+    // en cambio "pedidos.colegio_id" SÍ se guarda siempre desde que se creó el pedido (ver
+    // /api/pedidos/crear). Sin este filtro directo, el cierre de año de un colegio dejaba
+    // huérfanos casi todos sus pedidos: no se borraban del cierre y, peor, "resumen" mostraba un
+    // conteo de pedidos falso (casi siempre 0) aunque el colegio tuviera pedidos reales.
+    const filtros: string[] = [`colegio_id.eq.${colegioId}`];
     if (familiaIds.length > 0) filtros.push(`familia_id.in.(${familiaIds.join(',')})`);
     if (alumnoIds.length > 0) filtros.push(`alumno_id.in.(${alumnoIds.join(',')})`);
-    if (filtros.length === 0) {
-      // Sin familias ni alumnos en este colegio: no puede haber ningún pedido que le pertenezca.
-      pedidosQuery = pedidosQuery.eq('id', '00000000-0000-0000-0000-000000000000');
-    } else {
-      pedidosQuery = pedidosQuery.or(filtros.join(','));
-    }
+    pedidosQuery = pedidosQuery.or(filtros.join(','));
   }
   const { data: pedidosData, error: errP } = await pedidosQuery;
   if (errP) throw errP;
@@ -4330,6 +4357,35 @@ async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: an
   }
 }
 
+// Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): el link de descarga
+// HD se firma por 90 días al generar el .zip (ver arriba) y ese mismo valor quedaba guardado en
+// "pedidos.link_descarga_hd" para siempre — pasados los 90 días, el link roto seguía
+// devolviéndose tal cual en /api/pedidos/:id/status y /api/pedidos/buscar, y la única forma de
+// arreglarlo era que el admin usara a mano "Reenviar Email HD" desde el panel. El nombre del
+// archivo .zip en Storage es determinístico (no cambia), así que acá se puede volver a firmar
+// una URL fresca de 90 días sobre el MISMO .zip ya generado, sin tener que rearmarlo — barato
+// (una sola llamada a Storage) y transparente para la familia. Si el objeto ya no existiera en
+// Storage por algún motivo, se devuelve tal cual el link guardado como último recurso.
+async function refirmarLinkDescargaHDSiExiste(supabase: SupabaseClient, pedido: { id: string; pedido_friendly_id?: string | null; link_descarga_hd?: string | null }): Promise<string | undefined> {
+  if (!pedido?.link_descarga_hd) return undefined;
+  try {
+    const nombreZip = `zips-pedidos/${pedido.pedido_friendly_id || pedido.id}.zip`;
+    const { data: firmado, error } = await supabase.storage
+      .from('fotos-hd')
+      .createSignedUrl(nombreZip, 60 * 60 * 24 * 90);
+    if (error || !firmado?.signedUrl) {
+      return pedido.link_descarga_hd;
+    }
+    if (firmado.signedUrl !== pedido.link_descarga_hd) {
+      await supabase.from('pedidos').update({ link_descarga_hd: firmado.signedUrl }).eq('id', pedido.id);
+    }
+    return firmado.signedUrl;
+  } catch (err: any) {
+    console.warn(`[ZIP HD] No se pudo refirmar el link de descarga para el pedido ${pedido?.id}:`, err?.message || err);
+    return pedido.link_descarga_hd;
+  }
+}
+
 interface DatosCorreoCodigoAcceso {
   to: string;
   padreNombre: string;
@@ -4572,18 +4628,31 @@ const PRECIOS_KITS: Record<string, number> = {
 const PRECIO_CARPETA_EXTRA = 15000;
 const MAX_CARPETAS_EXTRA = 20; // tope defensivo, no hay caso de uso real por encima de esto
 
+// Auditoría 2026-09-19 (bug real encontrado en auditoría de código, CRÍTICO): precio por cada
+// "Otra Foto" suelta del evento (fuera del kit) — debe coincidir siempre con
+// PRECIO_FOTO_EVENTO en PortalFamiliasModal.tsx. Antes esta constante no existía del lado del
+// servidor: el frontend mostraba estas fotos como cobradas en el total que la familia veía,
+// pero ningún endpoint las sumaba al monto real, así que se cobraba de menos (o directamente
+// $0 extra) por fotos que la familia sí recibía.
+const PRECIO_FOTO_EVENTO = 5000;
+const MAX_FOTOS_SUELTAS = 50; // tope defensivo, no hay caso de uso real por encima de esto
+
 // Única función que calcula lo que se cobra por un pedido — la usan tanto la creación de la
 // preferencia de Mercado Pago como el registro del pedido en la base (ver auditoría
 // 2026-09-09, punto de gestión "un solo lugar de verdad para los precios"). Devuelve null si
 // el kit no se reconoce.
-function calcularTotalPedido(kitId: string, carpetasExtras: unknown): number | null {
+function calcularTotalPedido(kitId: string, carpetasExtras: unknown, cantidadFotosSueltas: unknown = 0): number | null {
   const precioBaseKit = PRECIOS_KITS[kitId];
   if (precioBaseKit === undefined) return null;
   const extrasValidados = Math.min(
     MAX_CARPETAS_EXTRA,
     Math.max(0, Math.floor(Number(carpetasExtras) || 0))
   );
-  return precioBaseKit + extrasValidados * PRECIO_CARPETA_EXTRA;
+  const fotosSueltasValidadas = Math.min(
+    MAX_FOTOS_SUELTAS,
+    Math.max(0, Math.floor(Number(cantidadFotosSueltas) || 0))
+  );
+  return precioBaseKit + extrasValidados * PRECIO_CARPETA_EXTRA + fotosSueltasValidadas * PRECIO_FOTO_EVENTO;
 }
 
 // Crear preferencia de pago en Mercado Pago
@@ -4596,6 +4665,7 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
       alumnoNombre,
       colegioNombre,
       carpetasExtras,
+      cantidadFotosSueltas,
       tutorNombre,
       tutorEmail,
       tutorTelefono,
@@ -4603,7 +4673,7 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
 
     // El monto a cobrar SIEMPRE se calcula acá, del lado del servidor — nunca se usa el
     // "total" que pueda mandar el cliente, aunque venga en el body.
-    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
+    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas);
     if (totalCalculado === null) {
       return res.status(400).json({
         success: false,
@@ -4696,7 +4766,7 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
 
     const mpItems: any[] = [];
     for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras);
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, item?.cantidadFotosSueltas);
       if (totalItem === null) {
         return res.status(400).json({
           success: false,
@@ -4797,7 +4867,13 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       linkDescargaHD,
     } = req.body || {};
 
-    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
+    // Auditoría 2026-09-19: la cantidad de "Otras Fotos" sueltas se deriva de la propia lista de
+    // ids que manda el cliente (fotosSeleccionadas.otrasIds) — no de un número aparte que el
+    // cliente podría inflar o reducir sin relación con lo que realmente eligió.
+    const cantidadFotosSueltas = Array.isArray((fotosSeleccionadas as any)?.otrasIds)
+      ? (fotosSeleccionadas as any).otrasIds.length
+      : 0;
+    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas);
     if (totalCalculado === null) {
       return res.status(400).json({ success: false, error: 'Kit no reconocido. No se puede registrar el pedido.' });
     }
@@ -4820,6 +4896,19 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
         if (typeof val === 'string') limpio[clave] = val.slice(0, 200);
         else if (typeof val === 'number' && Number.isFinite(val)) limpio[clave] = val;
         else if (typeof val === 'boolean') limpio[clave] = val;
+        else if (Array.isArray(val)) {
+          // Auditoría 2026-09-19 (bug real encontrado en auditoría de código): faltaba esta
+          // rama — un array (como "otrasIds", los ids de las fotos sueltas/eventos elegidas)
+          // no entraba en ninguna de las de arriba y se descartaba en silencio. Consecuencia:
+          // ninguna foto suelta quedaba jamás registrada en el pedido guardado, así que ni la
+          // generación automática del .zip HD ni el panel de Laboratorio se enteraban de que
+          // existían, aunque la familia las hubiera pagado.
+          const limpioArray = val
+            .filter((item) => typeof item === 'string')
+            .map((item) => String(item).slice(0, 200))
+            .slice(0, 50);
+          if (limpioArray.length > 0) limpio[clave] = limpioArray;
+        }
       }
       return limpio;
     };
@@ -4932,15 +5021,34 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         if (typeof val === 'string') limpio[clave] = val.slice(0, 200);
         else if (typeof val === 'number' && Number.isFinite(val)) limpio[clave] = val;
         else if (typeof val === 'boolean') limpio[clave] = val;
+        else if (Array.isArray(val)) {
+          // Auditoría 2026-09-19 (bug real encontrado en auditoría de código): faltaba esta
+          // rama — un array (como "otrasIds", los ids de las fotos sueltas/eventos elegidas)
+          // no entraba en ninguna de las de arriba y se descartaba en silencio. Consecuencia:
+          // ninguna foto suelta quedaba jamás registrada en el pedido guardado, así que ni la
+          // generación automática del .zip HD ni el panel de Laboratorio se enteraban de que
+          // existían, aunque la familia las hubiera pagado.
+          const limpioArray = val
+            .filter((item) => typeof item === 'string')
+            .map((item) => String(item).slice(0, 200))
+            .slice(0, 50);
+          if (limpioArray.length > 0) limpio[clave] = limpioArray;
+        }
       }
       return limpio;
     };
 
     // Un total válido para CADA ítem, calculado siempre del lado del servidor. Si cualquier
     // ítem tiene un kit no reconocido, se corta todo el carrito antes de escribir nada.
+    // Auditoría 2026-09-19: ver comentario equivalente en /api/pedidos/crear — la cantidad de
+    // "Otras Fotos" sueltas se deriva de la propia lista de ids de cada ítem, no de un número
+    // aparte enviado por el cliente.
+    const cantidadFotosSueltasDe = (item: any): number =>
+      Array.isArray(item?.fotosSeleccionadas?.otrasIds) ? item.fotosSeleccionadas.otrasIds.length : 0;
+
     let totalGrupo = 0;
     for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras);
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item));
       if (totalItem === null) {
         return res.status(400).json({
           success: false,
@@ -4976,7 +5084,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
     const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
     const filasPedido: Record<string, any>[] = [];
     for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras) as number;
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item)) as number;
       const tipoKit = item?.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
       const extrasValidados = Math.min(20, Math.max(0, Math.floor(Number(item?.carpetasExtras) || 0)));
       const metodoPagoValida = metodosValidos.includes(item?.metodoPago) ? item.metodoPago : 'mercadopago';
@@ -5047,31 +5155,41 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
     if (webhookSecret && webhookSecret.trim()) {
       const xSignature = req.headers['x-signature'] as string;
       const xRequestId = req.headers['x-request-id'] as string;
-      if (xSignature) {
-        const parts = xSignature.split(',');
-        let ts = '';
-        let hash = '';
-        for (const part of parts) {
-          const [k, v] = part.split('=');
-          if (k && k.trim() === 'ts') ts = (v || '').trim();
-          if (k && k.trim() === 'v1') hash = (v || '').trim();
-        }
-        if (ts && hash) {
-          const manifest = `id:${paymentId};request-id:${xRequestId || ''};ts:${ts};`;
-          const expectedHash = crypto
-            .createHmac('sha256', webhookSecret.trim())
-            .update(manifest)
-            .digest('hex');
-          // Antes esto solo dejaba un warning en el log y SEGUÍA procesando la notificación
-          // igual. El impacto real de una firma inválida era acotado (después igual se
-          // reconsulta el pago directo contra la API de Mercado Pago con el access token
-          // propio, así que no se puede "inventar" un pago aprobado), pero no hay motivo para
-          // aceptar una notificación que dice no venir de Mercado Pago: se rechaza.
-          if (hash !== expectedHash) {
-            console.warn('[Mercado Pago Webhook] Firma x-signature inválida — notificación rechazada.');
-            return res.status(401).send('Invalid signature');
-          }
-        }
+      // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, BAJO): si faltaba el
+      // header x-signature (o venía sin las partes "ts"/"v1" reconocibles), este bloque no
+      // hacía nada — ni rechazaba ni advertía — y la notificación se procesaba como si la firma
+      // hubiera sido válida. Con MERCADOPAGO_WEBHOOK_SECRET configurado, la intención es
+      // rechazar cualquier notificación que no pueda verificarse, no sólo la que tiene una firma
+      // presente pero incorrecta.
+      if (!xSignature) {
+        console.warn('[Mercado Pago Webhook] Falta el header x-signature (con MERCADOPAGO_WEBHOOK_SECRET configurado) — notificación rechazada.');
+        return res.status(401).send('Missing signature');
+      }
+      const parts = xSignature.split(',');
+      let ts = '';
+      let hash = '';
+      for (const part of parts) {
+        const [k, v] = part.split('=');
+        if (k && k.trim() === 'ts') ts = (v || '').trim();
+        if (k && k.trim() === 'v1') hash = (v || '').trim();
+      }
+      if (!ts || !hash) {
+        console.warn('[Mercado Pago Webhook] Header x-signature con formato inesperado — notificación rechazada.');
+        return res.status(401).send('Invalid signature format');
+      }
+      const manifest = `id:${paymentId};request-id:${xRequestId || ''};ts:${ts};`;
+      const expectedHash = crypto
+        .createHmac('sha256', webhookSecret.trim())
+        .update(manifest)
+        .digest('hex');
+      // Antes esto solo dejaba un warning en el log y SEGUÍA procesando la notificación
+      // igual. El impacto real de una firma inválida era acotado (después igual se
+      // reconsulta el pago directo contra la API de Mercado Pago con el access token
+      // propio, así que no se puede "inventar" un pago aprobado), pero no hay motivo para
+      // aceptar una notificación que dice no venir de Mercado Pago: se rechaza.
+      if (hash !== expectedHash) {
+        console.warn('[Mercado Pago Webhook] Firma x-signature inválida — notificación rechazada.');
+        return res.status(401).send('Invalid signature');
       }
     }
 
@@ -5200,6 +5318,12 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
       } else if (paymentInfo.status === 'rejected' || paymentInfo.status === 'cancelled') {
         if (pedidoId && supabase) {
           console.log(`[Mercado Pago Webhook] Marcando pedido ${pedidoId} como rechazado/cancelado.`);
+          // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, ALTO): a esta rama
+          // le faltaba el mismo ".neq('estado', 'pagado')" que sí tiene la rama "approved" de
+          // arriba. Mercado Pago puede reintentar/entregar tarde una notificación de un intento
+          // de pago viejo (rechazado) DESPUÉS de que un intento posterior ya haya sido aprobado
+          // y el pedido esté "pagado" — sin este guard, esa notificación tardía podía revertir
+          // en silencio un pedido ya pagado (y con fotos ya en camino) de vuelta a "cancelado".
           const { data: dataCancelado } = await supabase
             .from('pedidos')
             .update({
@@ -5208,6 +5332,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
               updated_at: new Date().toISOString(),
             })
             .eq('id', pedidoId)
+            .neq('estado', 'pagado')
             .select('id');
           // Igual que en la rama "approved": si no hay ningún pedido individual con ese id,
           // puede tratarse de un carrito multi-hijo — se cancelan todas las filas del grupo.
@@ -5219,7 +5344,8 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                 mp_payment_id: String(paymentId),
                 updated_at: new Date().toISOString(),
               })
-              .eq('grupo_pago_id', pedidoId);
+              .eq('grupo_pago_id', pedidoId)
+              .neq('estado', 'pagado');
           }
         }
       }
@@ -5238,11 +5364,11 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
 app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 20, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
-      pedidoId, kitId, kitNombre, alumnoNombre, colegioNombre, carpetasExtras,
+      pedidoId, kitId, kitNombre, alumnoNombre, colegioNombre, carpetasExtras, cantidadFotosSueltas,
       tutorNombre, tutorEmail, tutorTelefono,
     } = req.body || {};
 
-    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras);
+    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas);
     if (totalCalculado === null) {
       return res.status(400).json({
         success: false,
@@ -5352,7 +5478,7 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
     let totalGrupo = 0;
     const products: any[] = [];
     for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras);
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, item?.cantidadFotosSueltas);
       if (totalItem === null) {
         return res.status(400).json({
           success: false,
@@ -5568,16 +5694,29 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
     } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '')) {
       if (pedidoId && supabase) {
         console.log(`[Nave Webhook] Marcando pedido ${pedidoId} como cancelado (estado Nave: ${estadoNave}).`);
-        const { data: dataCancelado } = await supabase
+        // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, ALTO): a diferencia
+        // de la rama "approved" de arriba, acá no había ningún guard contra una notificación
+        // tardía de un intento de pago ya superado. PERO ojo — a diferencia de Mercado Pago, acá
+        // "REJECTED"/"CANCELLED" (intento fallido antes de pagar) y
+        // "PURCHASE_REVERSED"/"CHARGEBACK_REVIEW"/"CHARGED_BACK" (contracargo DESPUÉS de haber
+        // cobrado) son casos distintos: el contracargo debe poder cancelar un pedido que hoy
+        // está "pagado" — ahí SÍ es el resultado correcto. El guard sólo aplica a
+        // REJECTED/CANCELLED, para no revertir en silencio un pedido que un intento posterior ya
+        // dejó pagado.
+        const esContracargo = ['PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '');
+        let queryIndividual = supabase
           .from('pedidos')
           .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
-          .eq('id', pedidoId)
-          .select('id');
+          .eq('id', pedidoId);
+        if (!esContracargo) queryIndividual = queryIndividual.neq('estado', 'pagado');
+        const { data: dataCancelado } = await queryIndividual.select('id');
         if (!dataCancelado || dataCancelado.length === 0) {
-          await supabase
+          let queryGrupo = supabase
             .from('pedidos')
             .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
             .eq('grupo_pago_id', pedidoId);
+          if (!esContracargo) queryGrupo = queryGrupo.neq('estado', 'pagado');
+          await queryGrupo;
         }
       }
     }
@@ -5609,7 +5748,7 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
     // 2026-09-09.
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, link_descarga_hd')
+      .select('id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd')
       .eq('id', id)
       .maybeSingle();
 
@@ -5663,8 +5802,65 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
       }
     }
 
+    // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): Mercado Pago SÍ
+    // firma sus webhooks (a diferencia de Nave), pero un webhook igual puede perderse por una
+    // caída puntual, un timeout, o quedar bloqueado por un error de configuración temporal — y
+    // hasta ahora no había ningún respaldo: un pedido pagado en Mercado Pago cuyo webhook no
+    // llegara se quedaba en "pendiente_pago" para siempre del lado nuestro, aunque el dinero sí
+    // se hubiera acreditado. Mismo criterio que el respaldo de Nave de arriba: si el pedido es
+    // de Mercado Pago, sigue pendiente y ya se intentó generar una preferencia de pago
+    // (mp_preference_id), se reconsulta directo contra la API de Mercado Pago por
+    // external_reference (el id del pedido, o el grupo_pago_id si es un carrito multi-hijo) y se
+    // autocorrige el estado antes de responder.
+    if (data.metodo_pago === 'mercadopago' && estadoFinal === 'pendiente_pago' && data.mp_preference_id) {
+      try {
+        const mpConfig = getMercadoPagoConfig();
+        if (mpConfig) {
+          const referenciaBusqueda = data.grupo_pago_id || data.id;
+          const resultadoBusqueda = await new Payment(mpConfig).search({
+            options: { external_reference: referenciaBusqueda, sort: 'date_created', criteria: 'desc' },
+          });
+          const pagos = resultadoBusqueda?.results || [];
+          const pagoAprobado = pagos.find((p) => p.status === 'approved');
+          const pagoRechazado = pagos.find((p) => p.status === 'rejected' || p.status === 'cancelled');
+          if (pagoAprobado) {
+            const filtroActualizacion = data.grupo_pago_id
+              ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
+              : { columna: 'id' as const, valor: data.id };
+            await supabase
+              .from('pedidos')
+              .update({
+                estado: 'pagado',
+                mp_payment_id: pagoAprobado.id ? String(pagoAprobado.id) : undefined,
+                updated_at: new Date().toISOString(),
+              })
+              .eq(filtroActualizacion.columna, filtroActualizacion.valor)
+              .neq('estado', 'pagado');
+            estadoFinal = 'pagado';
+          } else if (pagoRechazado) {
+            const filtroActualizacion = data.grupo_pago_id
+              ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
+              : { columna: 'id' as const, valor: data.id };
+            await supabase
+              .from('pedidos')
+              .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+              .eq(filtroActualizacion.columna, filtroActualizacion.valor)
+              .neq('estado', 'pagado');
+            estadoFinal = 'cancelado';
+          }
+        }
+      } catch (errMp) {
+        console.warn('[Mercado Pago] No se pudo reconsultar el pago como respaldo:', errMp);
+      }
+    }
+
     const esAprobado = estadoFinal === 'pagado' || estadoFinal === 'entregado';
     const esRechazado = estadoFinal === 'cancelado';
+
+    // Auditoría 2026-09-19: refirma el link de descarga HD contra el mismo .zip ya generado en
+    // cada consulta (ver refirmarLinkDescargaHDSiExiste) — así nunca se le devuelve a la familia
+    // un link firmado hace más de 90 días que ya dejó de funcionar.
+    const linkDescargaHD = await refirmarLinkDescargaHDSiExiste(supabase, data);
 
     // Auditoría 2026-09-18 (reporte de Pablo): el Portal de Familias deja de consultar este
     // endpoint apenas el pago queda "aprobado" (ver PortalFamiliasModal.tsx), así que el botón
@@ -5678,7 +5874,7 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
       estado: estadoFinal,
       estadoPago: esAprobado ? 'aprobado' : esRechazado ? 'rechazado' : 'pendiente',
       actualizadoEl: data.updated_at,
-      linkDescargaHD: data.link_descarga_hd || undefined,
+      linkDescargaHD: linkDescargaHD || undefined,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al consultar estado del pedido' });
@@ -5690,12 +5886,27 @@ app.get('/api/pedidos/:id/status', async (req, res) => {
 // otro dispositivo o hubiera borrado los datos del navegador no encontraba su pedido, aunque
 // estuviera pagado y guardado en Supabase. Este endpoint público (sin login, como corresponde a
 // una búsqueda que hace la propia familia con su número de pedido o teléfono) permite buscar
-// contra los datos reales. Es deliberadamente angosto para no poder usarse para "barrer" la
-// base de pedidos de otras familias: exige al menos 4 caracteres del número de pedido, o al
-// menos 6 dígitos de teléfono (la misma exigencia mínima que ya tenía la búsqueda local), sólo
-// devuelve UNA coincidencia (la más reciente) y va detrás del mismo limitador de frecuencia por
-// IP que el resto de los endpoints públicos sensibles.
-app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 * 1000), async (req, res) => {
+// contra los datos reales.
+//
+// Auditoría 2026-09-19 (bug real encontrado en auditoría de seguridad): el diseño original de
+// este endpoint decía ser "deliberadamente angosto para no poder usarse para barrer la base de
+// pedidos de otras familias", pero no lo era: buscaba con `ilike('%query%')` (coincide con
+// CUALQUIER parte del texto) contra un número de pedido con sólo ~9.000 combinaciones posibles
+// (se genera en el navegador como IFS-2026-<4 dígitos al azar>) y devolvía nombre, teléfono y un
+// link de descarga de fotos HD válido por 90 días — bastaba probar "0000".."9999" como número de
+// 4 dígitos para ir sacando, pedido por pedido, los datos de cualquier familia. Se corrige así:
+//   1) Coincidencia EXACTA del número de pedido completo (ya no alcanza con un fragmento) y con
+//      el formato validado (IFS-2026-XXXX) — ya no sirve probar únicamente 4 dígitos sueltos.
+//   2) Para la búsqueda por teléfono, se exige el número casi completo (8+ dígitos en vez de 6)
+//      — sigue permitiendo que una familia lo tipee sin el 0 o el 15 iniciales, pero ya no
+//      alcanza con adivinar sólo 6 dígitos al azar.
+//   3) El límite de intentos por IP baja de 15 cada 10 minutos a 5 cada 30 minutos, específico
+//      para este endpoint, para que ni siquiera intentando desde una sola IP real (que además
+//      Vercel no deja falsificar, ver x-forwarded-for) sea práctico recorrer las combinaciones
+//      posibles.
+const FORMATO_PEDIDO_FRIENDLY_ID = /^[A-Z]{2,4}-\d{4}-\d{3,5}$/;
+
+app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 1000), async (req, res) => {
   try {
     const qRaw = String(req.query.query || '').trim();
     if (!qRaw) {
@@ -5712,17 +5923,17 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 *
     const columnas = 'id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, familias(nombre, whatsapp)';
     let fila: any = null;
 
-    if (query.length >= 4) {
+    if (FORMATO_PEDIDO_FRIENDLY_ID.test(query)) {
       const { data } = await supabase
         .from('pedidos')
         .select(columnas)
-        .ilike('pedido_friendly_id', `%${query}%`)
+        .ilike('pedido_friendly_id', query)
         .order('created_at', { ascending: false })
         .limit(1);
       if (data && data.length > 0) fila = data[0];
     }
 
-    if (!fila && soloDigitos.length >= 6) {
+    if (!fila && soloDigitos.length >= 8) {
       const { data, error } = await supabase
         .from('pedidos')
         .select('id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, familias!inner(nombre, whatsapp)')
@@ -5736,6 +5947,11 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 *
     if (!fila) {
       return res.status(404).json({ success: false, error: 'No se encontró ningún pedido registrado con ese número o teléfono.' });
     }
+
+    // Auditoría 2026-09-19: ver comentario de refirmarLinkDescargaHDSiExiste en
+    // /api/pedidos/:id/status — mismo criterio acá, para que este buscador tampoco devuelva un
+    // link de descarga vencido después de 90 días.
+    const linkDescargaHD = await refirmarLinkDescargaHDSiExiste(supabase, fila);
 
     return res.json({
       success: true,
@@ -5751,7 +5967,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 15, 10 * 60 *
         total: fila.total,
         fecha: fila.created_at,
         estado: fila.estado,
-        linkDescargaHD: fila.link_descarga_hd || null,
+        linkDescargaHD: linkDescargaHD || null,
       },
     });
   } catch (err: any) {
