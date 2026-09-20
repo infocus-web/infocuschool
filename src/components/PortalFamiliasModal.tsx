@@ -248,6 +248,11 @@ export default function PortalFamiliasModal({
         cursoCodigo: pedido.cursoCodigo,
         total: pedido.total,
         carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
+        // Auditoría 2026-09-20 (bug real, CRÍTICO): faltaba mandar esto — el servidor recalcula
+        // el total SIEMPRE del lado propio (nunca confía en "total"), pero sin este dato trataba
+        // cualquier pedido con "Otras Fotos" como si tuviera 0, cobrando de menos por Mercado
+        // Pago aunque el .zip HD sí las incluyera igual. Ver calcularTotalPedido en server.ts.
+        cantidadFotosSueltas: pedido.copiasExtras?.otras15x21 || 0,
         tutorNombre: pedido.tutorNombre || 'Tutor',
         tutorEmail: pedido.tutorEmail,
         tutorTelefono: pedido.tutorTelefono || undefined,
@@ -283,6 +288,9 @@ export default function PortalFamiliasModal({
         alumnoNombre: pedido.alumnoNombre || 'Alumno',
         colegioNombre: pedido.colegioNombre || 'Colegio',
         carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
+        // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario equivalente en
+        // generarLinkDePago (Mercado Pago) — mismo problema en Nave.
+        cantidadFotosSueltas: pedido.copiasExtras?.otras15x21 || 0,
         tutorNombre: pedido.tutorNombre || 'Tutor',
         tutorEmail: pedido.tutorEmail,
         tutorTelefono: pedido.tutorTelefono || undefined,
@@ -1002,6 +1010,8 @@ export default function PortalFamiliasModal({
           cursoCodigo: codCurso,
           total: total,
           carpetasExtras: extraCarpetas,
+          // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario en generarLinkDePago.
+          cantidadFotosSueltas: fotosSueltasSeleccionadas.length,
           tutorNombre: tutorNombre.trim() || 'Tutor',
           tutorEmail: tutorEmail.trim(),
           tutorTelefono: tutorWhatsapp.trim() || undefined,
@@ -1033,6 +1043,8 @@ export default function PortalFamiliasModal({
           alumnoNombre: nombreAlumno.trim() || 'Alumno',
           colegioNombre: selectedColegio?.nombre || 'Colegio',
           carpetasExtras: extraCarpetas,
+          // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario en generarLinkDePago.
+          cantidadFotosSueltas: fotosSueltasSeleccionadas.length,
           tutorNombre: tutorNombre.trim() || 'Tutor',
           tutorEmail: tutorEmail.trim(),
           tutorTelefono: tutorWhatsapp.trim() || undefined,
@@ -1203,6 +1215,9 @@ export default function PortalFamiliasModal({
         alumnoNombre: item.alumnoNombre,
         colegioNombre: item.colegioNombre,
         carpetasExtras: item.copiasExtras?.carpetasExtras || 0,
+        // Auditoría 2026-09-20 (bug real, CRÍTICO): ver comentario en generarLinkDePago — mismo
+        // problema acá, por hijo, para el carrito multi-hijo (Mercado Pago y Nave combinados).
+        cantidadFotosSueltas: item.copiasExtras?.otras15x21 || 0,
       }));
 
       if (metodoPago === 'mercadopago') {
