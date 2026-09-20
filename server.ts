@@ -1013,8 +1013,34 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   let enviados = 0;
   const errores: string[] = [];
   const resultados: { pedidoId: string; estadoLab: string; fechaEnvioProduccion?: string | null; fechaEnvioListoRetiro?: string | null }[] = [];
+  // Auditoría 2026-09-20 (bug real reportado por Pablo: apretó "Listo para retirar" en un pedido
+  // que nunca había pasado por "En producción", y el sistema lo dejó pasar sin ningún aviso — ni
+  // acá, ni en el botón del panel, había nada que impidiera saltear el paso). Se busca el
+  // estado_lab actual de cada pedido ANTES de mandar nada, para poder frenar ese salto: no tiene
+  // sentido avisarle a una familia "andá a buscar tus fotos" si el laboratorio nunca las mandó a
+  // producción. Un pedido que YA está en 'listo_retiro' puede seguir recibiendo ese mismo aviso
+  // de nuevo (reenvío) sin problema.
+  const estadosActuales = new Map<string, string | null>();
+  if (supabase) {
+    const idsValidos = destinatarios.map((d: any) => d?.pedidoId).filter(Boolean);
+    if (idsValidos.length > 0) {
+      const { data: filasActuales, error: errorEstados } = await supabase
+        .from('pedidos')
+        .select('id, estado_lab')
+        .in('id', idsValidos);
+      if (errorEstados) {
+        console.warn('[notificar-estado] No se pudo verificar el estado_lab actual antes de enviar:', errorEstados.message);
+      } else {
+        (filasActuales || []).forEach((fila: any) => estadosActuales.set(fila.id, fila.estado_lab));
+      }
+    }
+  }
   for (const destinatario of destinatarios) {
     if (!destinatario?.to?.includes('@') || !destinatario?.pedidoId) { errores.push(`${destinatario?.alumnoNombre || 'Cliente'}: email o pedido inválido.`); continue; }
+    if (supabase && tipo === 'listo_retiro' && !estadosActuales.get(destinatario.pedidoId)) {
+      errores.push(`${destinatario.alumnoNombre || destinatario.to}: no se puede avisar "Listo para retirar" sin haber pasado antes por "En producción".`);
+      continue;
+    }
     try {
       await enviarCorreoActualizacionPedido({ tipo, ...destinatario });
       enviados += 1;
@@ -4297,6 +4323,45 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
 }
 
 /**
+ * Auditoría 2026-09-20 (bug real reportado por Pablo: "no le llega el enlace de descarga de
+ * fotos HD al cliente"). Causa raíz encontrada: aunque `generarYSubirZipHDParaPedido` y
+ * `enviarCorreoFotosHD` se ejecutaban bien en el webhook de pago, el resultado (el link firmado,
+ * si el correo salió, y cuándo) NUNCA se guardaba de vuelta en `pedidos` — ni acá, ni en el envío
+ * manual desde el botón "Reenviar Email HD" del panel. Eso significa que:
+ *   1) el panel de Laboratorio no podía distinguir un pedido al que ya se le mandó el link real
+ *      de uno al que sólo se le mandó el texto de "en breve" — ambos se veían iguales;
+ *   2) cada vez que alguien recargaba la página, `email_enviado`/`link_descarga_hd` volvían a
+ *      leerse vacíos de la base, aunque el correo ya se hubiera mandado bien.
+ * Esta función es el único lugar que graba ese resultado, para que la tabla `pedidos` sea la
+ * fuente de verdad real (no la memoria del navegador). Sólo marca `email_enviado = true` cuando
+ * el envío fue realmente exitoso (nunca en un envío simulado o fallido); el link se guarda igual
+ * aunque el correo fallara, para no perder un .zip que sí se llegó a generar. Nunca lanza un
+ * error — si falla el guardado, el pago/envío ya ocurrieron y no tiene sentido cortar el flujo
+ * por esto (mismo criterio que el resto de las actualizaciones "best effort" en este archivo).
+ */
+async function registrarEnvioCorreoHD(
+  supabase: SupabaseClient | null,
+  pedidoId: string | null | undefined,
+  linkDescargaHD: string | null,
+  envioExitoso: boolean
+): Promise<void> {
+  if (!supabase || !pedidoId) return;
+  try {
+    const cambios: Record<string, any> = {};
+    if (linkDescargaHD) cambios.link_descarga_hd = linkDescargaHD;
+    if (envioExitoso) {
+      cambios.email_enviado = true;
+      cambios.fecha_envio_email = new Date().toISOString();
+    }
+    if (Object.keys(cambios).length === 0) return;
+    const { error } = await supabase.from('pedidos').update(cambios).eq('id', pedidoId);
+    if (error) console.warn(`[registrarEnvioCorreoHD] No se pudo guardar el resultado del envío HD para ${pedidoId}:`, error.message);
+  } catch (err: any) {
+    console.warn(`[registrarEnvioCorreoHD] Error inesperado guardando el envío HD para ${pedidoId}:`, err?.message || err);
+  }
+}
+
+/**
  * Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD, en vez de que el
  * link de descarga quede vacío hasta que alguien lo suba a mano). Arma un .zip con los originales
  * en alta resolución (sin marca de agua) de las fotos que ESE pedido puntual compró — mismo
@@ -4541,7 +4606,15 @@ app.get(['/api/resend/status', '/resend/status'], requireAdminAuth, (req, res) =
 // cualquier casilla. Ahora exige la misma sesión de administrador que el resto del panel.
 app.post(['/api/enviar-fotos-hd', '/enviar-fotos-hd'], requireAdminAuth, async (req, res) => {
   try {
-    const resultado = await enviarCorreoFotosHD(req.body);
+    // Auditoría 2026-09-20: "pedidoId" en el body es el ID legible (IFS-2026-XXXX), sólo para
+    // mostrar en el correo — no sirve para encontrar la fila en Supabase. Se agrega
+    // "pedidoSupabaseId" (el UUID real) aparte, igual que ya se hace en /notificar-estado, para
+    // poder grabar el resultado del envío (ver registrarEnvioCorreoHD) cuando el fotógrafo
+    // reenvía el correo a mano desde el botón del panel de Laboratorio.
+    const { pedidoSupabaseId, ...datosCorreo } = req.body || {};
+    const resultado = await enviarCorreoFotosHD(datosCorreo);
+    const supabase = getServerSupabase();
+    await registrarEnvioCorreoHD(supabase, pedidoSupabaseId, datosCorreo?.linkDescargaHD || null, resultado?.success === true);
     if (!resultado.success && resultado.error) {
       return res.status(400).json(resultado);
     }
@@ -5330,7 +5403,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
             if (emailDestino && emailDestino.includes('@')) {
               const linkDescargaHD = supabase ? await generarYSubirZipHDParaPedido(supabase, orderData) : null;
               console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${orderData.id} a ${emailDestino}${linkDescargaHD ? ' (con .zip HD)' : ' (sin .zip HD todavía)'}`);
-              await enviarCorreoFotosHD({
+              const resultadoEnvio = await enviarCorreoFotosHD({
                 to: emailDestino,
                 tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
                 alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
@@ -5341,6 +5414,9 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
                 total: Number(orderData?.total) || 0,
                 linkDescargaHD: linkDescargaHD || undefined,
               });
+              // Auditoría 2026-09-20: antes acá se perdía el resultado — ni el link ni si el
+              // correo salió bien quedaban grabados en `pedidos` (ver registrarEnvioCorreoHD).
+              await registrarEnvioCorreoHD(supabase, orderData?.id, linkDescargaHD, resultadoEnvio?.success === true);
             }
           }));
         }
@@ -5706,7 +5782,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
           const emailDestino = orderData?.familias?.email;
           if (emailDestino && emailDestino.includes('@')) {
             const linkDescargaHD = supabase ? await generarYSubirZipHDParaPedido(supabase, orderData) : null;
-            await enviarCorreoFotosHD({
+            const resultadoEnvio = await enviarCorreoFotosHD({
               to: emailDestino,
               tutorNombre: orderData?.familias?.nombre || 'Familia',
               alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
@@ -5717,6 +5793,9 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
               total: Number(orderData?.total) || 0,
               linkDescargaHD: linkDescargaHD || undefined,
             });
+            // Auditoría 2026-09-20: mismo fix que en el webhook de Mercado Pago — sin esto, el
+            // panel nunca se enteraba de si el correo (y el link real) habían salido bien.
+            await registrarEnvioCorreoHD(supabase, orderData?.id, linkDescargaHD, resultadoEnvio?.success === true);
           }
         }));
       }
