@@ -71,9 +71,15 @@ export interface PedidoEscolarCompleto {
   // así que el panel no tenía forma de saber si un pedido ya había recibido el aviso y el botón
   // volvía a mostrarse como si nunca se hubiera enviado. Las fechas son SIEMPRE la del primer
   // envío (no se pisan en reenvíos — ver /api/admin/pedidos/notificar-estado).
-  estadoLab?: 'en_produccion' | 'listo_retiro' | null;
+  // Auditoría 2026-09-20 (revisión completa de estados): se suma 'entregado' como tercera etapa
+  // del mismo pipeline — antes el retiro físico no tenía ninguna forma de registrarse (ver
+  // POST /api/admin/pedidos/:id/marcar-retirado). Es la ÚNICA fuente de verdad del pipeline
+  // físico del pedido; "estadoEntrega" de abajo es sólo una vista derivada de este campo para las
+  // pantallas que ya existían antes de esta auditoría.
+  estadoLab?: 'en_produccion' | 'listo_retiro' | 'entregado' | null;
   fechaEnvioProduccion?: string;
   fechaEnvioListoRetiro?: string;
+  fechaEntregado?: string;
 }
 
 // Helper to sanitize strings for photo lab minilab machines (Noritsu / Fuji Frontier / Klick)
@@ -727,16 +733,19 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
 
   const archivosLab = generarArchivosParaLaboratorio(cursoCodigo, numLista, alumnoNombre, fotosSeleccionadas, copiasExtras, fotosDisponibles);
 
-  // La tabla real sólo tiene un único "estado" (pendiente_pago | pagado | entregado |
-  // cancelado); se mapea a los dos campos más granulares que usa hoy la UI del panel.
-  // Auditoría 2026-09-15: se suma "estado_lab" (en_produccion | listo_retiro | null), que es lo
-  // que ahora guarda /api/admin/pedidos/notificar-estado cuando se envían los avisos "En
-  // producción" / "Listo para retirar" desde el panel de Laboratorio — antes esos botones sólo
-  // mandaban el email y no quedaba ningún rastro en la base. "entregado" (el estado final, que
-  // sí tiene columna propia) siempre pisa a estado_lab si ambos están presentes.
+  // "estado" (columna real, sólo de PAGO): pendiente_pago | pagado | entregado (legado) |
+  // cancelado. "estado_lab" (columna real, todo el pipeline FÍSICO): null | en_produccion |
+  // listo_retiro | entregado — ver ETAPAS_LAB en server.ts.
+  // Auditoría 2026-09-20 (revisión completa de estados): antes "entregado" existía como valor de
+  // "estado" (mezclando "se cobró" con "se retiró"), pero nada en el panel llegó a escribirlo
+  // nunca — era una etapa sin forma de alcanzarse. Ahora el retiro físico vive en estado_lab
+  // (POST /api/admin/pedidos/:id/marcar-retirado) y "fila.estado === 'entregado'" queda sólo
+  // como lectura de compatibilidad por si alguna fila vieja lo tuviera (hoy ninguna la tiene).
+  // "estadoEntrega" es una vista derivada de estado_lab para las pantallas que ya existían antes
+  // de esta auditoría (portal de familias, seguimiento) — estado_lab es la fuente de verdad.
   let estadoPago: 'aprobado' | 'pendiente' = 'pendiente';
   let estadoEntrega: PedidoEscolarCompleto['estadoEntrega'] = 'en_espera';
-  if (fila.estado === 'entregado') {
+  if (fila.estado === 'entregado' || fila.estado_lab === 'entregado') {
     estadoPago = 'aprobado';
     estadoEntrega = 'entregado';
   } else if (fila.estado === 'pagado') {
@@ -778,6 +787,7 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
     estadoLab: fila.estado_lab || null,
     fechaEnvioProduccion: fila.fecha_envio_produccion || undefined,
     fechaEnvioListoRetiro: fila.fecha_envio_listo_retiro || undefined,
+    fechaEntregado: fila.fecha_entregado || undefined,
   };
 }
 
@@ -829,6 +839,27 @@ export async function generarZipHDAdmin(pedidoSupabaseId: string): Promise<{ suc
     return { success: true, linkDescargaHD: data.linkDescargaHD };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Error de red al generar el .zip HD.' };
+  }
+}
+
+/**
+ * Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo): cierra el pipeline físico
+ * del pedido registrando que la familia ya vino y se llevó sus fotos. El servidor exige que el
+ * pedido ya esté en "listo_retiro" (ver POST /api/admin/pedidos/:id/marcar-retirado en server.ts)
+ * — no se puede marcar como retirado algo que nunca avisamos que estaba listo.
+ */
+export async function marcarPedidoRetirado(pedidoSupabaseId: string): Promise<{ success: boolean; estadoLab?: string; fechaEntregado?: string; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/pedidos/${encodeURIComponent(pedidoSupabaseId)}/marcar-retirado`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo marcar el pedido como retirado.' };
+    }
+    return { success: true, estadoLab: data.estadoLab, fechaEntregado: data.fechaEntregado };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al marcar el pedido como retirado.' };
   }
 }
 
