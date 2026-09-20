@@ -1002,53 +1002,24 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   // había forma de filtrar por esa etapa. Se agrega la columna "estado_lab" (pedidos.estado_lab)
   // y se guarda acá, junto con el envío del email, para que quede reflejado en el panel.
   const supabase = getServerSupabase();
-  // Auditoría 2026-09-20 (pedido de Pablo): "En producción" y "Listo para retirar" ahora se
-  // pueden reenviar (el fotógrafo puede volver a avisar al mismo cliente si hace falta), pero la
-  // fecha que se le muestra en el panel tiene que ser SIEMPRE la del primer envío, no la del
-  // último — si no, cada reenvío "borraría" cuándo entró realmente en producción. Por eso la
-  // columna de fecha (fecha_envio_produccion / fecha_envio_listo_retiro) sólo se graba la
-  // primera vez (.is(columna, null) en el WHERE); estado_lab y updated_at sí se actualizan
-  // siempre, para que el panel siempre sepa cuál fue el último aviso mandado.
-  const columnaFecha = tipo === 'en_produccion' ? 'fecha_envio_produccion' : 'fecha_envio_listo_retiro';
   let enviados = 0;
   const errores: string[] = [];
-  const resultados: { pedidoId: string; estadoLab: string; fechaEnvioProduccion?: string | null; fechaEnvioListoRetiro?: string | null }[] = [];
   for (const destinatario of destinatarios) {
     if (!destinatario?.to?.includes('@') || !destinatario?.pedidoId) { errores.push(`${destinatario?.alumnoNombre || 'Cliente'}: email o pedido inválido.`); continue; }
     try {
       await enviarCorreoActualizacionPedido({ tipo, ...destinatario });
       enviados += 1;
       if (supabase) {
-        const ahora = new Date().toISOString();
-        // 1) Graba la fecha de "primera vez" sólo si todavía no existe.
-        const { error: errorFecha } = await supabase
+        const { error: updateError } = await supabase
           .from('pedidos')
-          .update({ [columnaFecha]: ahora })
-          .eq('id', destinatario.pedidoId)
-          .is(columnaFecha, null);
-        if (errorFecha) console.warn(`[notificar-estado] Email enviado pero no se pudo guardar ${columnaFecha} para ${destinatario.pedidoId}:`, errorFecha.message);
-        // 2) Actualiza el estado actual y updated_at siempre, sea primer envío o reenvío.
-        const { data: filaActualizada, error: updateError } = await supabase
-          .from('pedidos')
-          .update({ estado_lab: tipo, updated_at: ahora })
-          .eq('id', destinatario.pedidoId)
-          .select('id, estado_lab, fecha_envio_produccion, fecha_envio_listo_retiro')
-          .single();
-        if (updateError) {
-          console.warn(`[notificar-estado] Email enviado pero no se pudo guardar estado_lab para ${destinatario.pedidoId}:`, updateError.message);
-        } else if (filaActualizada) {
-          resultados.push({
-            pedidoId: destinatario.pedidoId,
-            estadoLab: filaActualizada.estado_lab,
-            fechaEnvioProduccion: filaActualizada.fecha_envio_produccion,
-            fechaEnvioListoRetiro: filaActualizada.fecha_envio_listo_retiro,
-          });
-        }
+          .update({ estado_lab: tipo, updated_at: new Date().toISOString() })
+          .eq('id', destinatario.pedidoId);
+        if (updateError) console.warn(`[notificar-estado] Email enviado pero no se pudo guardar estado_lab para ${destinatario.pedidoId}:`, updateError.message);
       }
     }
     catch (error: any) { errores.push(`${destinatario.alumnoNombre || destinatario.to}: ${error?.message || 'falló el envío'}`); }
   }
-  return res.status(enviados > 0 ? 200 : 502).json({ success: errores.length === 0, enviados, fallidos: errores.length, errores, resultados });
+  return res.status(enviados > 0 ? 200 : 502).json({ success: errores.length === 0, enviados, fallidos: errores.length, errores });
 });
 
 // Actualizar estado de pedido (Pago o Entrega)
