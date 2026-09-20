@@ -248,9 +248,6 @@ export default function PortalFamiliasModal({
         cursoCodigo: pedido.cursoCodigo,
         total: pedido.total,
         carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
-        // Auditoría 2026-09-19: sin esto, el servidor nunca se enteraba de las "Otras Fotos"
-        // sueltas del evento y no las cobraba (ver PRECIO_FOTO_EVENTO en server.ts).
-        cantidadFotosSueltas: pedido.copiasExtras?.otras15x21 || 0,
         tutorNombre: pedido.tutorNombre || 'Tutor',
         tutorEmail: pedido.tutorEmail,
         tutorTelefono: pedido.tutorTelefono || undefined,
@@ -286,8 +283,6 @@ export default function PortalFamiliasModal({
         alumnoNombre: pedido.alumnoNombre || 'Alumno',
         colegioNombre: pedido.colegioNombre || 'Colegio',
         carpetasExtras: pedido.copiasExtras?.carpetasExtras || 0,
-        // Auditoría 2026-09-19: ver comentario equivalente en generarLinkDePago.
-        cantidadFotosSueltas: pedido.copiasExtras?.otras15x21 || 0,
         tutorNombre: pedido.tutorNombre || 'Tutor',
         tutorEmail: pedido.tutorEmail,
         tutorTelefono: pedido.tutorTelefono || undefined,
@@ -969,16 +964,11 @@ export default function PortalFamiliasModal({
         docenteId: fotoSeleccionadaDocente,
         otrasIds: fotosSueltasSeleccionadas,
       },
-      // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, ALTO): antes acá se
-      // mandaban también individual15x21/grupal20x30/docente15x21 con el mismo valor que
-      // carpetasExtras. generarArchivosParaLaboratorio (pedidosLabService.ts) YA genera, por
-      // cada carpeta extra, su propia copia individual + grupal + docente (respetando si se
-      // eligió foto de docente) — esos 3 campos eran un segundo conteo de las MISMAS copias, así
-      // que el laboratorio terminaba imprimiendo el doble de fotos sueltas de las que la familia
-      // pagó por cada carpeta extra. Se dejan afuera: carpetasExtras solo alcanza para que el
-      // laboratorio arme las copias correctas.
       copiasExtras: {
         carpetasExtras: extraCarpetas,
+        individual15x21: extraCarpetas,
+        grupal20x30: extraCarpetas,
+        docente15x21: extraCarpetas,
         otras15x21: fotosSueltasSeleccionadas.length,
       },
       fotosDisponibles,
@@ -1012,9 +1002,6 @@ export default function PortalFamiliasModal({
           cursoCodigo: codCurso,
           total: total,
           carpetasExtras: extraCarpetas,
-          // Auditoría 2026-09-19: ver comentario en generarLinkDePago — sin esto el servidor no
-          // cobraba las "Otras Fotos" sueltas del evento.
-          cantidadFotosSueltas: fotosSueltasSeleccionadas.length,
           tutorNombre: tutorNombre.trim() || 'Tutor',
           tutorEmail: tutorEmail.trim(),
           tutorTelefono: tutorWhatsapp.trim() || undefined,
@@ -1046,8 +1033,6 @@ export default function PortalFamiliasModal({
           alumnoNombre: nombreAlumno.trim() || 'Alumno',
           colegioNombre: selectedColegio?.nombre || 'Colegio',
           carpetasExtras: extraCarpetas,
-          // Auditoría 2026-09-19: ver comentario en generarLinkDePago.
-          cantidadFotosSueltas: fotosSueltasSeleccionadas.length,
           tutorNombre: tutorNombre.trim() || 'Tutor',
           tutorEmail: tutorEmail.trim(),
           tutorTelefono: tutorWhatsapp.trim() || undefined,
@@ -1110,11 +1095,11 @@ export default function PortalFamiliasModal({
           docenteId: fotoSeleccionadaDocente,
           otrasIds: fotosSueltasSeleccionadas,
         },
-        // Auditoría 2026-09-19: ver comentario de la misma auditoría más arriba (armado del
-        // pedido de un solo hijo) — no duplicar individual15x21/grupal20x30/docente15x21, ya
-        // cubiertos por carpetasExtras dentro de generarArchivosParaLaboratorio.
         copiasExtras: {
           carpetasExtras: extraCarpetas,
+          individual15x21: extraCarpetas,
+          grupal20x30: extraCarpetas,
+          docente15x21: extraCarpetas,
           otras15x21: fotosSueltasSeleccionadas.length,
         },
       };
@@ -1143,9 +1128,11 @@ export default function PortalFamiliasModal({
           docenteId: c.fotoSeleccionadaDocente,
           otrasIds: c.fotosSueltasSeleccionadas,
         },
-        // Auditoría 2026-09-19: ver comentario de la misma auditoría más arriba.
         copiasExtras: {
           carpetasExtras: c.extraCarpetas,
+          individual15x21: c.extraCarpetas,
+          grupal20x30: c.extraCarpetas,
+          docente15x21: c.extraCarpetas,
           otras15x21: c.fotosSueltasSeleccionadas.length,
         },
       }));
@@ -1216,8 +1203,6 @@ export default function PortalFamiliasModal({
         alumnoNombre: item.alumnoNombre,
         colegioNombre: item.colegioNombre,
         carpetasExtras: item.copiasExtras?.carpetasExtras || 0,
-        // Auditoría 2026-09-19: ver comentario en generarLinkDePago.
-        cantidadFotosSueltas: item.copiasExtras?.otras15x21 || 0,
       }));
 
       if (metodoPago === 'mercadopago') {
@@ -2321,13 +2306,13 @@ export default function PortalFamiliasModal({
                             onClick={handleSelectThisFoto}
                             className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                               isSelected
-                                ? 'bg-amber-400 text-slate-950 shadow-xs'
+                                ? 'bg-emerald-500 text-white shadow-xs'
                                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                             }`}
                           >
                             {isSelected ? (
                               <>
-                                <CheckCircle2 className="w-3.5 h-3.5 text-slate-950" />
+                                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
                                 <span>Elegida</span>
                               </>
                             ) : (
