@@ -14,6 +14,10 @@ export interface DatosPreferenciaMercadoPago {
   // de tipos con el resto del flujo local; el servidor lo ignora.
   total: number;
   carpetasExtras?: number;
+  // Auditoría 2026-09-19: cantidad de "Otras Fotos" (fotos sueltas del evento) elegidas — el
+  // servidor la usa para recalcular el total real (ver calcularTotalPedido en server.ts). Antes
+  // no se mandaba y esas fotos se mostraban como cobradas en la UI pero nunca se cobraban.
+  cantidadFotosSueltas?: number;
   tutorNombre: string;
   tutorEmail: string;
   tutorTelefono?: string;
@@ -61,6 +65,8 @@ export interface ItemPreferenciaMercadoPago {
   alumnoNombre: string;
   colegioNombre: string;
   carpetasExtras?: number;
+  // Auditoría 2026-09-19: ver comentario equivalente en DatosPreferenciaMercadoPago.
+  cantidadFotosSueltas?: number;
 }
 
 export interface DatosPreferenciaMercadoPagoMultiple {

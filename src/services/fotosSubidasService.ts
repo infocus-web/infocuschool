@@ -136,10 +136,19 @@ export async function eliminarFotoActivaAdmin(foto: FotoRegistrada): Promise<{ s
   }
 }
 
-/** Panel admin: vacía por completo el catálogo de fotos (usado junto con "Limpiar Supabase") */
-export async function limpiarTodasLasFotosAdmin(): Promise<{ success: boolean; error?: string }> {
+/**
+ * Panel admin: vacía por completo el catálogo de fotos (usado junto con "Limpiar Supabase").
+ * Auditoría 2026-09-19: el servidor ahora exige la frase exacta "BORRAR TODAS LAS FOTOS" (mismo
+ * criterio que "Cerrar año") antes de ejecutar el borrado — evita que un solo click accidental
+ * (o un token de admin filtrado) borre todo el catálogo sin posibilidad de deshacer.
+ */
+export async function limpiarTodasLasFotosAdmin(confirmacion: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const res = await fetchAdminAutenticado('/api/admin/fotos', { method: 'DELETE' });
+    const res = await fetchAdminAutenticado('/api/admin/fotos', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmacion }),
+    });
     const data = await res.json();
     if (!res.ok || !data.success) {
       return { success: false, error: data.error || 'No se pudo limpiar el catálogo de fotos.' };

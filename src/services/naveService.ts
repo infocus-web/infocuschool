@@ -11,6 +11,9 @@ export interface DatosIntencionNave {
   // El servidor recalcula el monto real a partir de kitId + carpetasExtras
   // (mismo criterio que Mercado Pago) — nunca se confía en un monto del cliente.
   carpetasExtras?: number;
+  // Auditoría 2026-09-19: ver comentario equivalente en mercadoPagoService.ts
+  // (DatosPreferenciaMercadoPago) — mismo criterio, servidor recalcula el total.
+  cantidadFotosSueltas?: number;
   tutorNombre: string;
   tutorEmail: string;
   tutorTelefono?: string;
@@ -58,6 +61,8 @@ export interface ItemIntencionNave {
   alumnoNombre: string;
   colegioNombre: string;
   carpetasExtras?: number;
+  // Auditoría 2026-09-19: ver comentario equivalente en DatosIntencionNave.
+  cantidadFotosSueltas?: number;
 }
 
 export interface DatosIntencionNaveMultiple {

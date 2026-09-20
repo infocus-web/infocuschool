@@ -214,13 +214,16 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
 
 /**
  * Vacía por completo un bucket (botón "Limpiar Supabase" del panel admin).
+ * Auditoría 2026-09-19: el servidor ahora exige la frase exacta "BORRAR BUCKET <bucket>" (mismo
+ * criterio que "Cerrar año") antes de vaciarlo — evita vaciar por accidente un bucket entero de
+ * fotos (potencialmente todo el material HD pago) con un solo click.
  */
-export async function limpiarStorageBucket(bucket: 'fotos-web' | 'fotos-hd' | 'fotos', prefix = ''): Promise<{ eliminados: number; error?: string }> {
+export async function limpiarStorageBucket(bucket: 'fotos-web' | 'fotos-hd' | 'fotos', confirmacion: string, prefix = ''): Promise<{ eliminados: number; error?: string }> {
   try {
     const res = await fetchAdminAutenticado('/api/admin/storage/limpiar-bucket', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bucket, prefix }),
+      body: JSON.stringify({ bucket, prefix, confirmacion }),
     });
     const data = await res.json();
     if (!data?.success) {
