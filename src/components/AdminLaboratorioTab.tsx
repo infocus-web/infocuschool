@@ -10,7 +10,8 @@ import {
   descargarLoteLaboratorioZip,
   guardarPedidosEnStorage,
   formatearCodigoCliente,
-  generarZipHDAdmin
+  generarZipHDAdmin,
+  marcarPedidoRetirado
 } from '../services/pedidosLabService';
 import { 
   enviarFotosPorEmail, 
@@ -29,6 +30,41 @@ function formatearFechaCorta(iso?: string | null): string | null {
   const fecha = new Date(iso);
   if (Number.isNaN(fecha.getTime())) return null;
   return fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+}
+
+// Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo: "quiero una línea de
+// tiempo unificada"). Antes el estado de un pedido se veía repartido en fichitas sueltas
+// (fecha de producción por un lado, fecha de retiro por otro, nada para el retiro físico porque
+// esa etapa ni existía) — acá se junta todo en una sola tira visual de 4 pasos, en el mismo orden
+// que exige el servidor (ver ETAPAS_LAB en server.ts): Pagado → En producción → Listo para
+// retirar → Retirado. Es sólo una vista: la fuente de verdad sigue siendo estado_lab en la base.
+function LineaDeTiempoPedido({ pedido }: { pedido: PedidoEscolarCompleto }) {
+  const pasos = [
+    { key: 'pagado', label: 'Pagado', alcanzado: pedido.estadoPago === 'aprobado', fecha: null as string | null | undefined },
+    { key: 'en_produccion', label: 'Producción', alcanzado: Boolean(pedido.estadoLab), fecha: pedido.fechaEnvioProduccion },
+    { key: 'listo_retiro', label: 'Listo p/ retirar', alcanzado: pedido.estadoLab === 'listo_retiro' || pedido.estadoLab === 'entregado', fecha: pedido.fechaEnvioListoRetiro },
+    { key: 'entregado', label: 'Retirado', alcanzado: pedido.estadoLab === 'entregado', fecha: pedido.fechaEntregado },
+  ];
+  return (
+    <div className="flex items-center" title={pasos.filter(p => p.alcanzado).map(p => `${p.label}${p.fecha ? ` (${formatearFechaCorta(p.fecha)})` : ''}`).join(' → ') || 'Sin avanzar todavía'}>
+      {pasos.map((paso, indice) => (
+        <div key={paso.key} className="flex items-center">
+          <div className="flex flex-col items-center gap-0.5">
+            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${paso.alcanzado ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+            <span className={`text-[8.5px] font-bold uppercase tracking-tight whitespace-nowrap ${paso.alcanzado ? 'text-emerald-700' : 'text-slate-400'}`}>
+              {paso.label}
+            </span>
+            {paso.fecha && (
+              <span className="text-[8px] text-slate-400">{formatearFechaCorta(paso.fecha)}</span>
+            )}
+          </div>
+          {indice < pasos.length - 1 && (
+            <div className={`h-0.5 w-4 sm:w-6 -mt-3.5 ${pasos[indice + 1].alcanzado ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 interface AdminLaboratorioTabProps {
@@ -63,6 +99,10 @@ export default function AdminLaboratorioTab({
   // Tarjeta de dominio de correo: es información de referencia que casi no cambia, así que
   // arranca colapsada (solo el resumen de una línea) para no ocupar espacio de entrada.
   const [dominioExpandido, setDominioExpandido] = useState(false);
+  // Auditoría 2026-09-20 (revisión completa de estados): id del pedido que se está marcando como
+  // retirado en este momento, para deshabilitar sólo ESE botón mientras se confirma con el
+  // servidor (en vez de bloquear toda la tabla).
+  const [marcandoRetiradoId, setMarcandoRetiradoId] = useState<string | null>(null);
 
   useEffect(() => {
     consultarEstadoResend().then(setResendEstado).catch(() => {});
@@ -169,6 +209,11 @@ export default function AdminLaboratorioTab({
   // seleccionado sin ese paso previo — el servidor también lo rechaza como segunda barrera
   // (ver /api/admin/pedidos/notificar-estado), pero acá se avisa antes de intentar mandar nada.
   const algunoSinProduccion = pedidosSeleccionadosArr.some((pedido) => !pedido.estadoLab);
+  // Auditoría 2026-09-20 (revisión completa de estados): mismo criterio en sentido inverso — el
+  // servidor ahora también rechaza "En producción" para un pedido que ya está en una etapa
+  // posterior (ver puedeAvanzarEtapaLab en server.ts, que antes permitía retroceder estado_lab sin
+  // querer). Se avisa acá antes de intentarlo, en vez de dejar que el pedido falle en silencio.
+  const algunoYaAvanzoMasAlla = pedidosSeleccionadosArr.some((pedido) => pedido.estadoLab === 'listo_retiro' || pedido.estadoLab === 'entregado');
 
   const alternarSeleccionPedido = (pedidoId: string) => {
     setPedidosSeleccionados((actuales) => {
@@ -469,6 +514,30 @@ export default function AdminLaboratorioTab({
       setEmailFeedbackMsg(`Error de conexión al enviar correo: ${err?.message || err}`);
     }
     setTimeout(() => setEmailFeedbackMsg(null), 7000);
+  };
+
+  // Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo): antes no existía forma
+  // de cerrar el pipeline — el panel se quedaba en "Listo para retirar" para siempre. El servidor
+  // (POST /api/admin/pedidos/:id/marcar-retirado) exige que el pedido ya esté en "listo_retiro",
+  // así que acá alcanza con reflejar lo que el servidor confirme, sin duplicar esa validación.
+  const handleMarcarRetirado = async (pedido: PedidoEscolarCompleto) => {
+    if (!pedido.supabaseId) return;
+    setMarcandoRetiradoId(pedido.id);
+    const resultado = await marcarPedidoRetirado(pedido.supabaseId);
+    setMarcandoRetiradoId(null);
+    if (resultado.success) {
+      const pedidosActualizados = pedidos.map((p) =>
+        p.id === pedido.id
+          ? { ...p, estadoLab: (resultado.estadoLab as PedidoEscolarCompleto['estadoLab']) || 'entregado', fechaEntregado: resultado.fechaEntregado || p.fechaEntregado }
+          : p
+      );
+      onActualizarPedidos(pedidosActualizados);
+      guardarPedidosEnStorage(pedidosActualizados);
+      setEmailFeedbackMsg(`✅ ${pedido.alumnoNombre}: marcado como retirado.`);
+    } else {
+      setEmailFeedbackMsg(`⚠️ ${resultado.error || 'No se pudo marcar el pedido como retirado.'}`);
+    }
+    setTimeout(() => setEmailFeedbackMsg(null), 5000);
   };
 
   // Auditoría 2026-09-20: reintento masivo para los pedidos pagados a los que todavía les falta
@@ -833,7 +902,19 @@ export default function AdminLaboratorioTab({
             <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 text-xs font-bold text-sky-800 cursor-pointer">
               {todosSeleccionados ? 'Quitar selección' : 'Seleccionar todos'}
             </button>
-            <button type="button" onClick={() => handleEnviarActualizacion('en_produccion')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} title={todosYaEnProduccion ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.' : undefined} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+            <button
+              type="button"
+              onClick={() => handleEnviarActualizacion('en_produccion')}
+              disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion) || algunoYaAvanzoMasAlla}
+              title={
+                algunoYaAvanzoMasAlla
+                  ? 'Alguno de los seleccionados ya está en una etapa posterior (Listo para retirar o Retirado) — avisar "En producción" ahora lo haría retroceder, y el servidor lo va a rechazar.'
+                  : todosYaEnProduccion
+                    ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.'
+                    : undefined
+              }
+              className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
               {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} {todosYaEnProduccion ? 'Volver a enviar “En producción”' : 'Enviar “En producción”'}
             </button>
             <button
@@ -861,6 +942,12 @@ export default function AdminLaboratorioTab({
             No podés avisar "Listo para retirar" a alguno de los seleccionados porque todavía no pasó por "En producción". Primero enviá ese aviso, o quitalo de la selección.
           </p>
         )}
+        {algunoYaAvanzoMasAlla && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            No podés avisar "En producción" a alguno de los seleccionados porque ya está en una etapa posterior. Quitalo de la selección si sólo querés avisarle a los demás.
+          </p>
+        )}
       </div>
 
       {/* Orders & Lab Files Table */}
@@ -873,6 +960,7 @@ export default function AdminLaboratorioTab({
                 <th className="py-3 px-3 w-12 text-center">N°</th>
                 <th className="py-3 px-4">Alumno & Código Escolar</th>
                 <th className="py-3 px-4">Curso & Turno</th>
+                <th className="py-3 px-4">Etapa del Pedido</th>
                 <th className="py-3 px-4">Archivos Asignados para Minilab</th>
                 <th className="py-3 px-4">Entrega HD por Email</th>
                 <th className="py-3 px-4 text-center">Acciones</th>
@@ -881,7 +969,7 @@ export default function AdminLaboratorioTab({
             <tbody className="divide-y divide-slate-100">
               {pedidosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-slate-400 space-y-2">
+                  <td colSpan={8} className="py-10 text-center text-slate-400 space-y-2">
                     <AlertCircle className="w-6 h-6 mx-auto text-slate-300" />
                     <p className="text-xs">No se encontraron pedidos con los filtros aplicados.</p>
                   </td>
@@ -904,28 +992,31 @@ export default function AdminLaboratorioTab({
                             {pedido.codigoAlumno}
                           </span>
                         </div>
-                        {/* Auditoría 2026-09-20 (pedido de Pablo): estado real de los avisos de
-                            laboratorio, con la fecha del PRIMER envío (no se pisa si se reenvía). */}
-                        {(pedido.estadoLab || pedido.fechaEnvioProduccion) && (
-                          <div className="flex flex-wrap items-center gap-1 mt-1">
-                            {pedido.fechaEnvioProduccion && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded-full border border-indigo-200">
-                                <Printer className="w-2.5 h-2.5" /> Producción {formatearFechaCorta(pedido.fechaEnvioProduccion)}
-                              </span>
-                            )}
-                            {pedido.fechaEnvioListoRetiro && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200">
-                                <CheckCircle2 className="w-2.5 h-2.5" /> Retiro {formatearFechaCorta(pedido.fechaEnvioListoRetiro)}
-                              </span>
-                            )}
-                          </div>
-                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
                         <span className="font-semibold text-slate-800">{pedido.grado} "{pedido.division}"</span>
                         <span className="block text-[11px] text-slate-500">Turno {pedido.turno}</span>
                         <span className="text-[10px] text-slate-400 font-mono">{pedido.cursoCodigo}</span>
+                      </td>
+
+                      {/* Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo):
+                          línea de tiempo única en vez de fichas sueltas — ver LineaDeTiempoPedido
+                          más arriba en el archivo. Acá también vive la acción que faltaba: marcar
+                          que la familia ya retiró el pedido (antes esa etapa no tenía botón). */}
+                      <td className="py-3.5 px-4">
+                        <LineaDeTiempoPedido pedido={pedido} />
+                        {pedido.estadoLab === 'listo_retiro' && (
+                          <button
+                            type="button"
+                            onClick={() => handleMarcarRetirado(pedido)}
+                            disabled={marcandoRetiradoId === pedido.id}
+                            className="mt-1.5 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            {marcandoRetiradoId === pedido.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            Marcar retirado
+                          </button>
+                        )}
                       </td>
 
                       {/* Photo files renamed for minilab */}

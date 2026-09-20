@@ -1425,6 +1425,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                                         colegioNombre: p.colegioNombre,
                                         cursoCodigo: p.cursoCodigo,
                                         pedidoId: p.id,
+                                        // Auditoría 2026-09-20 (revisión completa de estados): este llamado
+                                        // (aprobar un pago en efectivo a mano) era el tercer lugar que
+                                        // mandaba el correo HD sin el UUID real — sin esto, el servidor no
+                                        // podía grabar el resultado del envío para estos pedidos tampoco.
+                                        pedidoSupabaseId: p.supabaseId,
                                         kitNombre: p.kitNombre,
                                         total: p.total,
                                         linkDescargaHD: linkDescargaHDGenerado || p.linkDescargaHD,
