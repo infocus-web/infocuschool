@@ -99,6 +99,16 @@ export default function AdminLaboratorioTab({
     return pedidos.filter(p => p.estadoPago === 'aprobado');
   }, [pedidos]);
 
+  // Auditoría 2026-09-20 (bug real reportado por Pablo): antes, si el .zip HD fallaba al momento
+  // del pago, nada volvía a intentarlo — quedaba en manos de que alguien notara pedido por pedido
+  // que faltaba el link. Esta lista junta a todos los pagados sin link real todavía, para poder
+  // reintentarlos de una sola vez en vez de ir fila por fila.
+  const pedidosConHDPendiente = useMemo(
+    () => pedidosAprobados.filter((p) => !p.linkDescargaHD && p.tutorEmail?.includes('@')),
+    [pedidosAprobados]
+  );
+  const [isReintentandoTodosHD, setIsReintentandoTodosHD] = useState(false);
+
   // Cursos para las pastillas de filtro — auditoría 2026-09-09: antes esto salía de
   // SECCIONES_INICIAL_2026 (una lista fija de 11 secciones de una sola sala de nivel
   // inicial, mostrando solo las primeras 5) cruzada con CODIGOS_CURSOS_INICIALES (el mapa
@@ -154,6 +164,11 @@ export default function AdminLaboratorioTab({
     && pedidosSeleccionadosArr.every((pedido) => Boolean(pedido.estadoLab));
   const todosYaListoRetiro = pedidosSeleccionadosArr.length > 0
     && pedidosSeleccionadosArr.every((pedido) => pedido.estadoLab === 'listo_retiro');
+  // Auditoría 2026-09-20 (bug real reportado por Pablo: pudo avisar "Listo para retirar" a un
+  // pedido que nunca pasó por "En producción"). El botón ahora se bloquea si hay algún
+  // seleccionado sin ese paso previo — el servidor también lo rechaza como segunda barrera
+  // (ver /api/admin/pedidos/notificar-estado), pero acá se avisa antes de intentar mandar nada.
+  const algunoSinProduccion = pedidosSeleccionadosArr.some((pedido) => !pedido.estadoLab);
 
   const alternarSeleccionPedido = (pedidoId: string) => {
     setPedidosSeleccionados((actuales) => {
@@ -418,6 +433,10 @@ export default function AdminLaboratorioTab({
         colegioNombre: pedido.colegioNombre,
         cursoCodigo: pedido.cursoCodigo,
         pedidoId: pedido.id,
+        // Auditoría 2026-09-20: sin esto, el servidor no tenía forma de saber a qué fila de
+        // Supabase corresponde este reenvío y el resultado (link real + fecha) nunca quedaba
+        // grabado — el panel seguía mostrando "Pendiente envío" aunque el correo ya hubiera salido.
+        pedidoSupabaseId: pedido.supabaseId,
         kitNombre: pedido.kitNombre,
         total: pedido.total,
         linkDescargaHD,
@@ -452,6 +471,22 @@ export default function AdminLaboratorioTab({
     setTimeout(() => setEmailFeedbackMsg(null), 7000);
   };
 
+  // Auditoría 2026-09-20: reintento masivo para los pedidos pagados a los que todavía les falta
+  // el .zip HD real (ver pedidosConHDPendiente) — uno por uno y en secuencia, no en paralelo, para
+  // no saturar Resend/Storage si son varios de golpe.
+  const handleReintentarTodosHD = async () => {
+    if (pedidosConHDPendiente.length === 0) return;
+    setIsReintentandoTodosHD(true);
+    for (const pedido of pedidosConHDPendiente) {
+      setEmailFeedbackMsg(`Reintentando HD de ${pedido.alumnoNombre}...`);
+      // eslint-disable-next-line no-await-in-loop
+      await handleReenviarEmailHD(pedido);
+    }
+    setIsReintentandoTodosHD(false);
+    setEmailFeedbackMsg(`✅ Reintento terminado para ${pedidosConHDPendiente.length} pedido${pedidosConHDPendiente.length === 1 ? '' : 's'}.`);
+    setTimeout(() => setEmailFeedbackMsg(null), 6000);
+  };
+
   return (
     <div className="space-y-6 text-left">
       {/* Feedback Toast */}
@@ -481,6 +516,34 @@ export default function AdminLaboratorioTab({
             className="text-sky-700 hover:text-sky-900 text-xs px-2 py-1 rounded bg-sky-100 cursor-pointer"
           >
             Cerrar
+          </button>
+        </div>
+      )}
+
+      {/* Auditoría 2026-09-20 (bug real reportado por Pablo: "no le llega el enlace de descarga
+          de fotos HD al cliente"). Alerta visible apenas se abre el panel, en vez de que Pablo
+          tenga que descubrirlo pedido por pedido — con un botón para reintentar todos de una. */}
+      {pedidosConHDPendiente.length > 0 && (
+        <div className="p-4 rounded-2xl bg-red-50 border border-red-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+            <div>
+              <p className="text-xs font-bold text-red-950">
+                {pedidosConHDPendiente.length} pedido{pedidosConHDPendiente.length === 1 ? '' : 's'} pagado{pedidosConHDPendiente.length === 1 ? '' : 's'} sin el .zip HD real todavía
+              </p>
+              <p className="text-[11px] text-red-700 mt-0.5">
+                Esas familias sólo recibieron el texto de "en breve te enviaremos el enlace" — el link nunca se generó ni se mandó. Revisá que las fotos del curso ya estén cargadas y reintentá.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleReintentarTodosHD}
+            disabled={isReintentandoTodosHD}
+            className="px-3.5 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2 cursor-pointer active:scale-98 shrink-0"
+          >
+            {isReintentandoTodosHD ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {isReintentandoTodosHD ? 'Reintentando...' : `Reintentar los ${pedidosConHDPendiente.length}`}
           </button>
         </div>
       )}
@@ -760,22 +823,44 @@ export default function AdminLaboratorioTab({
         </div>
       </div>
 
-      <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold text-sky-950">Avisos de estado por email</p>
-          <p className="text-[11px] text-sky-700 mt-0.5">{pedidosSeleccionados.size} cliente{pedidosSeleccionados.size === 1 ? '' : 's'} seleccionado{pedidosSeleccionados.size === 1 ? '' : 's'}.</p>
+      <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col gap-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold text-sky-950">Avisos de estado por email</p>
+            <p className="text-[11px] text-sky-700 mt-0.5">{pedidosSeleccionados.size} cliente{pedidosSeleccionados.size === 1 ? '' : 's'} seleccionado{pedidosSeleccionados.size === 1 ? '' : 's'}.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 text-xs font-bold text-sky-800 cursor-pointer">
+              {todosSeleccionados ? 'Quitar selección' : 'Seleccionar todos'}
+            </button>
+            <button type="button" onClick={() => handleEnviarActualizacion('en_produccion')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} title={todosYaEnProduccion ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.' : undefined} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+              {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} {todosYaEnProduccion ? 'Volver a enviar “En producción”' : 'Enviar “En producción”'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleEnviarActualizacion('listo_retiro')}
+              disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion) || algunoSinProduccion}
+              title={
+                algunoSinProduccion
+                  ? 'Alguno de los seleccionados todavía no pasó por "En producción" — avisale primero, o destildalo para no bloquear al resto.'
+                  : todosYaListoRetiro
+                    ? 'Ya se le había avisado "Listo para retirar" a todos los seleccionados — esto manda el aviso de nuevo.'
+                    : undefined
+              }
+              className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {todosYaListoRetiro ? 'Volver a enviar “Listo para retirar”' : 'Enviar “Listo para retirar”'}
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 text-xs font-bold text-sky-800 cursor-pointer">
-            {todosSeleccionados ? 'Quitar selección' : 'Seleccionar todos'}
-          </button>
-          <button type="button" onClick={() => handleEnviarActualizacion('en_produccion')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} title={todosYaEnProduccion ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.' : undefined} className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-            {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} {todosYaEnProduccion ? 'Volver a enviar “En producción”' : 'Enviar “En producción”'}
-          </button>
-          <button type="button" onClick={() => handleEnviarActualizacion('listo_retiro')} disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion)} title={todosYaListoRetiro ? 'Ya se le había avisado "Listo para retirar" a todos los seleccionados — esto manda el aviso de nuevo.' : undefined} className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-            {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {todosYaListoRetiro ? 'Volver a enviar “Listo para retirar”' : 'Enviar “Listo para retirar”'}
-          </button>
-        </div>
+        {/* Auditoría 2026-09-20: antes nada explicaba por qué convenía frenar acá — ahora el
+            aviso queda visible en vez de que el fotógrafo sólo vea el botón gris. */}
+        {algunoSinProduccion && (
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+            No podés avisar "Listo para retirar" a alguno de los seleccionados porque todavía no pasó por "En producción". Primero enviá ese aviso, o quitalo de la selección.
+          </p>
+        )}
       </div>
 
       {/* Orders & Lab Files Table */}
@@ -912,10 +997,25 @@ export default function AdminLaboratorioTab({
                         <span className="text-[11px] text-slate-500 block">{pedido.tutorNombre}</span>
 
                         <div className="mt-1 flex items-center gap-1">
-                          {pedido.emailEnviado ? (
+                          {/* Auditoría 2026-09-20 (bug real reportado por Pablo: "no le llega el
+                              enlace de descarga de fotos HD al cliente"). Causa raíz: cuando el
+                              .zip HD no se pudo armar a tiempo del pago, el correo automático sale
+                              igual pero con el texto de "en breve" en vez del link — y antes esto
+                              se veía IGUAL que "HD Enviado" (sólo miraba emailEnviado). Ahora se
+                              distingue de un vistazo: enviado con link real, enviado sin link
+                              (requiere acción), o directamente pendiente. */}
+                          {pedido.emailEnviado && pedido.linkDescargaHD ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                               <Check className="w-3 h-3 text-emerald-600" />
                               HD Enviado ({pedido.fechaEnvioEmail ? pedido.fechaEnvioEmail.split(' ')[0] : 'OK'})
+                            </span>
+                          ) : pedido.emailEnviado && !pedido.linkDescargaHD ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-full border border-red-200"
+                              title='El correo salió, pero sin el .zip real — al cliente le llegó el texto "en breve te enviaremos el enlace" y ahí se cortó. Usá "Reenviar enlace Ultra HD" para generar el .zip y mandarlo de verdad.'
+                            >
+                              <AlertTriangle className="w-3 h-3 text-red-600" />
+                              Falta el .zip HD
                             </span>
                           ) : (
                             <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
