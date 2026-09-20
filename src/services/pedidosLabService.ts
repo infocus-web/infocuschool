@@ -66,6 +66,14 @@ export interface PedidoEscolarCompleto {
   linkDescargaHD: string;
   emailEnviado: boolean;
   fechaEnvioEmail?: string;
+  // Auditoría 2026-09-20 (pedido de Pablo): estado real de los avisos de laboratorio ("En
+  // producción" / "Listo para retirar" del panel de Laboratorio) — antes esto no se exponía acá,
+  // así que el panel no tenía forma de saber si un pedido ya había recibido el aviso y el botón
+  // volvía a mostrarse como si nunca se hubiera enviado. Las fechas son SIEMPRE la del primer
+  // envío (no se pisan en reenvíos — ver /api/admin/pedidos/notificar-estado).
+  estadoLab?: 'en_produccion' | 'listo_retiro' | null;
+  fechaEnvioProduccion?: string;
+  fechaEnvioListoRetiro?: string;
 }
 
 // Helper to sanitize strings for photo lab minilab machines (Noritsu / Fuji Frontier / Klick)
@@ -767,6 +775,9 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
     linkDescargaHD: fila.link_descarga_hd || '',
     emailEnviado: Boolean(fila.email_enviado),
     fechaEnvioEmail: fila.fecha_envio_email || undefined,
+    estadoLab: fila.estado_lab || null,
+    fechaEnvioProduccion: fila.fecha_envio_produccion || undefined,
+    fechaEnvioListoRetiro: fila.fecha_envio_listo_retiro || undefined,
   };
 }
 

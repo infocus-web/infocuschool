@@ -58,6 +58,15 @@ export interface ResultadoActualizacionPedidos {
   fallidos: number;
   errores?: string[];
   error?: string;
+  // Auditoría 2026-09-20: estado real que quedó guardado en Supabase para cada pedido después
+  // del envío (fecha de primer envío incluida) — permite actualizar el panel al instante, sin
+  // esperar a la próxima recarga de la lista de pedidos.
+  resultados?: {
+    pedidoId: string;
+    estadoLab: 'en_produccion' | 'listo_retiro';
+    fechaEnvioProduccion?: string | null;
+    fechaEnvioListoRetiro?: string | null;
+  }[];
 }
 
 export async function enviarActualizacionPedidos(
