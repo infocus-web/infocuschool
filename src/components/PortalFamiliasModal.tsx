@@ -1003,6 +1003,27 @@ export default function PortalFamiliasModal({
       setErrorSeleccionFotos(`Antes de continuar, elegí ${faltantes.join(', ').replace(/, ([^,]*)$/, ' y $1')}.`);
       return;
     }
+    // Auditoría 2026-09-21 (pedido de Pablo, tras probar con sus mellizos): hasta acá esta función
+    // sólo miraba las 3 fotos del hijo activo — si la familia tiene más de un hijo/a en este
+    // colegio, dejaba pasar a "Kit y Formato" (y de ahí a pagar) aunque el/los otros hermanos
+    // todavía no tuvieran ninguna foto elegida. Pablo pidió explícitamente que esto bloquee SIEMPRE
+    // hasta que todos los hermanos listados tengan sus 3 fotos, no sólo el que está activo en
+    // pantalla en este momento. Se resuelve buscando, entre TODOS los hermanos de `hijosFamilia`
+    // (no sólo los que ya pasaron por `carritoHijos`), el primero que no esté completo — un hermano
+    // nunca visitado no tiene entrada en `carritoHijos`, así que cuenta como incompleto igual que
+    // uno a medio elegir. Si se encuentra alguno, se lo deja como hijo activo (así la familia ve de
+    // entrada qué falta, en vez de sólo leer un mensaje de error) y no se avanza.
+    const hermanoIncompleto = hijosFamilia.find((h) => {
+      if (h.id === hijoSeleccionadoId) return false; // el activo ya se validó arriba
+      return !carritoHijosRef.current[h.id]?.completo;
+    });
+    if (hermanoIncompleto) {
+      setErrorSeleccionFotos(
+        `Antes de continuar, también tenés que elegir las 3 fotos de ${hermanoIncompleto.nombreCompleto}.`
+      );
+      seleccionarHijo(hermanoIncompleto.id);
+      return;
+    }
     setErrorSeleccionFotos('');
     setStep(3);
   };
