@@ -100,6 +100,18 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
   const totalInscriptos = inscripciones.length;
   const pendientes = useMemo(() => inscripciones.filter((i) => i.estado === 'pendiente'), [inscripciones]);
   const aceptados = useMemo(() => inscripciones.filter((i) => i.estado === 'aceptado'), [inscripciones]);
+  // Pedido 2026-09-23 de Pablo ("son muchísimos! que están pendientes... enviar uno por uno? es
+  // inviable!"): familias ya aprobadas a las que nunca se les mandó el email con su código —
+  // ver handleEnviarTodosLosEmailsPendientes más abajo, y la causa raíz corregida en
+  // handleAprobarTodosLosPendientes (el botón "Aceptar Todos" nunca mandaba el email).
+  const emailsPendientes = useMemo(
+    () => aceptados.filter((i) => !i.notificacionEmailEnviada),
+    [aceptados]
+  );
+  // Progreso del envío masivo de emails: se muestra en vivo en el botón ("Enviando 5/47...")
+  // porque mandar decenas de emails uno por uno con pausa entre cada uno puede tardar varios
+  // minutos, y sin esto Pablo no tendría forma de saber si sigue en marcha o se colgó.
+  const [progresoEnvioMasivo, setProgresoEnvioMasivo] = useState<{ hechos: number; total: number } | null>(null);
 
   // Filtered list
   const inscripcionesFiltradas = useMemo(() => {
@@ -225,16 +237,80 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     for (const item of pendientes) {
       const codigoElegido =
         codigosEditables[item.id] || item.codigoAsignado || sugerirCodigoSeguro(item.id);
-      await aprobarInscripcionAdmin(item.id, codigoElegido);
+      const resultado = await aprobarInscripcionAdmin(item.id, codigoElegido);
+      // Auditoría 2026-09-23 (pedido de Pablo: "son muchísimos! que están pendientes... enviar
+      // uno por uno? es inviable!"): se rastreó la causa a este mismo botón. Aprobar UNA
+      // inscripción a mano (handleAprobar, más arriba) manda el email con el código enseguida
+      // después de aprobar — pero este botón de aprobación MASIVA nunca lo hacía, sólo cambiaba
+      // el estado a "aceptado". Cada tanda de aprobaciones masivas dejaba a TODAS esas familias
+      // con el email en "Pendiente" para siempre, acumulándose hasta que alguien las mandara a
+      // mano una por una. Ahora también manda el email acá (con la misma pausa entre envíos que
+      // el botón de envío masivo, para no saturar el proveedor de correo), igual que hace la
+      // aprobación individual, para que una futura tanda masiva no vuelva a generar este mismo
+      // backlog.
+      if (resultado.success && resultado.familia) {
+        await enviarEmailAprobacionAdmin(resultado.familia.id);
+      }
     }
     setProcesandoId(null);
     await cargarInscripciones();
     setToastNotificacion({
       titulo: '¡Todas las solicitudes fueron aprobadas!',
-      mensaje: `Se asignaron los códigos correspondientes a las ${pendientes.length} familias pendientes.`,
+      mensaje: `Se asignaron los códigos y se mandó el email con el código de acceso a las ${pendientes.length} familias pendientes.`,
       tipo: 'success'
     });
     setTimeout(() => setToastNotificacion(null), 5000);
+  };
+
+  // Envía (o reintenta) el email con el código de acceso a TODAS las familias ya aprobadas que
+  // todavía figuran con "Email: Pendiente" — reemplaza tener que abrir la ficha de cada una y
+  // tocar "Enviar Email" a mano, que con muchas familias acumuladas es directamente inviable.
+  const handleEnviarTodosLosEmailsPendientes = async () => {
+    const lista = emailsPendientes;
+    if (lista.length === 0) return;
+
+    const confirmado = window.confirm(
+      `¿Enviar el email con el código de acceso a las ${lista.length} familias que todavía no lo recibieron?\n\nSe manda de a uno, con una pequeña pausa entre cada envío para no saturar el servicio de correo — con muchas familias puede tardar varios minutos, no hace falta quedarse mirando la pantalla.`
+    );
+    if (!confirmado) return;
+
+    setProgresoEnvioMasivo({ hechos: 0, total: lista.length });
+    let enviados = 0;
+    const fallidos: string[] = [];
+
+    for (let i = 0; i < lista.length; i++) {
+      const item = lista[i];
+      if (!item.email) {
+        fallidos.push(`${item.alumnoNombre} ${item.alumnoApellido} (no tiene email cargado)`);
+      } else {
+        const resultado = await enviarEmailAprobacionAdmin(item.id);
+        if (resultado.success) {
+          enviados++;
+        } else {
+          fallidos.push(`${item.alumnoNombre} ${item.alumnoApellido} (${resultado.error || 'error desconocido'})`);
+        }
+      }
+      setProgresoEnvioMasivo({ hechos: i + 1, total: lista.length });
+      // Pausa entre envíos (no en el último) para no mandar todas las llamadas a Resend a la vez.
+      if (i < lista.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+    }
+
+    setProgresoEnvioMasivo(null);
+    await cargarInscripciones();
+
+    setToastNotificacion({
+      titulo: fallidos.length === 0 ? '¡Todos los emails fueron enviados!' : 'Envío masivo terminado con algunos errores',
+      mensaje:
+        fallidos.length === 0
+          ? `Se mandó el código de acceso a las ${enviados} familias que estaban pendientes.`
+          : `Se enviaron ${enviados} de ${lista.length}. No se pudieron enviar: ${fallidos.slice(0, 5).join('; ')}${
+              fallidos.length > 5 ? ` y ${fallidos.length - 5} más` : ''
+            }.`,
+      tipo: fallidos.length === 0 ? 'success' : 'error'
+    });
+    setTimeout(() => setToastNotificacion(null), fallidos.length === 0 ? 6000 : 12000);
   };
 
   return (
@@ -388,6 +464,30 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                 <Check className="w-3.5 h-3.5" />
               )}
               <span>Aceptar Todos ({pendientes.length})</span>
+            </button>
+          )}
+
+          {/* Pedido 2026-09-23 de Pablo: mandar el email de a uno por familia era inviable con
+              tantas acumuladas — este botón manda a TODAS las que figuran "Email: Pendiente" en
+              una sola tanda (ver handleEnviarTodosLosEmailsPendientes). */}
+          {emailsPendientes.length > 0 && (
+            <button
+              type="button"
+              onClick={handleEnviarTodosLosEmailsPendientes}
+              disabled={progresoEnvioMasivo !== null}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              {progresoEnvioMasivo ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Enviando {progresoEnvioMasivo.hechos}/{progresoEnvioMasivo.total}...</span>
+                </>
+              ) : (
+                <>
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>Enviar Emails Pendientes ({emailsPendientes.length})</span>
+                </>
+              )}
             </button>
           )}
         </div>
