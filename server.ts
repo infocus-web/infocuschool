@@ -6300,6 +6300,80 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
   }
 });
 
+// Auditoría 2026-09-21 (pedido real de Pablo, probado en producción): empezó a pagar con
+// Mercado Pago, canceló la ventana de pago justo antes de confirmar, y volvió a la pantalla de
+// "Pendiente de Pago" del Portal de Familias — pero ahí el único botón disponible era "Ir a
+// Pagar en Mercado Pago" (regenera el mismo link), sin ninguna forma de elegir Nave o
+// Transferencia en su lugar. El método de pago quedaba fijo para siempre en lo que se haya
+// elegido al crear el pedido, aunque el pago nunca se hubiera completado. Este endpoint permite
+// cambiar el método de pago de un pedido TODAVÍA NO PAGADO — el Portal de Familias lo llama
+// cuando la familia elige otro método desde esa misma pantalla de "Pendiente de Pago".
+app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-cambiar-metodo-pago', 20, 10 * 60 * 1000), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { metodoPago } = req.body;
+    const metodosPermitidos = ['mercadopago', 'nave', 'transferencia'];
+    if (!metodosPermitidos.includes(metodoPago)) {
+      return res.status(400).json({ success: false, error: 'Método de pago no reconocido.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
+    }
+
+    const { data: pedidoActual, error: errorLectura } = await supabase
+      .from('pedidos')
+      .select('id, estado, metodo_pago, grupo_pago_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (errorLectura) {
+      return res.status(400).json({ success: false, error: errorLectura.message });
+    }
+    if (!pedidoActual) {
+      return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+    }
+    // Nunca se permite tocar el método de pago de un pedido que ya se cobró (o que ya se
+    // canceló/entregó) — solo tiene sentido mientras sigue "pendiente_pago".
+    if (pedidoActual.estado !== 'pendiente_pago') {
+      return res.status(409).json({
+        success: false,
+        error: 'Este pedido ya no está pendiente de pago, así que no se puede cambiar el método.',
+      });
+    }
+
+    // Un carrito multi-hijo comparte grupo_pago_id entre varias filas de "pedidos" que se cobran
+    // juntas en un solo pago — el cambio de método tiene que aplicarse a todo el grupo, no solo a
+    // la fila que la familia tenía en pantalla, para no terminar con hermanos del mismo carrito
+    // apuntando a métodos de pago distintos.
+    const filtroActualizacion = pedidoActual.grupo_pago_id
+      ? { columna: 'grupo_pago_id' as const, valor: pedidoActual.grupo_pago_id }
+      : { columna: 'id' as const, valor: pedidoActual.id };
+
+    // Se limpian los identificadores del método anterior (el intento de pago viejo queda
+    // abandonado, no debería seguir influyendo en la reconciliación automática del /status).
+    const { error: errorUpdate } = await supabase
+      .from('pedidos')
+      .update({
+        metodo_pago: metodoPago,
+        nave_payment_request_id: null,
+        mp_preference_id: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq(filtroActualizacion.columna, filtroActualizacion.valor)
+      .eq('estado', 'pendiente_pago');
+
+    if (errorUpdate) {
+      return res.status(400).json({ success: false, error: errorUpdate.message });
+    }
+
+    return res.json({ success: true, metodoPago });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al cambiar el método de pago' });
+  }
+});
+
 // Auditoría 2026-09-09 (revisión a fondo): el buscador de "seguimiento de pedido" del Portal de
 // Familias buscaba únicamente en el localStorage del navegador — una familia que entrara desde
 // otro dispositivo o hubiera borrado los datos del navegador no encontraba su pedido, aunque
