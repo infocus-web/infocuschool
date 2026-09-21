@@ -1229,8 +1229,19 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                 recomienda Apple/Google como target táctil mínimo. Ahora arrancan grandes (h-11,
                 texto sm, ícono 5x5) y sólo se achican a partir de "sm:" (~640px) al tamaño de
                 siempre — en escritorio esto no cambia nada, en el celular cada botón es cómodo de
-                tocar con el dedo sin achicar el panel completo de escritorio. */}
-            <nav aria-label="Secciones del panel" className="flex flex-wrap items-center gap-2 sm:gap-1.5">
+                tocar con el dedo sin achicar el panel completo de escritorio.
+                Auditoría 2026-09-21 (bug real, reportado por Pablo con captura desde el celular
+                tras el cambio de arriba): al agrandar cada botón para que sea cómodo de tocar,
+                las 14 secciones con salto de línea (`flex-wrap`, decisión tomada el 16/9 para
+                escritorio) pasan a ocupar 7 filas en un celular angosto — el usuario tenía que
+                scrollear toda esa altura de botones antes de ver la barra de métricas o el
+                contenido de la pestaña ("Pedidos") en sí. La decisión del 16/9 de evitar el
+                scroll horizontal seguía siendo válida para escritorio (ahí las 14 entran en 1-2
+                filas), así que acá se resuelve por breakpoint en vez de elegir una sola opción
+                para los dos casos: en celular (`<sm`) la barra es una tira horizontal
+                scrolleable de una sola fila (patrón estándar de tab-bar mobile); desde "sm" hacia
+                arriba sigue siendo exactamente el `flex-wrap` de siempre, sin ningún cambio. */}
+            <nav aria-label="Secciones del panel" className="flex flex-nowrap sm:flex-wrap items-center gap-2 sm:gap-1.5 overflow-x-auto sm:overflow-visible pb-1 sm:pb-0">
               {accesosRapidos.map(({ id, label, icono: Icono }) => {
                 const activo = activeTab === id;
                 return (

@@ -47,6 +47,8 @@ import {
   registrarPedidoDesdePortal,
   registrarCarritoMultipleDesdePortal,
   obtenerPedidosGuardados,
+  guardarPedidosEnStorage,
+  cambiarMetodoPagoPedido,
   PedidoEscolarCompleto,
   buscarPedidoPorSeguimiento,
   ItemCarritoHijo,
@@ -272,6 +274,7 @@ export default function PortalFamiliasModal({
   const [mensajeEstadoPago, setMensajeEstadoPago] = useState<string | null>(null);
   const [generandoLinkPago, setGenerandoLinkPago] = useState(false);
   const [generandoLinkNave, setGenerandoLinkNave] = useState(false);
+  const [cambiandoMetodoPago, setCambiandoMetodoPago] = useState(false);
 
   /**
    * Genera (o regenera) el link de Checkout Pro de Mercado Pago para un pedido ya registrado.
@@ -398,6 +401,50 @@ export default function PortalFamiliasModal({
       console.warn('Error al verificar estado de pago:', e);
     } finally {
       setVerificandoPago(false);
+    }
+  };
+
+  /**
+   * Auditoría 2026-09-21 (pedido real de Pablo, probado en producción): "intenté pagar con
+   * Mercado Pago, me arrepentí, cancelé el pago justo antes de apretar el botón, y volví a la
+   * página — me queda el pendiente de pago pero no me da la opción de elegir otro medio de
+   * pago, solo el botón de acceder a Mercado Pago nuevamente". El método de pago quedaba fijo
+   * para siempre en lo elegido al crear el pedido. Esto llama al nuevo endpoint del servidor
+   * (que sólo permite el cambio mientras el pedido siga sin pagarse), actualiza el pedido en
+   * pantalla con el nuevo método, y limpia los links de pago viejos para que los efectos de
+   * arriba generen uno nuevo del método recién elegido automáticamente.
+   */
+  const handleCambiarMetodoPago = async (nuevoMetodo: 'mercadopago' | 'nave' | 'transferencia') => {
+    if (!pedidoGenerado || cambiandoMetodoPago || nuevoMetodo === pedidoGenerado.metodoPago) return;
+    const id = pedidoGenerado.supabaseId || pedidoGenerado.id;
+    if (!id) return;
+
+    setCambiandoMetodoPago(true);
+    setPagoError(null);
+    try {
+      const res = await cambiarMetodoPagoPedido(id, nuevoMetodo);
+      if (!res.success) {
+        setPagoError(res.error || 'No se pudo cambiar el método de pago.');
+        return;
+      }
+
+      setPedidoGenerado((prev) => (prev ? { ...prev, metodoPago: nuevoMetodo } : null));
+      setMetodoPago(nuevoMetodo);
+      setMpRedirectUrl(null);
+      setNaveRedirectUrl(null);
+
+      // El servidor ya agrupa el cambio por grupo_pago_id cuando es un carrito multi-hijo (ver
+      // /api/pedidos/:id/cambiar-metodo-pago) — acá solo se refleja en el localStorage el propio
+      // pedido en pantalla, que es lo único que este navegador cachea localmente por id.
+      const pedidosGuardados = obtenerPedidosGuardados();
+      const actualizados = pedidosGuardados.map((p) =>
+        p.supabaseId === id || p.id === id ? { ...p, metodoPago: nuevoMetodo } : p
+      );
+      guardarPedidosEnStorage(actualizados);
+    } catch (err: any) {
+      setPagoError(err?.message || 'Error de conexión al cambiar el método de pago.');
+    } finally {
+      setCambiandoMetodoPago(false);
     }
   };
 
@@ -585,6 +632,19 @@ export default function PortalFamiliasModal({
   // limpia fotoSeleccionadaIndividual/Grupal/Docente cada vez que cambia `fotosDisponibles` — así
   // esta restauración no queda pisada por esa limpieza. Sin esto, volver a elegir un hermano ya
   // configurado obligaba a re-elegir sus 3 fotos de nuevo.
+  //
+  // Auditoría 2026-09-21 (fix definitivo — fotos cruzadas entre hermanos del mismo curso, pedido
+  // de Pablo: "elegí las fotos del primer hijo, pero me dice que ya elegí la de ambos, y no es
+  // cierto, solo elegí la de uno de ellos"): las 4 condiciones de abajo antes solo LLAMABAN al
+  // setter cuando el valor guardado era válido y no vacío — si el hermano al que se vuelve todavía
+  // no había elegido, por ejemplo, la foto grupal (`fotoSeleccionadaGrupal === ''`), esa condición
+  // daba `false` y el setter correspondiente JAMÁS se llamaba. El estado quedaba entonces con la
+  // foto grupal/docente que había dejado puesta el hermano ANTERIOR (porque, al compartir sección,
+  // `fotosDisponibles` no cambia de referencia y el efecto de limpieza de más arriba tampoco se
+  // dispara). Ese resto ajeno terminaba marcando a este hermano como "completo" sin que la familia
+  // hubiese elegido nada para él. Ahora cada campo se fija de forma explícita e incondicional —
+  // con '' como resultado por defecto cuando no hay nada guardado o válido — así nunca queda un
+  // valor del hermano anterior sin limpiar.
   useEffect(() => {
     const guardado = carritoHijosRef.current[hijoSeleccionadoId];
     if (!guardado) return;
@@ -592,18 +652,26 @@ export default function PortalFamiliasModal({
     const grups = fotosDisponibles.filter((f) => f.categoria === 'grupal');
     const docs = fotosDisponibles.filter((f) => f.categoria === 'docente');
     const patio = fotosDisponibles.filter((f) => f.categoria === 'patio');
-    if (guardado.fotoSeleccionadaIndividual && inds.some((f) => f.id === guardado.fotoSeleccionadaIndividual)) {
-      setFotoSeleccionadaIndividual(guardado.fotoSeleccionadaIndividual);
-    }
-    if (guardado.fotoSeleccionadaGrupal && grups.some((f) => f.id === guardado.fotoSeleccionadaGrupal)) {
-      setFotoSeleccionadaGrupal(guardado.fotoSeleccionadaGrupal);
-    }
-    if (guardado.fotoSeleccionadaDocente && docs.some((f) => f.id === guardado.fotoSeleccionadaDocente)) {
-      setFotoSeleccionadaDocente(guardado.fotoSeleccionadaDocente);
-    }
-    if (guardado.fotosSueltasSeleccionadas?.length) {
-      setFotosSueltasSeleccionadas(guardado.fotosSueltasSeleccionadas.filter((fid) => patio.some((f) => f.id === fid)));
-    }
+    setFotoSeleccionadaIndividual(
+      guardado.fotoSeleccionadaIndividual && inds.some((f) => f.id === guardado.fotoSeleccionadaIndividual)
+        ? guardado.fotoSeleccionadaIndividual
+        : ''
+    );
+    setFotoSeleccionadaGrupal(
+      guardado.fotoSeleccionadaGrupal && grups.some((f) => f.id === guardado.fotoSeleccionadaGrupal)
+        ? guardado.fotoSeleccionadaGrupal
+        : ''
+    );
+    setFotoSeleccionadaDocente(
+      guardado.fotoSeleccionadaDocente && docs.some((f) => f.id === guardado.fotoSeleccionadaDocente)
+        ? guardado.fotoSeleccionadaDocente
+        : ''
+    );
+    setFotosSueltasSeleccionadas(
+      guardado.fotosSueltasSeleccionadas?.length
+        ? guardado.fotosSueltasSeleccionadas.filter((fid) => patio.some((f) => f.id === fid))
+        : []
+    );
   }, [fotosDisponibles, hijoSeleccionadoId]);
 
   const seleccionarHijo = (id: string) => {
@@ -636,19 +704,42 @@ export default function PortalFamiliasModal({
     const kitGuardado = guardadoDestino ? KITS_DISPONIBLES.find((k) => k.id === guardadoDestino.kitId) : null;
     setSelectedKit(kitGuardado || KITS_DISPONIBLES.find((k) => k.id === 'kit-clasico') || KITS_DISPONIBLES[0]);
     setExtraCarpetas(guardadoDestino?.extraCarpetas || 0);
-    // Auditoría 2026-09-21 (refuerzo — hermanos gemelos/mismo curso): el efecto que limpia la
-    // selección de fotos al "cambiar de galería" está enganchado a `fotosDisponibles`, así que
-    // cuando dos hermanos comparten grado+turno+división (mismo curso, mismas fotos) ese array NO
-    // cambia de referencia al pasar de uno a otro — el efecto de limpieza nunca se dispara. Si el
-    // hermano destino todavía no tiene nada guardado en el carrito, sin este reset explícito acá
-    // se quedaban puestas las fotos que había elegido el hermano anterior, dejando pasar al
-    // resumen un pedido con las fotos de OTRO chico sin que la familia lo note.
-    if (!guardadoDestino) {
-      setFotoSeleccionadaIndividual('');
-      setFotoSeleccionadaGrupal('');
-      setFotoSeleccionadaDocente('');
-      setFotosSueltasSeleccionadas([]);
-    }
+    // Auditoría 2026-09-21 (refuerzo — hermanos gemelos/mismo curso — y fix definitivo del mismo
+    // día, ver el useEffect de "Restaura..." más arriba): el efecto que limpia la selección de
+    // fotos al "cambiar de galería" está enganchado a `fotosDisponibles`, así que cuando dos
+    // hermanos comparten grado+turno+división (mismo curso, mismas fotos) ese array NO cambia de
+    // referencia al pasar de uno a otro — ni el efecto de limpieza ni el de "cambió la galería" se
+    // disparan. Por eso ACÁ, de forma síncrona y para los 4 campos de fotos, se calcula el valor
+    // final explícitamente a partir de `guardadoDestino` (con '' si no hay nada guardado o si la
+    // foto guardada ya no existe en la galería actual) en vez de dejarlo en manos exclusivamente
+    // del useEffect de restauración — así no queda ni siquiera un frame con las fotos del hermano
+    // anterior todavía puestas, y si el hermano destino tiene una sección distinta que recién va a
+    // cargarse (`fotosDisponibles` desactualizado todavía), ese mismo useEffect vuelve a correr y
+    // corrige una vez que llegue la galería nueva.
+    const indsDestino = fotosDisponibles.filter((f) => f.categoria === 'individual');
+    const grupsDestino = fotosDisponibles.filter((f) => f.categoria === 'grupal');
+    const docsDestino = fotosDisponibles.filter((f) => f.categoria === 'docente');
+    const patioDestino = fotosDisponibles.filter((f) => f.categoria === 'patio');
+    setFotoSeleccionadaIndividual(
+      guardadoDestino?.fotoSeleccionadaIndividual && indsDestino.some((f) => f.id === guardadoDestino.fotoSeleccionadaIndividual)
+        ? guardadoDestino.fotoSeleccionadaIndividual
+        : ''
+    );
+    setFotoSeleccionadaGrupal(
+      guardadoDestino?.fotoSeleccionadaGrupal && grupsDestino.some((f) => f.id === guardadoDestino.fotoSeleccionadaGrupal)
+        ? guardadoDestino.fotoSeleccionadaGrupal
+        : ''
+    );
+    setFotoSeleccionadaDocente(
+      guardadoDestino?.fotoSeleccionadaDocente && docsDestino.some((f) => f.id === guardadoDestino.fotoSeleccionadaDocente)
+        ? guardadoDestino.fotoSeleccionadaDocente
+        : ''
+    );
+    setFotosSueltasSeleccionadas(
+      guardadoDestino?.fotosSueltasSeleccionadas?.length
+        ? guardadoDestino.fotosSueltasSeleccionadas.filter((fid) => patioDestino.some((f) => f.id === fid))
+        : []
+    );
 
     const hijoConCodigo = hijosFamilia.find((h) => h.id === id);
     if (hijoConCodigo) {
@@ -3229,8 +3320,53 @@ export default function PortalFamiliasModal({
                   )}
                 </div>
 
-                {/* Mercado Pago Redirection / Link */}
-                {metodoPago === 'mercadopago' && mpRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                {/* Cambiar método de pago. Auditoría 2026-09-21 (pedido real de Pablo, probado en
+                    producción): "intenté pagar con Mercado Pago, me arrepentí, cancelé el pago
+                    justo antes de apretar el botón, y volví a la página — me queda el pendiente
+                    de pago pero no me da la opción de elegir otro medio de pago, solo el botón de
+                    acceder a Mercado Pago nuevamente". Antes el método de pago quedaba fijo para
+                    siempre en lo elegido al crear el pedido. Se muestra solo mientras el pedido
+                    sigue sin pagarse; al elegir uno nuevo, handleCambiarMetodoPago actualiza el
+                    pedido en el servidor y limpia los links viejos para que los efectos de arriba
+                    generen uno nuevo del método recién elegido. */}
+                {pedidoGenerado?.estadoPago !== 'aprobado' && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <p className="text-xs font-semibold text-slate-700">
+                      ¿Preferís pagar de otra forma?
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          { id: 'mercadopago' as const, label: 'Mercado Pago' },
+                          { id: 'nave' as const, label: 'Nave' },
+                          { id: 'transferencia' as const, label: 'Transferencia' },
+                        ]
+                      )
+                        .filter((opcion) => opcion.id !== pedidoGenerado?.metodoPago)
+                        .map((opcion) => (
+                          <button
+                            key={opcion.id}
+                            type="button"
+                            onClick={() => handleCambiarMetodoPago(opcion.id)}
+                            disabled={cambiandoMetodoPago}
+                            className="px-3 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 hover:border-amber-300 border border-slate-300 rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {cambiandoMetodoPago ? 'Cambiando...' : `Pagar con ${opcion.label}`}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mercado Pago Redirection / Link. Auditoría 2026-09-21: esto antes leía el
+                    estado local "metodoPago" (el seleccionado en el checkout del paso 4), no el
+                    método REAL del pedido ya guardado — si la familia recargaba la página o
+                    volvía en una pestaña nueva (por ejemplo desde el link de vuelta de Nave), ese
+                    estado local nace en su valor por defecto ('mercadopago') sin importar cuál
+                    haya sido el método real, así que este bloque podía no mostrarse nunca aunque
+                    sí hubiera un link listo. Ahora usa pedidoGenerado.metodoPago, que es el dato
+                    persistido y siempre correcto. */}
+                {pedidoGenerado?.metodoPago === 'mercadopago' && mpRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
                   <div className="p-4 rounded-xl bg-sky-50 border border-sky-300 text-sky-950 space-y-2">
                     <p className="font-bold text-xs flex items-center gap-1.5 text-sky-900">
                       <CreditCard className="w-4 h-4 text-sky-600" />
@@ -3281,8 +3417,10 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
 
-                {/* Nave Redirection / Link */}
-                {metodoPago === 'nave' && naveRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                {/* Nave Redirection / Link. Mismo motivo que el bloque de Mercado Pago de
+                    arriba: usa pedidoGenerado.metodoPago (el dato persistido), no el estado local
+                    del checkout. */}
+                {pedidoGenerado?.metodoPago === 'nave' && naveRedirectUrl && pedidoGenerado?.estadoPago !== 'aprobado' && (
                   <div className="p-4 rounded-xl bg-violet-50 border border-violet-300 text-violet-950 space-y-2">
                     <p className="font-bold text-xs flex items-center gap-1.5 text-violet-900">
                       <Smartphone className="w-4 h-4 text-violet-600" />
@@ -3372,8 +3510,9 @@ export default function PortalFamiliasModal({
                   </div>
                 )}
 
-                {/* Bank Transfer Instructions if Transferencia */}
-                {metodoPago === 'transferencia' && pedidoGenerado?.estadoPago !== 'aprobado' && (
+                {/* Bank Transfer Instructions if Transferencia. Mismo motivo que los bloques de
+                    arriba: usa pedidoGenerado.metodoPago, no el estado local del checkout. */}
+                {pedidoGenerado?.metodoPago === 'transferencia' && pedidoGenerado?.estadoPago !== 'aprobado' && (
                   <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs space-y-1">
                     <p className="font-bold text-amber-900 flex items-center gap-1.5">
                       <Building2 className="w-4 h-4 text-amber-700" />
