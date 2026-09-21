@@ -261,6 +261,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
   // Id del pedido que se está eliminando (para deshabilitar el botón mientras se procesa)
   const [eliminandoPedidoId, setEliminandoPedidoId] = useState<string | null>(null);
+  // Pedido 2026-09-21 de Pablo: "no tengo la opción de seleccionar varios pedidos para archivar o
+  // eliminar" — antes sólo existía borrar de a uno. Estos dos estados habilitan selección múltiple
+  // con checkboxes en la tabla de "Pedidos" y un botón para eliminarlos todos juntos, reusando el
+  // mismo endpoint de borrado (uno por uno, en secuencia) porque el servidor no tiene un endpoint
+  // de borrado masivo.
+  const [pedidosSeleccionados, setPedidosSeleccionados] = useState<Set<string>>(new Set());
+  const [eliminandoSeleccionados, setEliminandoSeleccionados] = useState(false);
 
   // Auditoría 2026-09-09 (revisión a fondo): antes esta lista salía únicamente del localStorage
   // del navegador — abrir el panel desde otra computadora mostraba "0 pedidos" aunque hubiera
@@ -290,10 +297,80 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
       const actualizados = pedidosCompletos.filter((item) => item.id !== pedido.id);
       setPedidosCompletos(actualizados);
       guardarPedidosEnStorage(actualizados);
+      setPedidosSeleccionados((prev) => {
+        if (!prev.has(pedido.id)) return prev;
+        const siguiente = new Set(prev);
+        siguiente.delete(pedido.id);
+        return siguiente;
+      });
     } catch (e: any) {
       window.alert(e?.message || 'Error de red al eliminar el pedido.');
     } finally {
       setEliminandoPedidoId(null);
+    }
+  };
+
+  const toggleSeleccionPedido = (id: string) => {
+    setPedidosSeleccionados((prev) => {
+      const siguiente = new Set(prev);
+      if (siguiente.has(id)) {
+        siguiente.delete(id);
+      } else {
+        siguiente.add(id);
+      }
+      return siguiente;
+    });
+  };
+
+  const toggleSeleccionarTodosPedidos = () => {
+    setPedidosSeleccionados((prev) =>
+      prev.size === pedidosCompletos.length ? new Set<string>() : new Set(pedidosCompletos.map((p) => p.id))
+    );
+  };
+
+  const handleEliminarSeleccionados = async () => {
+    const ids: string[] = Array.from(pedidosSeleccionados);
+    if (ids.length === 0) return;
+
+    const confirmado = window.confirm(
+      `¿Eliminar ${ids.length} pedido${ids.length === 1 ? '' : 's'} seleccionado${ids.length === 1 ? '' : 's'}?\n\nEsta acción no se puede deshacer.`
+    );
+    if (!confirmado) return;
+
+    setEliminandoSeleccionados(true);
+    const idsBorrados: string[] = [];
+    const idsConError: string[] = [];
+
+    // Se borra de a uno, en secuencia (no en paralelo): el servidor no tiene un endpoint de
+    // borrado masivo, y mandar todas las llamadas DELETE juntas podría saturar el token admin
+    // o, si una falla a mitad de camino, dejar difícil de saber cuáles sí se borraron.
+    for (const id of ids) {
+      const pedido = pedidosCompletos.find((item) => item.id === id);
+      if (!pedido) continue;
+      try {
+        const resultado = await eliminarPedidoAdmin(pedido.supabaseId || pedido.id);
+        if (resultado.success) {
+          idsBorrados.push(id);
+        } else {
+          idsConError.push(id);
+        }
+      } catch {
+        idsConError.push(id);
+      }
+    }
+
+    if (idsBorrados.length > 0) {
+      const actualizados = pedidosCompletos.filter((item) => !idsBorrados.includes(item.id));
+      setPedidosCompletos(actualizados);
+      guardarPedidosEnStorage(actualizados);
+    }
+    setPedidosSeleccionados(new Set());
+    setEliminandoSeleccionados(false);
+
+    if (idsConError.length > 0) {
+      window.alert(
+        `Se eliminaron ${idsBorrados.length} de ${ids.length} pedidos. ${idsConError.length} no se pudieron eliminar (probá de nuevo con esos).`
+      );
     }
   };
 
@@ -1311,20 +1388,43 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             {activeTab === 'pedidos' && (
               <div className="space-y-4">
                 <AdminResumenKitsSection />
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h3 className="text-base font-bold text-slate-900">Listado de Pedidos de Familias</h3>
                     <span className="text-xs text-slate-500">Sincronizados en tiempo real con el portal de familias</span>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                    {pedidosCompletos.filter(p => p.estadoPago === 'aprobado').length} Aprobados para Revelado
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {pedidosSeleccionados.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleEliminarSeleccionados}
+                        disabled={eliminandoSeleccionados}
+                        className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {eliminandoSeleccionados
+                          ? 'Eliminando...'
+                          : `Eliminar seleccionados (${pedidosSeleccionados.size})`}
+                      </button>
+                    )}
+                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                      {pedidosCompletos.filter(p => p.estadoPago === 'aprobado').length} Aprobados para Revelado
+                    </span>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto rounded-2xl border border-slate-200">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200 text-[10px] tracking-wider">
                       <tr>
+                        <th className="py-3 px-4 w-8">
+                          <input
+                            type="checkbox"
+                            aria-label="Seleccionar todos los pedidos"
+                            checked={pedidosCompletos.length > 0 && pedidosSeleccionados.size === pedidosCompletos.length}
+                            onChange={toggleSeleccionarTodosPedidos}
+                            className="h-3.5 w-3.5 cursor-pointer accent-amber-500"
+                          />
+                        </th>
                         <th className="py-3 px-4">N° Pedido</th>
                         <th className="py-3 px-4">Colegio & Alumno</th>
                         <th className="py-3 px-4">Código Minilab</th>
@@ -1338,13 +1438,22 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                     <tbody className="divide-y divide-slate-100">
                       {pedidosCompletos.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center text-slate-400 text-xs">
+                          <td colSpan={9} className="py-8 text-center text-slate-400 text-xs">
                             Aún no se han registrado pedidos de familias en el sistema.
                           </td>
                         </tr>
                       ) : (
                         pedidosCompletos.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                        <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${pedidosSeleccionados.has(p.id) ? 'bg-amber-50/60' : ''}`}>
+                          <td className="py-3 px-4">
+                            <input
+                              type="checkbox"
+                              aria-label={`Seleccionar pedido ${p.id}`}
+                              checked={pedidosSeleccionados.has(p.id)}
+                              onChange={() => toggleSeleccionPedido(p.id)}
+                              className="h-3.5 w-3.5 cursor-pointer accent-amber-500"
+                            />
+                          </td>
                           <td className="py-3 px-4 font-mono font-bold text-slate-900">
                             {p.id}
                             <span className="block text-[10px] font-normal text-slate-400">{p.fecha}</span>
