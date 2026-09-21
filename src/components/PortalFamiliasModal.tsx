@@ -1444,8 +1444,11 @@ export default function PortalFamiliasModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4 md:p-6 animate-in fade-in duration-200">
+      {/* Mobile: ficha a pantalla completa (sin bordes redondeados ni margen) para aprovechar
+          todo el alto disponible y scrollear menos. Desde sm: vuelve a ser el modal centrado
+          de siempre, sin ningún cambio para desktop/tablet. */}
+      <div className="relative w-full max-w-5xl bg-white rounded-none sm:rounded-3xl shadow-2xl border-0 sm:border border-slate-200 overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[92vh]">
         {/* Top Modal Bar */}
         <div className="px-3 py-3 sm:px-6 sm:py-4 bg-slate-900 text-white flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shrink-0">
           <div className="flex items-center justify-between gap-3">

@@ -114,7 +114,7 @@ export default function Footer({ onOpenFamilias, onScrollTo, onOpenAdmin }: Foot
         {/* Bottom bar */}
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-slate-500">
           <p>© {new Date().getFullYear()} Retrato Escolar · retratoescolar.com.ar. Portal de Familias.</p>
-          <div className="flex items-center gap-4 text-[11px]">
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-4 gap-y-2 text-[11px]">
             <span>Defensa del Consumidor</span>
             <span>·</span>
             <span>Privacidad y Protección de Menores</span>

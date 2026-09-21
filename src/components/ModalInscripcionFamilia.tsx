@@ -376,10 +376,10 @@ export default function ModalInscripcionFamilia({
   const miFamiliaActiva = obtenerFamiliaActiva();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-0 sm:p-4 overflow-y-auto">
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white border border-slate-200 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] text-slate-900 animate-in fade-in zoom-in-95 duration-150 text-left"
+        className="bg-white border-0 sm:border border-slate-200 w-full max-w-2xl rounded-none sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[92vh] text-slate-900 animate-in fade-in zoom-in-95 duration-150 text-left"
       >
         {/* Header */}
         <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex items-center justify-between border-b border-slate-800">

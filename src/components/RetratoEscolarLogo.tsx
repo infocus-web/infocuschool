@@ -5,6 +5,10 @@ interface RetratoEscolarLogoProps {
   variant?: 'full' | 'compact' | 'icon-only';
   theme?: 'light' | 'dark';
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  /** Oculta el badge ".COM.AR" en pantallas de celular (< sm) para que el logo ocupe menos
+   * ancho en filas apretadas (ej. el header principal). No afecta tablet/desktop ni a otros
+   * usos del logo que no pasen este prop. */
+  hideBadgeOnMobile?: boolean;
 }
 
 /**
@@ -137,6 +141,7 @@ export default function RetratoEscolarLogo({
   variant = 'full',
   theme = 'light',
   size = 'md',
+  hideBadgeOnMobile = false,
 }: RetratoEscolarLogoProps) {
   // Scaling presets
   const sizeMap = {
@@ -198,7 +203,7 @@ export default function RetratoEscolarLogo({
 
           {/* .COM.AR Bordered Pill Badge matching exact branding */}
           <span
-            className={`font-extrabold uppercase tracking-wider rounded-lg sm:rounded-xl border-2 border-[#F59E0B] text-[#F59E0B] leading-none ${sizeMap.badge}`}
+            className={`${hideBadgeOnMobile ? 'hidden sm:inline-flex' : 'inline-flex'} font-extrabold uppercase tracking-wider rounded-lg sm:rounded-xl border-2 border-[#F59E0B] text-[#F59E0B] leading-none ${sizeMap.badge}`}
           >
             .COM.AR
           </span>

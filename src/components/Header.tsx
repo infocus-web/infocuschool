@@ -63,10 +63,10 @@ export default function Header({
           <div
             id="brand-logo"
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="flex items-center cursor-pointer group py-1"
+            className="flex items-center cursor-pointer group py-1 min-w-0 shrink"
             title="Retrato Escolar - retratoescolar.com.ar"
           >
-            <RetratoEscolarLogo variant="full" size="md" />
+            <RetratoEscolarLogo variant="full" size="md" hideBadgeOnMobile />
           </div>
 
           {/* Desktop Nav Links */}
@@ -101,8 +101,9 @@ export default function Header({
             </button>
           </nav>
 
-          {/* Desktop Actions */}
-          <div className="hidden sm:flex items-center gap-2.5">
+          {/* Desktop Actions (breakpoint matches the nav links / mobile block below, so there's
+              never a range where both the desktop and mobile action groups render at once) */}
+          <div className="hidden md:flex items-center gap-2.5">
             {onOpenInscripcion && (
               <button
                 id="btn-inscribirme-header"
@@ -123,25 +124,29 @@ export default function Header({
             </button>
           </div>
 
-          {/* Mobile hamburger & quick actions */}
-          <div className="flex md:hidden items-center gap-1.5">
+          {/* Mobile hamburger & quick actions — solo íconos (sin texto) para que nunca se corten
+              contra el borde de pantalla en celulares angostos; el texto completo de cada acción
+              sigue disponible en el menú desplegable de abajo. */}
+          <div className="flex md:hidden items-center gap-1 shrink-0">
             {onOpenInscripcion && (
               <button
                 id="btn-inscribirme-mobile"
                 onClick={onOpenInscripcion}
-                className="px-2.5 py-1.5 text-xs font-extrabold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-xs flex items-center gap-1 cursor-pointer"
+                className="p-2 text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-xs cursor-pointer"
+                aria-label="Inscribirme"
+                title="Inscribirme"
               >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>Inscribirme</span>
+                <UserPlus className="w-4.5 h-4.5" />
               </button>
             )}
             <button
               id="btn-acceso-familias-mobile"
               onClick={() => onOpenFamilias()}
-              className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg shadow-xs flex items-center gap-1"
+              className="p-2 text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg shadow-xs"
+              aria-label="Acceder a las fotos"
+              title="Acceder a las fotos"
             >
-              <Search className="w-3.5 h-3.5 text-slate-500" />
-              <span>Fotos</span>
+              <Search className="w-4.5 h-4.5 text-slate-500" />
             </button>
             <button
               id="btn-toggle-menu"
