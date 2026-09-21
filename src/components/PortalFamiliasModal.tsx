@@ -1036,6 +1036,23 @@ export default function PortalFamiliasModal({
     ? hijosParaCarpetasExtra.reduce((acc, h) => acc + obtenerExtraCarpetasDeHijo(h.id), 0)
     : extraCarpetas;
 
+  // Auditoría 2026-09-21 (Pablo, tras probar con sus 2 mellizos): el resumen decía "1 carpeta del
+  // pack principal" sin importar cuántos hermanos hubiera — con 2 hijos, cada uno con su propio
+  // Kit Impreso + Digital, en realidad hay 2 carpetas de "pack principal" (una por cada hijo, ya
+  // incluida en su propio kit), no 1 sola para toda la familia. Este helper cuenta cuántos
+  // hermanos de la lista realmente traen una carpeta base incluida en su kit — el hijo activo se
+  // lee del `selectedKit` en vivo, el resto de su `carritoHijos` guardado; si un hermano todavía
+  // no llegó a elegir kit, se asume el kit por defecto (Clásico), que es el mismo criterio que ya
+  // usa `selectedKit` al inicializarse.
+  const hijoTieneCarpetaBaseIncluida = (id: string): boolean => {
+    if (id === hijoSeleccionadoId) return selectedKit.id === 'kit-clasico';
+    const kitDeEseHijo = carritoHijos[id]?.kitId;
+    return kitDeEseHijo === undefined || kitDeEseHijo === 'kit-clasico';
+  };
+  const totalCarpetasBaseFamilia = hijosParaCarpetasExtra.length > 0
+    ? hijosParaCarpetasExtra.filter((h) => hijoTieneCarpetaBaseIncluida(h.id)).length
+    : 1;
+
   const renderFilaCarpetaExtra = (hijo: HijoConCodigoSeccion, compacto = false) => {
     const cantidad = obtenerExtraCarpetasDeHijo(hijo.id);
     const completo = hijoTieneFotosCompletas(hijo.id);
@@ -2787,7 +2804,7 @@ export default function PortalFamiliasModal({
                     <div className="flex items-center gap-2 text-amber-950 font-semibold">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span>
-                        Recibirás <strong>{totalExtraCarpetasFamilia + 1} carpetas completas</strong> en total (1 del pack principal + {totalExtraCarpetasFamilia} para abuelos/familiares).
+                        Recibirás <strong>{totalCarpetasBaseFamilia + totalExtraCarpetasFamilia} carpetas completas</strong> en total ({totalCarpetasBaseFamilia} del pack principal + {totalExtraCarpetasFamilia} para abuelos/familiares).
                       </span>
                     </div>
                     <span className="font-extrabold text-amber-900 bg-white px-2.5 py-1 rounded-lg border border-amber-300">
@@ -3036,7 +3053,7 @@ export default function PortalFamiliasModal({
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                     <div>
                       <span>
-                        <strong>Carpetas a confeccionar:</strong> 1 Carpeta del pack principal + {totalExtraCarpetasFamilia} carpeta{totalExtraCarpetasFamilia > 1 ? 's' : ''} extra{totalExtraCarpetasFamilia > 1 ? 's' : ''} = <strong>{totalExtraCarpetasFamilia + 1} carpetas completas</strong> en total (+${(totalExtraCarpetasFamilia * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}).
+                        <strong>Carpetas a confeccionar:</strong> {totalCarpetasBaseFamilia} carpeta{totalCarpetasBaseFamilia > 1 ? 's' : ''} del pack principal + {totalExtraCarpetasFamilia} carpeta{totalExtraCarpetasFamilia > 1 ? 's' : ''} extra{totalExtraCarpetasFamilia > 1 ? 's' : ''} = <strong>{totalCarpetasBaseFamilia + totalExtraCarpetasFamilia} carpetas completas</strong> en total (+${(totalExtraCarpetasFamilia * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}).
                       </span>
                     </div>
                   </div>
