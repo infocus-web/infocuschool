@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import JSZip from 'jszip';
+import QRCode from 'qrcode';
 
 dotenv.config();
 
@@ -1011,6 +1012,7 @@ function puedeAvanzarEtapaLab(actual: EtapaLab | null | undefined, siguiente: Et
 }
 
 app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Request, res: Response) => {
+ try {
   const tipo = req.body?.tipo as TipoActualizacionPedido;
   const destinatarios = Array.isArray(req.body?.destinatarios) ? req.body.destinatarios.slice(0, 100) : [];
   if (!['en_produccion', 'listo_retiro'].includes(tipo) || destinatarios.length === 0) return res.status(400).json({ success: false, error: 'Tipo de aviso o destinatarios inválidos.' });
@@ -1099,6 +1101,14 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
     catch (error: any) { errores.push(`${destinatario.alumnoNombre || destinatario.to}: ${error?.message || 'falló el envío'}`); }
   }
   return res.status(enviados > 0 ? 200 : 502).json({ success: errores.length === 0, enviados, fallidos: errores.length, errores, resultados });
+ } catch (err: any) {
+  // Auditoría 2026-09-21 (refuerzo): esta ruta era la única de todo el archivo sin try/catch
+  // envolviendo todo el handler — si la consulta de estados actuales (más arriba) fallaba antes
+  // de llegar al bucle, la promesa quedaba rechazada sin capturar y la respuesta nunca se
+  // mandaba (el botón del panel se queda "colgado" en vez de mostrar un error).
+  console.error('Error en /api/admin/pedidos/notificar-estado:', err);
+  return res.status(500).json({ success: false, error: err?.message || 'Error al notificar el estado del pedido' });
+ }
 });
 
 // Auditoría 2026-09-20 (revisión completa de estados, pedido de Pablo): hasta hoy no existía
@@ -1145,6 +1155,82 @@ app.post('/api/admin/pedidos/:id/marcar-retirado', requireAdminAuth, async (req:
     return res.json({ success: true, estadoLab: filaActualizada.estado_lab, fechaEntregado: filaActualizada.fecha_entregado });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al marcar el pedido como retirado' });
+  }
+});
+
+// Auditoría 2026-09-21 (pedido de Pablo: poder escanear con el celular un QR impreso en el sobre
+// físico del laboratorio, y que le muestre al toque el pedido para avisar "Listo para retirar" o
+// "Marcar retirado" sin tener que buscarlo a mano en el panel completo). Vista liviana de un solo
+// pedido — evita bajar el listado entero de pedidos al celular sólo para atender un escaneo.
+app.get('/api/admin/pedidos/:id/resumen', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    const { data: pedido, error } = await supabase
+      .from('pedidos')
+      .select('id, pedido_friendly_id, alumno_nombre, colegio_nombre, grado, division, turno, estado, estado_lab, fecha_envio_produccion, fecha_envio_listo_retiro, fecha_entregado, familias(nombre, whatsapp, email)')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!pedido) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+
+    const familia: any = Array.isArray((pedido as any).familias) ? (pedido as any).familias[0] : (pedido as any).familias;
+
+    return res.json({
+      success: true,
+      pedido: {
+        id: pedido.id,
+        pedidoFriendlyId: pedido.pedido_friendly_id,
+        alumnoNombre: pedido.alumno_nombre,
+        colegioNombre: pedido.colegio_nombre,
+        grado: pedido.grado,
+        division: pedido.division,
+        turno: pedido.turno,
+        estado: pedido.estado,
+        estadoLab: pedido.estado_lab,
+        fechaEnvioProduccion: pedido.fecha_envio_produccion,
+        fechaEnvioListoRetiro: pedido.fecha_envio_listo_retiro,
+        fechaEntregado: pedido.fecha_entregado,
+        tutorNombre: familia?.nombre || null,
+        tutorEmail: familia?.email || null,
+        tutorWhatsapp: familia?.whatsapp || null,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al obtener el pedido' });
+  }
+});
+
+// Genera el código QR (PNG) que se imprime en el sobre físico para el laboratorio: al escanearlo
+// con la cámara del celular abre directamente la vista de arriba para ESE pedido puntual — como
+// exige la sesión de admin (requireAdminAuth), quien escanee el sobre sin haber iniciado sesión
+// como fotógrafo sólo ve la pantalla de PIN, nunca el nombre del alumno. No se guarda en ningún
+// lado: se genera al vuelo cada vez que el panel lo pide, así que sigue sirviendo igual aunque
+// cambie el dominio del sitio en el futuro.
+app.get('/api/admin/pedidos/:id/qr', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    const { data: pedido, error } = await supabase.from('pedidos').select('id').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (!pedido) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+
+    const hostDetectado = req.get('host') || '';
+    const esLocal = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostDetectado);
+    const protocoloFinal = esLocal ? req.protocol : 'https';
+    const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
+    const urlEscaneo = `${appUrl}/?escaneo=${encodeURIComponent(id)}`;
+
+    const png = await QRCode.toBuffer(urlEscaneo, { type: 'png', width: 500, margin: 2 });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(png);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al generar el código QR' });
   }
 });
 
@@ -2787,6 +2873,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     const cleanEmail = String(email || '').trim().toLowerCase();
 
     let matchPadre: any = null;
+    let candidatosPadron: any[] = [];
     try {
       const { data: candidatos, error: errAuth } = await supabase
         .from('padres_autorizados')
@@ -2795,6 +2882,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
         .eq('usado', false);
 
       if (!errAuth && Array.isArray(candidatos)) {
+        candidatosPadron = candidatos;
         matchPadre = candidatos.find((p: any) => {
           if (cleanEmail && p.email && String(p.email).trim().toLowerCase() === cleanEmail) return true;
           if (telDigits) {
@@ -2807,6 +2895,34 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     } catch (e) {
       console.warn('Advertencia al consultar padres_autorizados:', e);
     }
+
+    // Auditoría 2026-09-21 (refuerzo — hallazgo: hermanos nunca se reconciliaban contra el
+    // padrón, a diferencia del alumno principal). Antes, el array "hermanos" se guardaba tal
+    // cual lo mandara el navegador — grado/turno/división (e incluso colegioId) totalmente
+    // inventados por quien completa el formulario. Como `/api/familia/hijos` resuelve (y CREA
+    // si no existe) el código secreto real de cualquier grado/turno/división que le pidan para
+    // cada "hermano" sin ninguna verificación, esto permitía que una familia YA aprobada (un
+    // estado perfectamente normal, no un ataque sofisticado) agregara un "hermano" inventado
+    // con la sección de otro curso — o de otro colegio — y se le devolviera el código secreto
+    // real de esa sección ajena, sin pasar por ninguna revisión. Mismo criterio que ya se aplica
+    // al alumno principal (matchPadre, más arriba): el colegio SIEMPRE es el de esta inscripción
+    // (nunca el que declare el hermano), y si hay una fila del padrón oficial de ESTE colegio con
+    // el mismo contacto (teléfono/email) y un nombre que matchea, su grado/turno/división real
+    // manda por sobre lo que haya tipeado la familia — igual que ya ocurre con el alumno
+    // principal cuando el padrón trae esos datos cargados.
+    const hermanosReconciliados = (Array.isArray(hermanos) ? hermanos : []).map((h: any) => {
+      const nombreCompletoHermano = normalizarNombrePorPalabras(`${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`);
+      const matchHermano = nombreCompletoHermano
+        ? candidatosPadron.find((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreCompletoHermano)
+        : null;
+      return {
+        ...h,
+        colegioId, // nunca el que venga en el hermano: siempre el colegio de esta inscripción
+        grado: (matchHermano?.grado && String(matchHermano.grado).trim()) || h?.grado,
+        turno: (matchHermano?.turno && String(matchHermano.turno).trim()) || h?.turno,
+        division: (matchHermano?.division && String(matchHermano.division).trim()) || h?.division,
+      };
+    });
 
     // Buscar si esta misma familia (mismo colegio + mismo WhatsApp o email) ya tiene una
     // inscripción cargada, para actualizarla en vez de crear un duplicado (por ejemplo, cuando
@@ -2986,7 +3102,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       codigo_asignado: codigoAcceso,
       codigo_familiar: codigoAcceso,
       solicita_foto_hermanos: Boolean(solicitaFotoHermanos || (hermanos && hermanos.length > 0)),
-      hermanos: hermanos || [],
+      hermanos: hermanosReconciliados,
       fecha_inscripcion: inscripcionExistente?.fecha_inscripcion || fechaStr,
       fecha_aprobacion: estado === 'aceptado' ? (inscripcionExistente?.fecha_aprobacion || fechaStr) : null,
       notificacion_whatsapp_enviada: inscripcionExistente ? Boolean(inscripcionExistente.notificacion_whatsapp_enviada) : false,
@@ -3614,7 +3730,9 @@ async function procesarCargaPadron(
 }
 
 // Valida el link (colegioId + código) y devuelve el nombre del colegio para mostrar en la página
-app.get('/api/padron/institucion/:colegioId', async (req: Request, res: Response) => {
+// Auditoría 2026-09-21 (refuerzo): endpoint público sin autenticación más allá del código de la
+// URL — sin límite de frecuencia, se podía probar por fuerza bruta un código de padrón válido.
+app.get('/api/padron/institucion/:colegioId', limitarFrecuencia('padron-institucion-get', 20, 10 * 60 * 1000), async (req: Request, res: Response) => {
   const { colegioId } = req.params;
   const codigo = String(req.query.codigo || '');
   const resultado = await validarTokenPadronInstitucion(colegioId, codigo);
@@ -3628,7 +3746,7 @@ app.get('/api/padron/institucion/:colegioId', async (req: Request, res: Response
 // la suya propia) y los guarda en padres_autorizados, evitando duplicados (por
 // teléfono o email) contra lo ya cargado para ese colegio. Acepta también varias
 // filas de una vez por si en el futuro se vuelve a usar una carga masiva.
-app.post('/api/padron/institucion/:colegioId', async (req: Request, res: Response) => {
+app.post('/api/padron/institucion/:colegioId', limitarFrecuencia('padron-institucion-post', 20, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { colegioId } = req.params;
     const { codigo, filas } = req.body || {};
@@ -3647,7 +3765,9 @@ app.post('/api/padron/institucion/:colegioId', async (req: Request, res: Respons
 // Versión de link corto: el mismo flujo de arriba, pero identificando el colegio solo por
 // su código de padrón (sin el UUID en la URL) — así el link que se comparte con cada familia
 // es bastante más corto: /padron.html?c=CODIGO en vez de .../padron.html?colegio=<uuid>&codigo=<codigo>.
-app.get('/api/padron/link/:codigo', async (req: Request, res: Response) => {
+// Auditoría 2026-09-21 (refuerzo): mismo motivo que /api/padron/institucion — es un lookup
+// público por código, sin límite de frecuencia se podía probar por fuerza bruta.
+app.get('/api/padron/link/:codigo', limitarFrecuencia('padron-link-get', 20, 10 * 60 * 1000), async (req: Request, res: Response) => {
   const { codigo } = req.params;
   const resultado = await resolverColegioPorCodigoPadron(codigo);
   if (!resultado.ok) {
@@ -3656,7 +3776,7 @@ app.get('/api/padron/link/:codigo', async (req: Request, res: Response) => {
   return res.json({ success: true, colegioNombre: resultado.colegio.nombre });
 });
 
-app.post('/api/padron/link/:codigo', async (req: Request, res: Response) => {
+app.post('/api/padron/link/:codigo', limitarFrecuencia('padron-link-post', 20, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { codigo } = req.params;
     const { filas } = req.body || {};
@@ -4803,7 +4923,28 @@ app.post('/api/admin/pedidos/:id/generar-zip-hd', requireAdminAuth, async (req: 
 
     const link = await generarYSubirZipHDParaPedido(supabase, pedido);
     if (!link) {
-      return res.status(422).json({ success: false, error: 'No se pudo armar el .zip — revisá que las fotos de ese curso ya estén cargadas.' });
+      // Auditoría 2026-09-21 (refuerzo): antes este error era el mismo mensaje genérico para
+      // TODAS las causas posibles de falla — incluída la vez que curso_codigo no matcheaba
+      // ninguna fila de fotos (el bug real que rompió la entrega de HD, ver auditoría en
+      // PortalFamiliasModal.tsx). Este diagnóstico rápido distingue "no hay fotos cargadas para
+      // ese curso" (lo más común y lo que hay que arreglar cargando fotos) de "hay fotos pero
+      // falló armar/subir el .zip" (más probable un problema pasajero de Storage), para que el
+      // mensaje del panel apunte a la causa real en vez de mandar a revisar algo que ya está bien.
+      const { count: fotosDelCurso } = await supabase
+        .from('fotos')
+        .select('id', { count: 'exact', head: true })
+        .eq('colegio_id', pedido.colegio_id)
+        .eq('codigo_curso', pedido.curso_codigo);
+      if (!fotosDelCurso) {
+        return res.status(422).json({
+          success: false,
+          error: `No hay fotos cargadas para el curso "${pedido.curso_codigo || '(sin código)'}" de este pedido. Cargá las fotos de ese curso desde el panel de Fotos y volvé a intentar.`,
+        });
+      }
+      return res.status(422).json({
+        success: false,
+        error: 'Hay fotos cargadas para ese curso, pero no se pudo armar o subir el .zip (probable problema pasajero de Storage — mirá los logs del servidor). Volvé a intentar en unos minutos.',
+      });
     }
     return res.json({ success: true, linkDescargaHD: link });
   } catch (err: any) {
@@ -5211,7 +5352,14 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       pedido_friendly_id: acotar(pedidoFriendlyId, 40) || null,
       colegio_id: acotar(colegioId, 100) || null,
       colegio_nombre: acotar(colegioNombre, 200) || null,
-      curso_codigo: acotar(cursoCodigo, 60) || null,
+      // Auditoría 2026-09-21 (refuerzo tras el bug de "sigue sin armarse el zip"): NUNCA se
+      // acepta el curso_codigo tal como lo manda el navegador — ese fue exactamente el bug real
+      // que rompió la entrega de HD para todo pedido (ver auditoría en PortalFamiliasModal.tsx).
+      // El navegador ya manda grado/turno/división (los mismos que usa para pedir la galería), así
+      // que el código de curso se recalcula acá con la MISMA fórmula que usa el resto del sistema
+      // para etiquetar las fotos (determinarCodigoCursoServidor) — nunca confiando en el texto
+      // suelto `cursoCodigo` del cliente, ni siquiera si el frontend vuelve a tener un bug similar.
+      curso_codigo: determinarCodigoCursoServidor(String(grado || ''), String(turno || ''), String(division || '')),
       grado: acotar(grado, 60) || null,
       division: acotar(division, 60) || null,
       turno: acotar(turno, 60) || null,
@@ -5357,7 +5505,9 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         pedido_friendly_id: acotar(item?.pedidoFriendlyId, 40) || null,
         colegio_id: acotar(item?.colegioId, 100) || null,
         colegio_nombre: acotar(item?.colegioNombre, 200) || null,
-        curso_codigo: acotar(item?.cursoCodigo, 60) || null,
+        // Auditoría 2026-09-21: mismo refuerzo que en /api/pedidos/crear — nunca se confía en el
+        // curso_codigo que manda el cliente, se deriva siempre de grado/turno/división acá.
+        curso_codigo: determinarCodigoCursoServidor(String(item?.grado || ''), String(item?.turno || ''), String(item?.division || '')),
         grado: acotar(item?.grado, 60) || null,
         division: acotar(item?.division, 60) || null,
         turno: acotar(item?.turno, 60) || null,
@@ -5841,7 +5991,10 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
 // manda la notificación tal cual: se arma la URL nosotros mismos con nuestra propia base
 // (sandbox o producción, según NAVE_ENVIRONMENT) + el payment_id, para no arriesgarnos a que
 // una notificación falsa con una URL propia nos haga mandarle nuestro access_token a otro lado.
-app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) => {
+// Auditoría 2026-09-21 (refuerzo): sin límite, una notificación falsa repetida a alta frecuencia
+// obligaba a reconsultar la API de Nave una y otra vez (gasto/carga innecesaria). El límite es
+// generoso a propósito para no bloquear notificaciones legítimas de Nave en picos de tráfico.
+app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('nave-webhook', 60, 5 * 60 * 1000), async (req, res) => {
   try {
     const credenciales = getNaveCredenciales();
     if (!credenciales) {
@@ -5994,7 +6147,10 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], async (req, res) =>
 });
 
 // Endpoint público para que el cliente consulte el estado de pago actualizado de su pedido
-app.get('/api/pedidos/:id/status', async (req, res) => {
+// Auditoría 2026-09-21 (refuerzo): la pantalla de "preparando tu descarga" lo consulta en un
+// intervalo corto mientras espera, así que el límite tiene que ser generoso para no cortar esa
+// consulta legítima — pero sin límite, se podía usar para probar IDs de pedido al voleo.
+app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const { id } = req.params;
     const supabase = getServerSupabase();
