@@ -864,6 +864,33 @@ export async function marcarPedidoRetirado(pedidoSupabaseId: string): Promise<{ 
 }
 
 /**
+ * Auditoría 2026-09-21 (pedido real de Pablo): permite a la familia cambiar el método de pago
+ * de un pedido que quedó "Pendiente de Pago" (por ejemplo, si empezó a pagar con Mercado Pago,
+ * canceló la ventana de pago antes de confirmar, y prefiere pagar por Nave o transferencia en
+ * su lugar). Es un endpoint público (no de admin) — el servidor solo lo permite mientras el
+ * pedido siga sin pagarse (ver POST /api/pedidos/:id/cambiar-metodo-pago en server.ts).
+ */
+export async function cambiarMetodoPagoPedido(
+  pedidoSupabaseId: string,
+  metodoPago: 'mercadopago' | 'nave' | 'transferencia'
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/pedidos/${encodeURIComponent(pedidoSupabaseId)}/cambiar-metodo-pago`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metodoPago }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'No se pudo cambiar el método de pago.' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al cambiar el método de pago.' };
+  }
+}
+
+/**
  * Combina los pedidos reales de Supabase con cualquier pedido que sólo exista en el
  * localStorage de este navegador (por ejemplo, uno creado hace un instante cuya sincronización
  * con el servidor todavía no se refleja en una lectura posterior). Supabase es la fuente de la
