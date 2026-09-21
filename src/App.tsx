@@ -9,6 +9,7 @@ import Footer from './components/Footer';
 import PortalFamiliasModal from './components/PortalFamiliasModal';
 import ModalInscripcionFamilia from './components/ModalInscripcionFamilia';
 import AdminModal from './components/AdminModal';
+import EscaneoPedidoModal from './components/EscaneoPedidoModal';
 import { InscripcionFamilia } from './services/inscripcionesService';
 
 export default function App() {
@@ -19,6 +20,17 @@ export default function App() {
     }
     return false;
   });
+  // Auditoría 2026-09-21 (pedido de Pablo: escanear con el celular el QR pegado en el sobre del
+  // laboratorio). El QR apunta a "/?escaneo=<uuid del pedido>" — se detecta ese parámetro al
+  // cargar la página y se abre directo esta pantalla chica de un solo pedido, en vez del panel
+  // completo (pensado para pantallas de escritorio, no para un vistazo rápido desde el celular).
+  const [escaneoPedidoId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('escaneo');
+    }
+    return null;
+  });
+  const [escaneoModalOpen, setEscaneoModalOpen] = useState(Boolean(escaneoPedidoId));
   const [inscripcionModalOpen, setInscripcionModalOpen] = useState(false);
   const [selectedColegioId, setSelectedColegioId] = useState<string | undefined>(undefined);
   const [selectedKitId, setSelectedKitId] = useState<string | undefined>(undefined);
@@ -126,6 +138,12 @@ export default function App() {
           handleOpenFamilias('col-inicial-2026', cod);
         }}
       />
+
+      {/* Pantalla de un solo pedido para cuando se escanea el QR pegado en el sobre físico del
+          laboratorio (ver AdminLaboratorioTab.tsx, botón QR) — no reemplaza al panel completo. */}
+      {escaneoModalOpen && escaneoPedidoId && (
+        <EscaneoPedidoModal pedidoId={escaneoPedidoId} onClose={() => setEscaneoModalOpen(false)} />
+      )}
     </div>
   );
 }
