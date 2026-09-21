@@ -198,7 +198,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       <button
                         type="button"
                         onClick={() => setSearchTerm('')}
-                        className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1"
+                        className="text-xs text-slate-400 hover:text-slate-600 px-3 py-2.5 sm:py-1"
                       >
                         Borrar
                       </button>

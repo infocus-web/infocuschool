@@ -151,7 +151,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
   ];
 
   return (
-    <section id="proceso" className="py-16 lg:py-24 bg-white border-b border-slate-200/80">
+    <section id="proceso" className="scroll-mt-24 py-16 lg:py-24 bg-white border-b border-slate-200/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-14">
         {/* Header principal */}
         <div className="text-center max-w-3xl mx-auto space-y-3">

@@ -44,7 +44,7 @@ export default function ContactoSection() {
   };
 
   return (
-    <section id="contacto" className="py-16 lg:py-24 bg-slate-50 border-b border-slate-200/80">
+    <section id="contacto" className="scroll-mt-24 py-16 lg:py-24 bg-slate-50 border-b border-slate-200/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 text-left">
           {/* Contact Info Column */}

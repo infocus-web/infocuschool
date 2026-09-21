@@ -1447,31 +1447,42 @@ export default function PortalFamiliasModal({
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 animate-in fade-in duration-200">
       <div className="relative w-full max-w-5xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Top Modal Bar */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <ViewfinderFocusIcon className="w-8 h-8 shrink-0" theme="dark" />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-extrabold font-['Outfit'] tracking-tight">
-                  Retrato<span className="text-amber-400">Escolar</span>
-                </span>
-                <span className="text-[10px] bg-slate-800 text-amber-400 font-bold px-2 py-0.5 rounded border border-slate-700">
-                  Portal de Familias
-                </span>
+        <div className="px-3 py-3 sm:px-6 sm:py-4 bg-slate-900 text-white flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shrink-0">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <ViewfinderFocusIcon className="w-8 h-8 shrink-0" theme="dark" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-base font-extrabold font-['Outfit'] tracking-tight">
+                    Retrato<span className="text-amber-400">Escolar</span>
+                  </span>
+                  <span className="text-[10px] bg-slate-800 text-amber-400 font-bold px-2 py-0.5 rounded border border-slate-700">
+                    Portal de Familias
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 truncate">
+                  {selectedColegio ? `${selectedColegio.nombre} · Ciclo 2026` : 'retratoescolar.com.ar · Ciclo Escolar 2026'}
+                </p>
               </div>
-              <p className="text-xs text-slate-400">
-                {selectedColegio ? `${selectedColegio.nombre} · Ciclo 2026` : 'retratoescolar.com.ar · Ciclo Escolar 2026'}
-              </p>
             </div>
+
+            {/* Close button: on mobile it lives here, next to the brand, so it never gets pushed off-screen by the tabs below */}
+            <button
+              onClick={onClose}
+              className="sm:hidden p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+              aria-label="Cerrar"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
 
           <div className="flex items-center gap-3 sm:gap-4">
             {/* Tab switch between order and tracking */}
-            <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs">
+            <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs flex-1 sm:flex-initial">
               <button
                 type="button"
                 onClick={() => setModalMode('pedido')}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial text-center px-3 py-2.5 sm:py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                   modalMode === 'pedido'
                     ? 'bg-amber-400 text-slate-950 shadow-xs'
                     : 'text-slate-300 hover:text-white'
@@ -1484,7 +1495,7 @@ export default function PortalFamiliasModal({
                 onClick={() => {
                   setModalMode('seguimiento');
                 }}
-                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial text-center px-3 py-2.5 sm:py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
                   modalMode === 'seguimiento'
                     ? 'bg-amber-400 text-slate-950 shadow-xs'
                     : 'text-slate-300 hover:text-white'
@@ -1507,9 +1518,10 @@ export default function PortalFamiliasModal({
               </div>
             )}
 
+            {/* Close button: on sm+ it stays in its original spot on the right */}
             <button
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+              className="hidden sm:inline-flex p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
               aria-label="Cerrar"
             >
               <X className="w-5 h-5" />
@@ -2126,7 +2138,7 @@ export default function PortalFamiliasModal({
                 </div>
 
                 {/* Active info & Change data button */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center flex-wrap gap-3">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-900 border border-amber-300/80 text-[11px] font-bold">
                     <Lock className="w-3.5 h-3.5 text-amber-700" />
                     <span>{fotosDisponibles.length > 0 ? 'Fotos protegidas con marca de agua' : 'Esperando fotos del curso'}</span>
@@ -2435,7 +2447,7 @@ export default function PortalFamiliasModal({
                         <button
                           type="button"
                           onClick={() => setModalFotoPreview(foto)}
-                          className="absolute bottom-2.5 right-2.5 z-30 p-1.5 rounded-lg bg-white/90 hover:bg-white text-slate-800 text-xs shadow-md transition-colors cursor-pointer"
+                          className="absolute bottom-2.5 right-2.5 z-30 p-2.5 sm:p-1.5 rounded-lg bg-white/90 hover:bg-white text-slate-800 text-xs shadow-md transition-colors cursor-pointer"
                           title="Ampliar foto"
                         >
                           <Eye className="w-4 h-4" />
@@ -2456,7 +2468,7 @@ export default function PortalFamiliasModal({
                           <button
                             type="button"
                             onClick={handleSelectThisFoto}
-                            className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                            className={`shrink-0 py-2.5 sm:py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                               isSelected
                                 ? 'bg-emerald-500 text-white shadow-xs'
                                 : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
@@ -2475,7 +2487,7 @@ export default function PortalFamiliasModal({
                           <button
                             type="button"
                             onClick={handleSelectThisFoto}
-                            className={`shrink-0 py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
+                            className={`shrink-0 py-2.5 sm:py-1.5 px-3 rounded-lg text-xs font-bold transition-all ${isSelected ? 'bg-emerald-600 text-white' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
                           >
                             {isSelected ? 'Agregada · Quitar' : `Agregar · $${PRECIO_FOTO_EVENTO.toLocaleString('es-AR')}`}
                           </button>
@@ -2908,7 +2920,7 @@ export default function PortalFamiliasModal({
                     2. Método de Pago Online
                   </h4>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <button
                       type="button"
                       onClick={() => setMetodoPago('mercadopago')}
@@ -3459,7 +3471,7 @@ export default function PortalFamiliasModal({
                       <Images className="w-4 h-4 text-slate-500" />
                       <span>Tus fotos elegidas:</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                       {pedidoGenerado.archivosParaLaboratorio
                         .filter(archivo => !archivo.esCopiaExtra)
                         .map((archivo, idx) => (
