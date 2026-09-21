@@ -114,6 +114,46 @@ function valoresDelCarrito(carrito: Record<string, SeleccionCarritoHijo>): Selec
   return Object.values(carrito);
 }
 
+/**
+ * Auditoría 2026-09-20 (pedido de Pablo: "¿se puede aplicar un efecto lupa al pasar por la
+ * miniatura?" en el resumen del pedido). Las miniaturas ahí son chiquitas (56x56px) y de baja
+ * resolución (foto.thumbnail) — agrandar ESA imagen se vería borroso. En vez de eso: al pasar el
+ * mouse se ve un ícono de lupa y un leve zoom como invitación (sólo cosmético, no depende de que
+ * el dispositivo tenga mouse); al hacer clic o tocar se abre la vista ampliada reutilizando el
+ * modal de vista previa que ya existía en la grilla de selección (foto.url, la versión más
+ * grande con marca de agua) — así funciona igual en computadora que en el celular, donde el
+ * "hover" no existe y una lupa que sigue el cursor no serviría de nada.
+ */
+function MiniaturaAmpliable({
+  foto,
+  alt,
+  onAmpliar,
+  className = 'h-14 w-14',
+}: {
+  foto: Foto;
+  alt: string;
+  onAmpliar: (foto: Foto) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onAmpliar(foto)}
+      className={`group relative ${className} shrink-0 rounded-lg overflow-hidden cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400`}
+      title="Tocá para ver la foto ampliada"
+    >
+      <img
+        src={foto.thumbnail}
+        alt={alt}
+        className="h-full w-full object-cover transition-transform duration-200 ease-out group-hover:scale-125"
+      />
+      <span className="absolute inset-0 flex items-center justify-center bg-slate-950/0 group-hover:bg-slate-950/30 transition-colors duration-200">
+        <Search className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200 drop-shadow" />
+      </span>
+    </button>
+  );
+}
+
 export default function PortalFamiliasModal({
   isOpen,
   onClose,
@@ -173,7 +213,12 @@ export default function PortalFamiliasModal({
   const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('');
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('');
   const [fotosSueltasSeleccionadas, setFotosSueltasSeleccionadas] = useState<string[]>([]);
-  const [modalFotoPreview, setModalFotoPreview] = useState<Foto | null>(null);
+  // Auditoría 2026-09-20 (pedido de Pablo: efecto "lupa" en las miniaturas del resumen del
+  // pedido). "soloVista" es opcional para no romper el único llamado que ya existía (la grilla de
+  // selección del paso 2, que sigue sin mandarlo y por lo tanto sigue mostrando "Elegir esta
+  // foto" como siempre). Se usa desde el resumen del pedido para ampliar sin ofrecer ese botón —
+  // ahí la foto ya está elegida, no tiene sentido "reelegirla" desde una pantalla de repaso.
+  const [modalFotoPreview, setModalFotoPreview] = useState<(Foto & { soloVista?: boolean }) | null>(null);
   const [errorSeleccionFotos, setErrorSeleccionFotos] = useState('');
 
   // Sólo fotos reales del curso cargadas en Supabase; nunca se muestran fotos genéricas.
@@ -2922,7 +2967,11 @@ export default function PortalFamiliasModal({
                         { foto: fotoDocenteSeleccionada, tipo: 'Con docente', medida: '15x21 cm' },
                       ].map(({ foto, tipo, medida }) => foto && (
                         <div key={tipo} className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-800/70 p-2.5">
-                          <img src={foto.thumbnail} alt={`${tipo} elegida`} className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+                          <MiniaturaAmpliable
+                            foto={foto}
+                            alt={`${tipo} elegida`}
+                            onAmpliar={(f) => setModalFotoPreview({ ...f, soloVista: true })}
+                          />
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-bold text-white">{tipo}</p>
                             <p className="text-xs text-slate-300">
@@ -2937,7 +2986,11 @@ export default function PortalFamiliasModal({
                         const foto = fotosDisponibles.find((item) => item.id === id);
                         return foto ? (
                           <div key={id} className="flex items-center gap-3 rounded-xl border border-emerald-700/60 bg-emerald-950/30 p-2.5">
-                            <img src={foto.thumbnail} alt="Foto suelta elegida" className="h-14 w-14 shrink-0 rounded-lg object-cover" />
+                            <MiniaturaAmpliable
+                              foto={foto}
+                              alt="Foto suelta elegida"
+                              onAmpliar={(f) => setModalFotoPreview({ ...f, soloVista: true })}
+                            />
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-bold text-white">Foto suelta / evento</p>
                               <p className="text-xs text-emerald-300">Digital HD · 1 archivo · $5.000</p>
@@ -3517,7 +3570,7 @@ export default function PortalFamiliasModal({
                 <p className="text-xs font-bold text-white truncate">{modalFotoPreview.titulo}</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {modalFotoPreview.categoria !== 'patio' && (
+                {modalFotoPreview.categoria !== 'patio' && !modalFotoPreview.soloVista && (
                   <button
                     type="button"
                     onClick={() => {
