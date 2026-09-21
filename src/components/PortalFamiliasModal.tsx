@@ -977,9 +977,20 @@ export default function PortalFamiliasModal({
     setNaveRedirectUrl(null);
 
     const numLista = Math.floor(1 + Math.random() * 25);
-    const codCurso =
-      codigoAcceso.trim() ||
-      determinarCodigoParaInscripcion({ grado, turno, division });
+    // Auditoría 2026-09-20 (Pablo: "sigue sin armarse el sip" — el zip HD nunca se genera):
+    // acá se guardaba directamente `codigoAcceso` (lo que la familia tipeó en el Paso 1: su
+    // código secreto de sección o el código público del colegio) como `curso_codigo` del
+    // pedido. Pero ese código NUNCA tiene el formato de `codigo_curso` (ej. "GRADO1-ATM") — es
+    // justamente lo que audita el comentario de `obtenerGaleriaPublica`: el código secreto vive
+    // en `codigos_seccion` y el servidor lo resuelve a grado/turno/división, que es de ahí que
+    // sale el `codigo_curso` real que usan las fotos (ver `codigo_curso: determinarCodigoCursoServidor(...)`
+    // en server.ts). O sea que todo pedido hecho por una familia real, entrando con su código
+    // secreto (el único camino que de verdad desbloquea fotos), quedaba con un `curso_codigo`
+    // que jamás iba a matchear ninguna fila de `fotos` — el HD nunca se podía armar. Ahora se
+    // deriva siempre de grado/turno/división, igual que ya se hacía para los hermanos en el
+    // carrito multi-hijo (ver `itemsOtros` en `handleCompletarPagoMultiple`, unas líneas más
+    // abajo, que nunca tuvo este bug).
+    const codCurso = determinarCodigoParaInscripcion({ grado, turno, division });
 
     // Carrito multi-hijo ("el cliente debe poder hacer multiple pedido en una sola sesion, un
     // solo pago" — pedido de Pablo 2026-09-16): además del hijo activo ahora mismo, puede haber
