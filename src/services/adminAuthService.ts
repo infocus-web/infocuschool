@@ -24,6 +24,19 @@ export async function loginAdminConServidor(pin: string): Promise<LoginResult> {
     if (res.ok && data.success && data.token) {
       if (typeof window !== 'undefined') {
         sessionStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+        // Auditoría 2026-09-21 (pedido de Pablo: escanear el QR del sobre con la cámara del
+        // celular para avisar "Listo para retirar"). sessionStorage no alcanza para ese flujo:
+        // cada vez que la app de cámara abre el link del QR en una pestaña NUEVA, esa pestaña
+        // arranca con sessionStorage vacío (es por-pestaña, no se hereda), así que Pablo tendría
+        // que volver a tipear el PIN en cada escaneo. Se guarda también en localStorage —
+        // persiste entre pestañas y reinicios del navegador — para que loguearse una vez alcance
+        // durante toda la validez real del token (24hs, ver verifyAdminToken en el servidor).
+        try {
+          localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
+        } catch {
+          // localStorage puede fallar en modo privado estricto — no es crítico, sessionStorage
+          // igual sigue funcionando para la pestaña actual.
+        }
       }
       return { success: true, token: data.token };
     }
@@ -43,12 +56,26 @@ export async function loginAdminConServidor(pin: string): Promise<LoginResult> {
 
 export function obtenerTokenAdmin(): string | null {
   if (typeof window === 'undefined') return null;
-  return sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  // Se prioriza sessionStorage (comportamiento de siempre para el panel de escritorio), y si esta
+  // pestaña no tiene nada ahí, se cae a localStorage — el caso real es una pestaña nueva abierta
+  // por la app de cámara al escanear el QR de un sobre, que nace sin sessionStorage propio.
+  const deSesion = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  if (deSesion) return deSesion;
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
 export function cerrarSesionAdmin(): void {
   if (typeof window !== 'undefined') {
     sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    try {
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    } catch {
+      // Ídem arriba: si localStorage no está disponible, no hay nada que limpiar ahí.
+    }
   }
 }
 
