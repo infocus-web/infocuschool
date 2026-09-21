@@ -1983,71 +1983,113 @@ export default function PortalFamiliasModal({
                     ) : null}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 relative">
-                    <div className="sm:col-span-2">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                        Nombre y Apellido del alumno/a
-                      </label>
-                      <input
-                        type="text"
-                        value={nombreAlumno}
-                        onChange={(e) => setNombreAlumno(e.target.value)}
-                        placeholder="Ej: Benjamín Gómez"
-                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
-                      />
+                  {/* Auditoría 2026-09-21 (pedido de Pablo: "esto no sé si los padres deban
+                      tocarlo ya que turno/grado/división ya está registrado... a lo sumo debería
+                      mostrarlo como info, no como opción, pero de todos sus hijos, no sólo de
+                      uno"). Tenía razón: cuando `familiaActiva` está seteado, el único camino real
+                      hasta acá fue una família ya ACEPTADA (ver `validarCodigoIngresado` — es el
+                      único camino que desbloquea fotos reales), así que estos datos ya vienen
+                      confirmados por el equipo fotográfico/padrón, no por lo que tipee la familia
+                      acá. Dejarlos editables era engañoso: cambiar el valor en estos inputs nunca
+                      tocaba `codigoSeccionValidado` (la llave real que trae las fotos), así que la
+                      familia podía "cambiar" el grado en pantalla sin que eso moviera un pelo la
+                      galería que se le mostraba — sólo servía para que el pedido quedara
+                      registrado con datos que no coinciden con las fotos reales. Ahora, con família
+                      verificada, se listan como texto de sólo lectura TODOS los hijos/as (no sólo
+                      el que está activo en este momento) — coherente con el selector "Tus hijos/as"
+                      de la galería. El formulario editable queda sólo para cuando todavía no hay
+                      família verificada (por ejemplo, alguien que sólo reconoció la institución y
+                      necesita el código real de su curso). */}
+                  {familiaActiva ? (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-slate-500">
+                        Estos datos ya están confirmados para tu familia — no hace falta cargarlos de nuevo.
+                      </p>
+                      {hijosFamilia.length > 0 ? (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {hijosFamilia.map((h) => (
+                            <div
+                              key={h.id}
+                              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200"
+                            >
+                              <span className="text-xs font-bold text-slate-900">{h.nombreCompleto}</span>
+                              <span className="text-[11px] text-slate-500 font-medium">
+                                {h.grado || '—'} "{h.division || '—'}" · Turno {h.turno || '—'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic">Cargando datos confirmados...</p>
+                      )}
                     </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 relative">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Nombre y Apellido del alumno/a
+                        </label>
+                        <input
+                          type="text"
+                          value={nombreAlumno}
+                          onChange={(e) => setNombreAlumno(e.target.value)}
+                          placeholder="Ej: Benjamín Gómez"
+                          className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                        />
+                      </div>
 
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                        Turno
-                      </label>
-                      <select
-                        value={turno}
-                        onChange={(e) => setTurno(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
-                      >
-                        {selectedColegio.turnos.map((t) => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Turno
+                        </label>
+                        <select
+                          value={turno}
+                          onChange={(e) => setTurno(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                        >
+                          {selectedColegio.turnos.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                        Grado / Sala / Año
-                      </label>
-                      <select
-                        value={grado}
-                        onChange={(e) => setGrado(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
-                      >
-                        {selectedColegio.grados.map((g) => (
-                          <option key={g} value={g}>
-                            {g}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          Grado / Sala / Año
+                        </label>
+                        <select
+                          value={grado}
+                          onChange={(e) => setGrado(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                        >
+                          {selectedColegio.grados.map((g) => (
+                            <option key={g} value={g}>
+                              {g}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                    <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
-                        División
-                      </label>
-                      <select
-                        value={division}
-                        onChange={(e) => setDivision(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
-                      >
-                        {selectedColegio.divisiones.map((d) => (
-                          <option key={d} value={d}>
-                            División {d}
-                          </option>
-                        ))}
-                      </select>
+                      <div>
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                          División
+                        </label>
+                        <select
+                          value={division}
+                          onChange={(e) => setDivision(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                        >
+                          {selectedColegio.divisiones.map((d) => (
+                            <option key={d} value={d}>
+                              División {d}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="pt-2 flex justify-end">
                     <button
