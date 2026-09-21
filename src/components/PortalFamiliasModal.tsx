@@ -993,6 +993,92 @@ export default function PortalFamiliasModal({
   const hayFotosDeEventos = fotosDisponibles.some((f) => f.categoria === 'patio');
   const cantidadFotosPackSeleccionadas = [fotoGrupalSeleccionadaValida, fotoIndividualSeleccionadaValida, fotoDocenteSeleccionadaValida].filter(Boolean).length;
 
+  // Auditoría 2026-09-21 (pedido de Pablo): antes, la carpeta extra para abuelos/familiares se
+  // asignaba siempre al hijo que estuviera activo en pantalla — si la familia tenía más de un
+  // hijo, no había forma de ver ni sumarle una copia extra a UN hermano puntual sin pararse antes
+  // en su pantalla. Estos helpers leen y modifican la cantidad de carpetas extra de CUALQUIER
+  // hermano de la familia desde una sola lista con su nombre al lado, sin cambiar de pestaña: si
+  // es el hijo activo, tocan el estado en vivo (`extraCarpetas`); si es otro hermano, tocan
+  // directamente su entrada ya guardada en `carritoHijos` (sólo existe una vez que ese hermano
+  // completó sus 3 fotos — no tiene sentido ofrecer una copia duplicada de fotos que todavía no
+  // se eligieron, por eso el botón "+" queda deshabilitado para un hermano incompleto).
+  const obtenerExtraCarpetasDeHijo = (id: string): number => {
+    if (id === hijoSeleccionadoId) return extraCarpetas;
+    return carritoHijos[id]?.extraCarpetas || 0;
+  };
+
+  const hijoTieneFotosCompletas = (id: string): boolean => {
+    if (id === hijoSeleccionadoId) {
+      return fotoGrupalSeleccionadaValida && fotoIndividualSeleccionadaValida && fotoDocenteSeleccionadaValida;
+    }
+    return Boolean(carritoHijos[id]?.completo);
+  };
+
+  const ajustarExtraCarpetasDeHijo = (id: string, delta: number) => {
+    if (id === hijoSeleccionadoId) {
+      setExtraCarpetas((prev) => Math.max(0, prev + delta));
+      return;
+    }
+    setCarritoHijos((prev) => {
+      const entry = prev[id];
+      if (!entry) return prev;
+      const nuevaCantidad = Math.max(0, (entry.extraCarpetas || 0) + delta);
+      const kitPrecio = KITS_DISPONIBLES.find((k) => k.id === entry.kitId)?.precio || 0;
+      const nuevoTotal = kitPrecio + nuevaCantidad * PRECIO_CARPETA_EXTRA + entry.fotosSueltasSeleccionadas.length * PRECIO_FOTO_EVENTO;
+      return { ...prev, [id]: { ...entry, extraCarpetas: nuevaCantidad, total: nuevoTotal } };
+    });
+  };
+
+  // Sólo tiene sentido mostrar la lista con un renglón por hermano cuando hay más de un hijo en
+  // esta familia — con uno solo se deja el control simple de siempre.
+  const hijosParaCarpetasExtra = hijosFamilia.length > 1 ? hijosFamilia : [];
+  const totalExtraCarpetasFamilia = hijosParaCarpetasExtra.length > 0
+    ? hijosParaCarpetasExtra.reduce((acc, h) => acc + obtenerExtraCarpetasDeHijo(h.id), 0)
+    : extraCarpetas;
+
+  const renderFilaCarpetaExtra = (hijo: HijoConCodigoSeccion, compacto = false) => {
+    const cantidad = obtenerExtraCarpetasDeHijo(hijo.id);
+    const completo = hijoTieneFotosCompletas(hijo.id);
+    const tamañoBoton = compacto ? 'w-8 h-8' : 'w-9 h-9';
+    const tamañoIcono = compacto ? 'w-3.5 h-3.5' : 'w-4 h-4';
+    return (
+      <div
+        key={hijo.id}
+        className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0 border-b last:border-b-0 border-amber-200/60"
+      >
+        <div className="min-w-0 pr-2">
+          <span className="text-xs font-bold text-slate-900 truncate block">{hijo.nombreCompleto}</span>
+          {!completo && (
+            <span className="text-[10px] text-slate-500 block">Elegí primero sus 3 fotos para poder sumarle una copia</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => ajustarExtraCarpetasDeHijo(hijo.id, -1)}
+            disabled={cantidad === 0}
+            className={`${tamañoBoton} rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center text-slate-700 font-bold transition-colors cursor-pointer`}
+            title={`Restar carpeta extra de ${hijo.nombreCompleto}`}
+          >
+            <Minus className={tamañoIcono} />
+          </button>
+          <div className="min-w-8 text-center">
+            <span className="font-mono font-extrabold text-sm text-slate-900 block">{cantidad}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => ajustarExtraCarpetasDeHijo(hijo.id, 1)}
+            disabled={!completo}
+            className={`${tamañoBoton} rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs disabled:opacity-30 disabled:cursor-not-allowed`}
+            title={completo ? `Sumar carpeta extra para ${hijo.nombreCompleto}` : 'Elegí primero sus 3 fotos'}
+          >
+            <Plus className={tamañoIcono} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const handleContinuarAlKit = () => {
     const faltantes = [
       !fotoGrupalSeleccionadaValida ? 'una foto grupal' : null,
@@ -2643,7 +2729,14 @@ export default function PortalFamiliasModal({
                     </div>
                   </div>
 
-                  {/* Single Clean Selector */}
+                  {/* Selector de carpetas extra: con más de un hijo en la familia se muestra un
+                      renglón independiente por hermano (nombre + su propio selector), en vez de
+                      un único control implícitamente atado al hijo activo en pantalla. */}
+                  {hijosParaCarpetasExtra.length > 0 ? (
+                    <div className="w-full md:w-auto md:min-w-[300px] pt-2 md:pt-0 border-t md:border-t-0 border-amber-200/80">
+                      {hijosParaCarpetasExtra.map((h) => renderFilaCarpetaExtra(h))}
+                    </div>
+                  ) : (
                   <div className="flex items-center gap-3 shrink-0 self-start md:self-center pt-2 md:pt-0 border-t md:border-t-0 border-amber-200/80 w-full md:w-auto justify-between md:justify-end">
                     <span className="text-xs font-bold text-slate-700 md:hidden">Carpetas extras:</span>
                     <div className="flex items-center gap-2">
@@ -2686,18 +2779,19 @@ export default function PortalFamiliasModal({
                       </button>
                     )}
                   </div>
+                  )}
                 </div>
 
-                {extraCarpetas > 0 && (
+                {totalExtraCarpetasFamilia > 0 && (
                   <div className="mt-3 pt-3 border-t border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                     <div className="flex items-center gap-2 text-amber-950 font-semibold">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                       <span>
-                        Recibirás <strong>{extraCarpetas + 1} carpetas completas</strong> en total (1 del pack principal + {extraCarpetas} para abuelos/familiares).
+                        Recibirás <strong>{totalExtraCarpetasFamilia + 1} carpetas completas</strong> en total (1 del pack principal + {totalExtraCarpetasFamilia} para abuelos/familiares).
                       </span>
                     </div>
                     <span className="font-extrabold text-amber-900 bg-white px-2.5 py-1 rounded-lg border border-amber-300">
-                      Subtotal carpetas extras: +${(extraCarpetas * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}
+                      Subtotal carpetas extras: +${(totalExtraCarpetasFamilia * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}
                     </span>
                   </div>
                 )}
@@ -2888,6 +2982,11 @@ export default function PortalFamiliasModal({
                     </p>
                   </div>
 
+                  {hijosParaCarpetasExtra.length > 0 ? (
+                    <div className="w-full sm:w-auto sm:min-w-[300px] shrink-0 self-start sm:self-auto">
+                      {hijosParaCarpetasExtra.map((h) => renderFilaCarpetaExtra(h))}
+                    </div>
+                  ) : (
                   <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto">
                     <div className="flex items-center gap-2">
                       <button
@@ -2929,14 +3028,15 @@ export default function PortalFamiliasModal({
                       </button>
                     )}
                   </div>
+                  )}
                 </div>
 
-                {extraCarpetas > 0 && (
+                {totalExtraCarpetasFamilia > 0 && (
                   <div className="p-3 rounded-xl bg-amber-100/70 border border-amber-200 text-xs text-amber-950 flex items-start gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                     <div>
                       <span>
-                        <strong>Carpetas a confeccionar:</strong> 1 Carpeta del pack principal + {extraCarpetas} carpeta{extraCarpetas > 1 ? 's' : ''} extra{extraCarpetas > 1 ? 's' : ''} = <strong>{extraCarpetas + 1} carpetas completas</strong> en total (+${(extraCarpetas * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}).
+                        <strong>Carpetas a confeccionar:</strong> 1 Carpeta del pack principal + {totalExtraCarpetasFamilia} carpeta{totalExtraCarpetasFamilia > 1 ? 's' : ''} extra{totalExtraCarpetasFamilia > 1 ? 's' : ''} = <strong>{totalExtraCarpetasFamilia + 1} carpetas completas</strong> en total (+${(totalExtraCarpetasFamilia * PRECIO_CARPETA_EXTRA).toLocaleString('es-AR')}).
                       </span>
                     </div>
                   </div>
