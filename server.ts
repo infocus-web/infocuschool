@@ -2515,6 +2515,52 @@ function normalizarTelefonoServidor(tel: string): string {
   return (tel || '').replace(/\D/g, '');
 }
 
+// Auditoría 2026-09-22 (Pablo: "¿por qué el código minilab no figura en esos pedidos de
+// prueba?"): mismo criterio de refuerzo que ya se aplicó a curso_codigo — nunca confiar en un
+// valor derivado que mande el navegador cuando el servidor puede calcularlo solo con datos que
+// ya validó. Réplica exacta de `sanitizarParaMinilab` (src/services/pedidosLabService.ts) —
+// función pura de texto, sin ninguna dependencia de navegador, así que es segura de duplicar acá.
+function sanitizarParaMinilabServidor(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+/**
+ * Auditoría 2026-09-22: hasta ahora el "número de lista" de cada pedido (usado sólo para armar
+ * el código de minilab y ordenar los archivos del laboratorio, nunca vino de ningún padrón real
+ * de la escuela) se generaba en el navegador con `Math.floor(1 + Math.random() * 25)` — un
+ * número al azar en cada pedido, incluso para el MISMO alumno pagando de nuevo. Dos
+ * consecuencias reales, visibles en el panel: (1) el código de minilab de un mismo alumno
+ * cambiaba de pedido a pedido sin ningún motivo; (2) dos alumnos distintos del mismo curso
+ * podían coincidir en el mismo número al azar, generando el mismo código de minilab para dos
+ * fotos distintas (colisión real de nombre de archivo). Se reemplaza por un correlativo estable:
+ * cuántos pedidos ya existen para ese mismo curso_codigo, +1 — determinístico dentro de ese
+ * curso y sin depender de ningún dato que el navegador pueda inventar. No es el número de lista
+ * oficial del colegio (el sistema no guarda ninguno), pero al menos dos pedidos del mismo curso
+ * nunca van a coincidir en el mismo número.
+ */
+async function obtenerNumeroListaSecuencial(supabase: ReturnType<typeof getServerSupabase>, cursoCodigo: string): Promise<number> {
+  try {
+    const { count, error } = await supabase!
+      .from('pedidos')
+      .select('id', { count: 'exact', head: true })
+      .eq('curso_codigo', cursoCodigo);
+    if (error || typeof count !== 'number') return 1;
+    return count + 1;
+  } catch {
+    return 1;
+  }
+}
+
+function calcularCodigoAlumnoServidor(cursoCodigo: string, numeroLista: number, alumnoNombre: string): string {
+  return `${sanitizarParaMinilabServidor(cursoCodigo)}_${String(numeroLista).padStart(2, '0')}_${sanitizarParaMinilabServidor(alumnoNombre || 'ALUMNO')}`;
+}
+
 /** Enmascara un email para mostrarlo en una respuesta pública sin revelarlo completo (ej: "ju***@gmail.com") */
 function enmascararEmailServidor(email: string): string {
   const [usuario, dominio] = String(email || '').split('@');
@@ -5338,6 +5384,13 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
     const extrasValidados = Math.min(MAX_CARPETAS_EXTRA, Math.max(0, Math.floor(Number(carpetasExtras) || 0)));
     const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
     const metodoPagoValido = metodosValidos.includes(metodoPago) ? metodoPago : 'mercadopago';
+    const cursoCodigoServidor = determinarCodigoCursoServidor(String(grado || ''), String(turno || ''), String(division || ''));
+    // Auditoría 2026-09-22 (Pablo: "¿por qué el código minilab no figura?"): mismo refuerzo que
+    // ya se aplicó a curso_codigo — codigo_alumno y alumno_numero_lista se calculan siempre acá,
+    // nunca se acepta lo que mande el navegador (ver `calcularCodigoAlumnoServidor` y
+    // `obtenerNumeroListaSecuencial` más arriba en este archivo).
+    const numeroListaServidor = await obtenerNumeroListaSecuencial(supabase, cursoCodigoServidor);
+    const codigoAlumnoServidor = calcularCodigoAlumnoServidor(cursoCodigoServidor, numeroListaServidor, acotar(alumnoNombre, 200));
 
     const filaPedido: Record<string, any> = {
       familia_id: familiaId,
@@ -5359,13 +5412,13 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       // que el código de curso se recalcula acá con la MISMA fórmula que usa el resto del sistema
       // para etiquetar las fotos (determinarCodigoCursoServidor) — nunca confiando en el texto
       // suelto `cursoCodigo` del cliente, ni siquiera si el frontend vuelve a tener un bug similar.
-      curso_codigo: determinarCodigoCursoServidor(String(grado || ''), String(turno || ''), String(division || '')),
+      curso_codigo: cursoCodigoServidor,
       grado: acotar(grado, 60) || null,
       division: acotar(division, 60) || null,
       turno: acotar(turno, 60) || null,
       alumno_nombre: acotar(alumnoNombre, 200) || null,
-      alumno_numero_lista: Number.isFinite(Number(alumnoNumeroLista)) ? Math.floor(Number(alumnoNumeroLista)) : null,
-      codigo_alumno: acotar(codigoAlumno, 200) || null,
+      alumno_numero_lista: numeroListaServidor,
+      codigo_alumno: codigoAlumnoServidor,
       kit_nombre: acotar(kitNombre, 120) || null,
       fotos_seleccionadas: acotarJson(fotosSeleccionadas),
       copias_extras: acotarJson(copiasExtras),
@@ -5488,11 +5541,26 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
 
     const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
     const filasPedido: Record<string, any>[] = [];
+    // Auditoría 2026-09-22 (Pablo: "¿por qué el código minilab no figura en esos pedidos de
+    // prueba?"): este endpoint nunca mandaba `codigoAlumno` desde el navegador (a diferencia de
+    // /api/pedidos/crear, el camino de un solo hijo) — cada pedido de un carrito multi-hijo
+    // quedaba con `codigo_alumno = null`, invisible en la columna "Código Minilab" del panel.
+    // Igual que ahí, ahora se calcula siempre acá, nunca confiando en el navegador. El contador
+    // lleva la cuenta por curso DENTRO de este mismo carrito, para que dos hermanos en la misma
+    // sección (el caso real de mellizos) no terminen con el mismo número por consultar la base
+    // antes de que el hermano anterior del mismo carrito quedara insertado.
+    const numeroListaBasePorCurso: Record<string, number> = {};
     for (const item of items) {
       const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item)) as number;
       const tipoKit = item?.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
       const extrasValidados = Math.min(20, Math.max(0, Math.floor(Number(item?.carpetasExtras) || 0)));
       const metodoPagoValida = metodosValidos.includes(item?.metodoPago) ? item.metodoPago : 'mercadopago';
+      const cursoCodigoServidor = determinarCodigoCursoServidor(String(item?.grado || ''), String(item?.turno || ''), String(item?.division || ''));
+      if (numeroListaBasePorCurso[cursoCodigoServidor] === undefined) {
+        numeroListaBasePorCurso[cursoCodigoServidor] = await obtenerNumeroListaSecuencial(supabase, cursoCodigoServidor) - 1;
+      }
+      const numeroListaServidor = ++numeroListaBasePorCurso[cursoCodigoServidor];
+      const codigoAlumnoServidor = calcularCodigoAlumnoServidor(cursoCodigoServidor, numeroListaServidor, acotar(item?.alumnoNombre, 200));
 
       const fila: Record<string, any> = {
         familia_id: familiaId,
@@ -5507,13 +5575,13 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         colegio_nombre: acotar(item?.colegioNombre, 200) || null,
         // Auditoría 2026-09-21: mismo refuerzo que en /api/pedidos/crear — nunca se confía en el
         // curso_codigo que manda el cliente, se deriva siempre de grado/turno/división acá.
-        curso_codigo: determinarCodigoCursoServidor(String(item?.grado || ''), String(item?.turno || ''), String(item?.division || '')),
+        curso_codigo: cursoCodigoServidor,
         grado: acotar(item?.grado, 60) || null,
         division: acotar(item?.division, 60) || null,
         turno: acotar(item?.turno, 60) || null,
         alumno_nombre: acotar(item?.alumnoNombre, 200) || null,
-        alumno_numero_lista: Number.isFinite(Number(item?.alumnoNumeroLista)) ? Math.floor(Number(item.alumnoNumeroLista)) : null,
-        codigo_alumno: acotar(item?.codigoAlumno, 200) || null,
+        alumno_numero_lista: numeroListaServidor,
+        codigo_alumno: codigoAlumnoServidor,
         kit_nombre: acotar(item?.kitNombre, 120) || null,
         fotos_seleccionadas: acotarJson(item?.fotosSeleccionadas),
         copias_extras: acotarJson(item?.copiasExtras),
