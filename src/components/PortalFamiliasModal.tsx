@@ -191,6 +191,12 @@ export default function PortalFamiliasModal({
   // Dynamic WhatsApp number: prioritized by selected school, or global configuration
   const whatsappDestino = selectedColegio?.whatsappContacto || configWhatsApp.whatsappSolicitudCodigo || '5491128625916';
   const [codigoAcceso, setCodigoAcceso] = useState('');
+  // Auditoría 2026-09-22 (pedido de Pablo: "que cada vez que vayan a ingresar, lo hagan con
+  // nombre y apellido del padre/tutor/encargado, el DNI del padre/tutor/encargado, y el código
+  // generado"): el código de curso lo comparte toda la sección, así que ahora hacen falta estos
+  // dos datos más, junto al código, para que el servidor identifique a la familia exacta.
+  const [codigoTutorNombreInput, setCodigoTutorNombreInput] = useState('');
+  const [codigoTutorDniInput, setCodigoTutorDniInput] = useState('');
   const [codigoValidadoMsg, setCodigoValidadoMsg] = useState<string | null>(null);
   const [codigoErrorMsg, setCodigoErrorMsg] = useState<string | null>(null);
   const [familiaActiva, setFamiliaActiva] = useState<InscripcionFamilia | null>(null);
@@ -682,13 +688,13 @@ export default function PortalFamiliasModal({
       setHijosFamilia([]);
       return;
     }
-    obtenerHijosDeFamilia(codigoFamiliar).then((hijos) => {
+    obtenerHijosDeFamilia(codigoFamiliar, familiaActiva?.padreDni).then((hijos) => {
       if (!cancelado) setHijosFamilia(hijos);
     });
     return () => {
       cancelado = true;
     };
-  }, [familiaActiva?.codigoAsignado, familiaActiva?.codigoFamiliar]);
+  }, [familiaActiva?.codigoAsignado, familiaActiva?.codigoFamiliar, familiaActiva?.padreDni]);
 
   // Carrito multi-hijo (ver interfaz SeleccionCarritoHijo más arriba, fuera del componente).
   const [carritoHijos, setCarritoHijos] = useState<Record<string, SeleccionCarritoHijo>>({});
@@ -921,7 +927,7 @@ export default function PortalFamiliasModal({
   }, [preselectedKitId]);
 
   // Function to validate and bind course code, family access code, or school code
-  const validarCodigoIngresado = async (codigoInput: string) => {
+  const validarCodigoIngresado = async (codigoInput: string, tutorNombreInput?: string, dniInput?: string) => {
     const clean = codigoInput.trim().toUpperCase();
     if (!clean) {
       setCodigoErrorMsg('Por favor ingresá un código para validar.');
@@ -939,7 +945,25 @@ export default function PortalFamiliasModal({
     // servidor sólo devuelve la familia completa si lo que se escribió ES el código real; si se
     // escribió un teléfono/email de una familia que ya tiene código, el servidor lo reenvía por
     // correo pero no lo entrega acá (ver `buscarMiInscripcion`).
-    const resultadoBusqueda = await buscarMiInscripcion(clean);
+    // Auditoría 2026-09-22 (pedido de Pablo: "que cada vez que vayan a ingresar, lo hagan con
+    // nombre y apellido del padre/tutor/encargado, el DNI del padre/tutor/encargado, y el código
+    // generado... con eso solucionamos el problema de que con un solo código por curso no se
+    // crucen los datos de los alumnos al momento de ingresar"): el código de curso lo comparte
+    // toda la sección a propósito, así que ya no alcanza con acertarlo — se manda siempre junto
+    // al nombre y DNI del tutor para que el servidor identifique a la familia exacta.
+    const resultadoBusqueda = await buscarMiInscripcion(clean, tutorNombreInput, dniInput);
+    if (resultadoBusqueda.requiereDatosTutor) {
+      const curso = resultadoBusqueda.cursoInfo;
+      const descCurso = curso ? `${curso.grado || ''} "${curso.division || ''}" · Turno ${curso.turno || ''} (${curso.colegioNombre || ''})`.trim() : null;
+      setCodigoErrorMsg(
+        resultadoBusqueda.datosNoCoinciden
+          ? `El nombre y DNI que ingresaste no coinciden con ninguna familia registrada con este código${descCurso ? ` (${descCurso})` : ''}. Revisá que estén escritos igual que en tu inscripción.`
+          : `Este código es de todo el curso${descCurso ? ` (${descCurso})` : ''}. Para identificar a tu familia, completá también el nombre y el DNI del tutor con el que te inscribiste.`
+      );
+      setCodigoValidadoMsg(null);
+      setCodigoSeccionValidado(null);
+      return false;
+    }
     if (resultadoBusqueda.yaRegistrado) {
       setCodigoErrorMsg(
         resultadoBusqueda.emailReenviado
@@ -1020,9 +1044,13 @@ export default function PortalFamiliasModal({
   };
 
   useEffect(() => {
+    // Auditoría 2026-09-22: un código que llega precargado por URL (link compartido) ya no
+    // alcanza por sí solo para validar — ahora hace falta también el nombre y DNI del tutor (ver
+    // `validarCodigoIngresado`), que nadie manda por ese link. Se precarga el casillero del
+    // código para que la familia no tenga que volver a escribirlo, pero se le pide igual que
+    // complete sus datos antes de poder entrar.
     if (preselectedCodigo) {
       setCodigoAcceso(preselectedCodigo);
-      void validarCodigoIngresado(preselectedCodigo);
     }
   }, [preselectedCodigo]);
 
@@ -1226,7 +1254,15 @@ export default function PortalFamiliasModal({
   // Handlers
   const handleIngresarCodigo = async () => {
     if (!codigoAcceso.trim()) return;
-    const ok = await validarCodigoIngresado(codigoAcceso);
+    // Auditoría 2026-09-22: nombre y DNI del tutor viajan siempre junto al código (ver
+    // `validarCodigoIngresado`) — son obligatorios ahora, se validan acá antes de pegarle al
+    // servidor para no gastar el rate-limit con un pedido que ya sabemos que va a pedir datos.
+    if (!codigoTutorNombreInput.trim() || codigoTutorDniInput.replace(/\D/g, '').length < 6) {
+      setCodigoErrorMsg('Completá el nombre y apellido del tutor y su DNI, junto con el código, para poder identificar a tu familia.');
+      setCodigoValidadoMsg(null);
+      return;
+    }
+    const ok = await validarCodigoIngresado(codigoAcceso, codigoTutorNombreInput, codigoTutorDniInput);
     if (ok && nombreAlumno.trim()) {
       setStep(2);
     }
@@ -2062,18 +2098,47 @@ export default function PortalFamiliasModal({
 
               {/* Hero Course Code Access Card */}
               <div className="bg-linear-to-br from-amber-500/10 via-amber-50 to-white rounded-2xl p-5 sm:p-6 border-2 border-amber-300 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex flex-col gap-3">
                   <div className="text-left">
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold uppercase tracking-wider mb-1">
                       <Key className="w-3 h-3" />
                       Acceso para Familias
                     </span>
                     <h4 className="text-base sm:text-lg font-extrabold text-slate-900 font-['Outfit']">
-                      Ingresá el código de tu curso o institución
+                      Ingresá con tus datos y el código de tu curso
                     </h4>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      Ingresá el código provisto por la institución o tu docente para cargar automáticamente el curso, turno y división.
+                      {/* Auditoría 2026-09-22 (pedido de Pablo): el código lo comparte todo el
+                          curso, así que ahora hacen falta también el nombre y DNI del tutor con el
+                          que se inscribió la familia, para identificar exactamente a tus hijos. */}
+                      El código es el mismo para todo el curso — con tu nombre y DNI identificamos a tu familia y cargamos automáticamente el curso, turno y división.
                     </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={codigoTutorNombreInput}
+                      onChange={(e) => {
+                        setCodigoTutorNombreInput(e.target.value);
+                        setCodigoErrorMsg(null);
+                      }}
+                      placeholder="Nombre y apellido del tutor"
+                      autoComplete="name"
+                      className="px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full shadow-xs"
+                    />
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={codigoTutorDniInput}
+                      onChange={(e) => {
+                        setCodigoTutorDniInput(e.target.value);
+                        setCodigoErrorMsg(null);
+                      }}
+                      placeholder="DNI del tutor (sin puntos)"
+                      autoComplete="off"
+                      className="px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full shadow-xs"
+                    />
                   </div>
 
                   <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -2089,7 +2154,7 @@ export default function PortalFamiliasModal({
                           handleIngresarCodigo();
                         }
                       }}
-                      placeholder="Ej: SALA-3TM"
+                      placeholder="Código del curso (Ej: SALA-3TM)"
                       className="px-3.5 py-2.5 text-xs sm:text-sm uppercase font-mono font-bold tracking-wider bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full sm:w-48 shadow-xs"
                     />
                     <button

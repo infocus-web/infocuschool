@@ -176,6 +176,12 @@ export default function ModalInscripcionFamilia({
 
   // Login states
   const [loginQuery, setLoginQuery] = useState('');
+  // Auditoría 2026-09-22 (pedido de Pablo: "que cada vez que vayan a ingresar, lo hagan con
+  // nombre y apellido del padre/tutor/encargado, el DNI del padre/tutor/encargado, y el código
+  // generado"): el código de curso lo comparte toda la sección, así que hacen falta estos dos
+  // datos más, junto al código, para que el servidor identifique a la familia exacta.
+  const [loginTutorNombre, setLoginTutorNombre] = useState('');
+  const [loginTutorDni, setLoginTutorDni] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [verificandoLogin, setVerificandoLogin] = useState(false);
 
@@ -324,10 +330,22 @@ export default function ModalInscripcionFamilia({
     // sólo devuelve la familia completa si lo que se escribió ES el código real; si se escribió
     // un teléfono/email de una familia ya aprobada, el servidor reenvía el código por correo
     // pero no lo entrega acá.
-    const resultado = await buscarMiInscripcion(loginQuery);
+    // Auditoría 2026-09-22 (pedido de Pablo): si lo que se escribió ES un código de curso, ya no
+    // alcanza solo — el servidor pide también nombre y DNI del tutor para identificar a la
+    // familia exacta dentro del curso (`requiereDatosTutor`). El teléfono/email siguen andando
+    // igual que antes (ese camino nunca entrega el código directo, ver más arriba).
+    const resultado = await buscarMiInscripcion(loginQuery, loginTutorNombre, loginTutorDni);
     setVerificandoLogin(false);
 
-    if (resultado.inscripcion) {
+    if (resultado.requiereDatosTutor) {
+      const curso = resultado.cursoInfo;
+      const descCurso = curso ? `${curso.grado || ''} "${curso.division || ''}" · Turno ${curso.turno || ''}${curso.colegioNombre ? ` (${curso.colegioNombre})` : ''}`.trim() : null;
+      setLoginError(
+        resultado.datosNoCoinciden
+          ? `El nombre y DNI que ingresaste no coinciden con ninguna familia registrada con este código${descCurso ? ` (${descCurso})` : ''}. Revisá que estén escritos igual que en tu inscripción.`
+          : `Este código es de todo el curso${descCurso ? ` (${descCurso})` : ''}. Completá también el nombre y el DNI del tutor con el que te inscribiste para identificar a tu familia.`
+      );
+    } else if (resultado.inscripcion) {
       guardarFamiliaActiva(resultado.inscripcion);
       setEnvioCodigoInfo(null); // se encontró por el código real: se muestra directo, no hace falta el aviso de "revisá tu correo"
       setFamiliaCreada(resultado.inscripcion);
@@ -503,48 +521,34 @@ export default function ModalInscripcionFamilia({
                     </span>
                     <span className="text-xs text-slate-500 font-medium">1 Código para toda la familia</span>
                   </div>
-                  {/* Auditoría 2026-09-16: cuando el código ya lo comparte más de una familia (es un
-                      código de curso, no uno exclusivo), el servidor no manda ningún dato personal
-                      de esa familia — así que acá nunca hay que saludar a nadie por su nombre ni
-                      mostrar el alumno/hermanos de otra familia: sólo el curso al que da acceso. */}
-                  {familiaCreada?.codigoCompartido ? (
-                    <>
-                      <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
-                        Código de curso verificado
-                      </h3>
-                      <div className="text-xs text-slate-700 space-y-0.5">
-                        <p className="font-semibold text-slate-800">
-                          • {gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay}
+                  {/* Auditoría 2026-09-22: antes acá había una rama "código de curso verificado"
+                      anónima (sin nombre ni alumno) para cuando el código ya lo compartía otra
+                      familia y el servidor no podía saber cuál era. Ya no hace falta: ahora, para
+                      llegar a este paso ('resultado'), el servidor ya identificó a la familia
+                      exacta por nombre + DNI del tutor (ver `validarCodigoIngresado` /
+                      `/api/inscripciones/buscar`) — si todavía faltaban esos datos o no
+                      coincidían, `handleLoginSubmit` ni siquiera avanza hasta acá, se queda
+                      pidiéndolos en el formulario. */}
+                  <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
+                    ¡Hola {tutorDisplay}! Registramos a tu familia
+                  </h3>
+                  <div className="text-xs text-slate-700 space-y-0.5">
+                    <p className="font-semibold text-slate-800">
+                      • {alumnoDisplay} ({gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay})
+                    </p>
+                    {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0 && (
+                      familiaCreada.hermanos.map((h, i) => (
+                        <p key={h.id || i} className="font-semibold text-slate-800">
+                          • {h.alumnoNombre} {h.alumnoApellido} ({h.grado} "{h.division}" · Turno {h.turno})
                         </p>
-                        <p className="text-slate-500">
-                          Este código lo comparten varias familias del curso — te lleva directo a la galería de fotos, sin mostrar los datos de nadie más.
-                        </p>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
-                        ¡Hola {tutorDisplay}! Registramos a tu familia
-                      </h3>
-                      <div className="text-xs text-slate-700 space-y-0.5">
-                        <p className="font-semibold text-slate-800">
-                          • {alumnoDisplay} ({gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay})
-                        </p>
-                        {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0 && (
-                          familiaCreada.hermanos.map((h, i) => (
-                            <p key={h.id || i} className="font-semibold text-slate-800">
-                              • {h.alumnoNombre} {h.alumnoApellido} ({h.grado} "{h.division}" · Turno {h.turno})
-                            </p>
-                          ))
-                        )}
-                        {familiaCreada?.solicitaFotoHermanos && (
-                          <span className="inline-block mt-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
-                            📸 Foto especial de hermanos juntos: Solicitada
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  )}
+                      ))
+                    )}
+                    {familiaCreada?.solicitaFotoHermanos && (
+                      <span className="inline-block mt-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
+                        📸 Foto especial de hermanos juntos: Solicitada
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -569,14 +573,11 @@ export default function ModalInscripcionFamilia({
                           que la propia familia lo haya escrito ella misma (pestaña "Ya me inscribí" con
                           el código real) — cuando la aprobación es automática, sólo avisamos que se
                           mandó por correo, nunca lo mostramos ni lo entregamos por acá.
-                          Auditoría 2026-09-16: si el código ya es compartido por el curso, jamás hay
-                          un email "tuyo" que mostrar acá — el servidor ni siquiera lo manda. */}
+                          Auditoría 2026-09-22: para llegar a este paso identificado por código, el
+                          servidor ya validó nombre + DNI del tutor contra ESTA familia (ver
+                          `handleLoginSubmit`), así que el email mostrado abajo siempre es el suyo. */}
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        {familiaCreada.codigoCompartido ? (
-                          <>Este código de curso ya está activo — entrá directo a ver la galería de fotos.</>
-                        ) : (
-                          <>Verificamos tus datos contra el padrón del colegio y ya te despachamos tu <strong>Código de Acceso</strong> por correo a <strong>{familiaCreada.email}</strong>.</>
-                        )}
+                        Verificamos tus datos contra el padrón del colegio y ya te despachamos tu <strong>Código de Acceso</strong> por correo a <strong>{familiaCreada.email}</strong>.
                       </p>
                     </div>
                   </div>
@@ -1192,9 +1193,37 @@ export default function ModalInscripcionFamilia({
                   {/* Auditoría 2026-09-09: el texto de acá invitaba a escribir el WhatsApp o correo
                       como si fuera un acceso directo — ya no lo es (ver seguridad más arriba), así
                       que ahora el código va primero y el teléfono/correo se explica aparte, como lo
-                      que realmente hacen: pedir el reenvío por correo, nunca entrar directo. */}
+                      que realmente hacen: pedir el reenvío por correo, nunca entrar directo.
+                      Auditoría 2026-09-22 (pedido de Pablo): el código lo comparte todo el curso,
+                      así que ahora también hacen falta el nombre y DNI del tutor con el que se
+                      inscribió la familia, para identificar exactamente a tus hijos. */}
                   <label className="block text-xs font-bold text-slate-700">
-                    Ingresá tu Código de Acceso
+                    Nombre y apellido del tutor
+                  </label>
+                  <input
+                    type="text"
+                    value={loginTutorNombre}
+                    onChange={(e) => setLoginTutorNombre(e.target.value)}
+                    placeholder="Ej: María Gómez"
+                    autoComplete="name"
+                    className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                  />
+
+                  <label className="block text-xs font-bold text-slate-700">
+                    DNI del tutor
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={loginTutorDni}
+                    onChange={(e) => setLoginTutorDni(e.target.value)}
+                    placeholder="Sin puntos, ej: 30456789"
+                    autoComplete="off"
+                    className="w-full px-4 py-3 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                  />
+
+                  <label className="block text-xs font-bold text-slate-700">
+                    Código de Acceso
                   </label>
                   <div className="relative">
                     <input
