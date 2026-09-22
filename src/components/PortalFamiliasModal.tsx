@@ -2368,7 +2368,7 @@ export default function PortalFamiliasModal({
                   fondo con 50% de opacidad (bg-slate-50/50, ver más abajo en "Modal Scrollable
                   Body"), dejando ver el fondo oscuro y desenfocado de atrás del modal en cualquier
                   hueco — ahora es 100% opaco. */}
-              <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-slate-50 shadow-[0_8px_12px_-8px_rgba(15,23,42,0.12)]">
+              <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-0 pb-3 bg-slate-50 shadow-[0_8px_12px_-8px_rgba(15,23,42,0.12)]">
                 <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center gap-x-3 gap-y-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-xs font-bold text-slate-900 font-['Outfit'] truncate">
@@ -2489,10 +2489,11 @@ export default function PortalFamiliasModal({
 
                 {/* 3 Slots + Otras Fotos (mismo estilo, para que se vea igual de accesible que las 3 del pack) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-0.5 text-left">
-                  {/* Slot 1: Grupal */}
+                  {/* Slot 1: Grupal — tarjetas achicadas ~50% el 22/9 (pedido de Pablo) y texto
+                      recortado a lo esencial para que entre sin desbordar en el tamaño nuevo. */}
                   <div
                     onClick={() => setCategoriaActiva('grupal')}
-                    className={`rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border ${
+                    className={`rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border ${
                       fotoGrupalSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
                         : categoriaActiva === 'grupal'
@@ -2500,24 +2501,23 @@ export default function PortalFamiliasModal({
                           : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
-                    <div className="w-11 h-11 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
-                      {fotoGrupalSeleccionada ? <><img src={fotoGrupalSeleccionada.thumbnail} alt="Foto grupal elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
+                    <div className="w-6 h-6 rounded-md overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
+                      {fotoGrupalSeleccionada ? <><img src={fotoGrupalSeleccionada.thumbnail} alt="Foto grupal elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-3.5 h-3.5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className={`text-[10px] font-bold block uppercase tracking-wider ${fotoGrupalSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
-                        Foto 1 de 3 (Grupal 20x30)
+                      <span className={`text-[9px] font-bold block uppercase tracking-wider leading-tight truncate ${fotoGrupalSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
+                        1/3 Grupal
                       </span>
-                      <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
+                      <p className="text-[10px] font-bold text-white truncate leading-tight group-hover:text-amber-300">
                         {fotoGrupalSeleccionada?.titulo?.split(' - ')[0] || 'Sin elegir'}
                       </p>
-                      <span className="text-[10px] text-slate-400">{fotoGrupalSeleccionada ? 'Clic para cambiar' : 'Elegí una toma'}</span>
                     </div>
                   </div>
 
                   {/* Slot 2: Retrato Individual */}
                   <div
                     onClick={() => setCategoriaActiva('individual')}
-                    className={`rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border ${
+                    className={`rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border ${
                       fotoIndividualSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
                         : categoriaActiva === 'individual'
@@ -2525,24 +2525,23 @@ export default function PortalFamiliasModal({
                           : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
-                    <div className="w-11 h-11 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
-                      {fotoIndividualSeleccionada ? <><img src={fotoIndividualSeleccionada.thumbnail} alt="Retrato individual elegido" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
+                    <div className="w-6 h-6 rounded-md overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
+                      {fotoIndividualSeleccionada ? <><img src={fotoIndividualSeleccionada.thumbnail} alt="Retrato individual elegido" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-3.5 h-3.5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className={`text-[10px] font-bold block uppercase tracking-wider ${fotoIndividualSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
-                        Foto 2 de 3 (Retrato 15x21)
+                      <span className={`text-[9px] font-bold block uppercase tracking-wider leading-tight truncate ${fotoIndividualSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
+                        2/3 Retrato
                       </span>
-                      <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
+                      <p className="text-[10px] font-bold text-white truncate leading-tight group-hover:text-amber-300">
                         {fotoIndividualSeleccionada?.titulo?.split(' - ')[0] || 'Sin elegir'}
                       </p>
-                      <span className="text-[10px] text-slate-400">{fotoIndividualSeleccionada ? 'Clic para cambiar toma' : 'Elegí una toma'}</span>
                     </div>
                   </div>
 
                   {/* Slot 3: Con Docente */}
                   <div
                     onClick={() => setCategoriaActiva('docente')}
-                    className={`rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border ${
+                    className={`rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border ${
                       fotoDocenteSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
                         : categoriaActiva === 'docente'
@@ -2550,17 +2549,16 @@ export default function PortalFamiliasModal({
                           : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
-                    <div className="w-11 h-11 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
-                      {fotoDocenteSeleccionada ? <><img src={fotoDocenteSeleccionada.thumbnail} alt="Foto con docente elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
+                    <div className="w-6 h-6 rounded-md overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
+                      {fotoDocenteSeleccionada ? <><img src={fotoDocenteSeleccionada.thumbnail} alt="Foto con docente elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-2.5 h-2.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-3.5 h-3.5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className={`text-[10px] font-bold block uppercase tracking-wider ${fotoDocenteSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
-                        Foto 3 de 3 (Con Seño 15x21)
+                      <span className={`text-[9px] font-bold block uppercase tracking-wider leading-tight truncate ${fotoDocenteSeleccionada ? 'text-emerald-300' : 'text-amber-400'}`}>
+                        3/3 Con Seño
                       </span>
-                      <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
+                      <p className="text-[10px] font-bold text-white truncate leading-tight group-hover:text-amber-300">
                         {fotoDocenteSeleccionada?.titulo || 'Sin elegir'}
                       </p>
-                      <span className="text-[10px] text-slate-400">{fotoDocenteSeleccionada ? 'Clic para cambiar' : 'Elegí una toma'}</span>
                     </div>
                   </div>
 
@@ -2569,21 +2567,20 @@ export default function PortalFamiliasModal({
                       sin check) para que se note que NO forma parte de las 3 fotos incluidas. */}
                   {hayFotosDeEventos && <div
                     onClick={() => setCategoriaActiva('patio')}
-                    className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border border-dashed ${
+                    className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border border-dashed ${
                       categoriaActiva === 'patio' ? 'border-amber-400 ring-1 ring-amber-400/40 bg-slate-800/70' : 'border-slate-600 hover:border-slate-500'
                     }`}
                   >
-                    <div className="w-11 h-11 rounded-lg shrink-0 bg-slate-950/60 border border-slate-700 flex items-center justify-center">
-                      <Images className="w-5 h-5 text-slate-400" />
+                    <div className="w-6 h-6 rounded-md shrink-0 bg-slate-950/60 border border-slate-700 flex items-center justify-center">
+                      <Images className="w-3.5 h-3.5 text-slate-400" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">
-                        Opcional, aparte del pack
+                      <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider leading-tight truncate">
+                        Opcional
                       </span>
-                      <p className="text-xs font-bold text-white truncate group-hover:text-amber-300">
+                      <p className="text-[10px] font-bold text-white truncate leading-tight group-hover:text-amber-300">
                         Otras Fotos {fotosSueltasSeleccionadas.length > 0 ? `(${fotosSueltasSeleccionadas.length})` : ''}
                       </p>
-                      <span className="text-[10px] text-slate-400">Actos, eventos, salidas...</span>
                     </div>
                   </div>}
                 </div>

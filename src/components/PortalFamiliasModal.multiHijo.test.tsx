@@ -53,10 +53,13 @@ async function cambiarAHijo(user: ReturnType<typeof userEvent.setup>, nombre: st
 
 async function elegirFoto(user: ReturnType<typeof userEvent.setup>, categoria: 'grupal' | 'individual' | 'docente', titulo: RegExp) {
   // Las 3 categorías tienen su propio "slot" arriba (Foto 1/2/3 de 3) que cambia la pestaña activa.
+  // Auditoría 2026-09-22 (quinto pedido de Pablo sobre esta pantalla: achicar las tarjetas del
+  // pack a la mitad y recortar su texto): las etiquetas de cada slot pasaron de "Foto 1 de 3
+  // (Grupal 20x30)" a la forma compacta "1/3 Grupal".
   const slotLabels: Record<typeof categoria, RegExp> = {
-    grupal: /foto 1 de 3 \(grupal/i,
-    individual: /foto 2 de 3 \(retrato/i,
-    docente: /foto 3 de 3 \(con seño/i,
+    grupal: /^1\/3 grupal$/i,
+    individual: /^2\/3 retrato$/i,
+    docente: /^3\/3 con seño$/i,
   };
   const slot = screen.getByText(slotLabels[categoria]).closest('div')!.parentElement!;
   await user.click(slot);
@@ -92,9 +95,13 @@ describe('PortalFamiliasModal — carrito multi-hijo (mellizos, misma sección)'
     // Vuelve a Pablo: su individual debe seguir marcada, pero la grupal de Sofia NO debe
     // aparecer como si Pablo también la hubiera elegido.
     await cambiarAHijo(user, 'Pablo');
-    const slotIndividualPablo = screen.getByText(/foto 2 de 3 \(retrato/i).closest('div')!.parentElement!;
-    expect(within(slotIndividualPablo).getByText(/clic para cambiar/i)).toBeInTheDocument();
-    const slotGrupalPablo = screen.getByText(/foto 1 de 3 \(grupal/i).closest('div')!.parentElement!;
+    // Auditoría 2026-09-22 (quinto pedido de Pablo: tarjetas a la mitad de tamaño y texto
+    // recortado): ya no hay una línea de estado aparte ("Clic para cambiar" / "Elegí una toma")
+    // bajo el título de cada slot — el título mismo (nombre de la foto, o "Sin elegir" si no hay
+    // ninguna) es ahora la única señal de si esa categoría ya tiene foto elegida.
+    const slotIndividualPablo = screen.getByText(/^2\/3 retrato$/i).closest('div')!.parentElement!;
+    expect(within(slotIndividualPablo).queryByText(/sin elegir/i)).not.toBeInTheDocument();
+    const slotGrupalPablo = screen.getByText(/^1\/3 grupal$/i).closest('div')!.parentElement!;
     expect(within(slotGrupalPablo).getByText(/sin elegir/i)).toBeInTheDocument();
   });
 
