@@ -182,9 +182,10 @@ export default function PortalFamiliasModal({
   const [buscandoSeguimiento, setBuscandoSeguimiento] = useState(false);
   // Auditoría 2026-09-22 (pedido de Pablo: "por qué me deja volver a comprar si ya tengo un
   // pedido hecho? debería mostrarme el pedido que ya realicé y preguntarme si deseo hacer otro").
-  // `pedidoExistente` se llena cuando, al tocar "Abrir Galería de Fotos", ya hay un pedido
-  // registrado para ese alumno/a puntual — mientras esté seteado se muestra un cartel de
-  // confirmación en vez de pasar directo al Paso 2.
+  // `pedidoExistente` se llena automáticamente (ver el useEffect más abajo) apenas se resuelve
+  // el alumno/a activo, si ya hay un pedido registrado para él/ella en este curso — mientras esté
+  // seteado se muestra un cartel de confirmación en la pantalla de "Acceso validado" en vez del
+  // botón normal para pasar al Paso 2.
   const [pedidoExistente, setPedidoExistente] = useState<PedidoExistenteResumen | null>(null);
   const [verificandoPedidoExistente, setVerificandoPedidoExistente] = useState(false);
 
@@ -1808,26 +1809,32 @@ export default function PortalFamiliasModal({
     setTrackingError('No se encontró ningún pedido registrado con ese número o teléfono. Verificá los datos ingresados.');
   };
 
-  // Auditoría 2026-09-22 (pedido de Pablo: "por qué me deja volver a comprar si ya tengo un
-  // pedido hecho? debería mostrarme el pedido que ya realicé y preguntarme si deseo hacer otro").
-  // Antes, este botón pasaba directo a `setStep(2)`. Ahora primero chequea contra el servidor si
-  // el alumno/a activo ya tiene un pedido en este curso — si lo tiene, se muestra el cartel de
-  // confirmación (`pedidoExistente`) en vez de abrir la galería directamente.
-  const handleAbrirGaleria = async () => {
-    setVerificandoPedidoExistente(true);
-    try {
-      const existente = await verificarPedidoExistente(codigoSeccionValidado || '', nombreAlumno);
-      if (existente) {
-        setPedidoExistente(existente);
-        return;
-      }
-    } catch {
-      // Si falla el chequeo, no bloqueamos a la familia — sigue directo a la galería.
-    } finally {
-      setVerificandoPedidoExistente(false);
+  // Auditoría 2026-09-22 (pedido de Pablo, tras ver el cartel sólo aparecer al tocar el botón:
+  // "esto es lo primero que se ve cuando ingreso, debería aparecer mi pedido como primera
+  // vista"). El chequeo de si ya existe un pedido para el alumno/a activo ya no espera a que se
+  // toque "Abrir Galería de Fotos" — se dispara solo apenas se resuelve el alumno/a (incluso
+  // antes de que la familia haga nada), para que el cartel de "ya tenés un pedido" sea lo primero
+  // que se ve en esta pantalla de "Acceso validado", no algo que aparece recién después de un
+  // click. Se repite cada vez que cambia el alumno/a activo (`nombreAlumno`) o su código de
+  // sección real, así que también cubre cambiar de hijo/a en una familia con más de uno.
+  useEffect(() => {
+    if (!codigoSeccionValidado || !nombreAlumno) {
+      setPedidoExistente(null);
+      return;
     }
-    setStep(2);
-  };
+    let cancelado = false;
+    setVerificandoPedidoExistente(true);
+    verificarPedidoExistente(codigoSeccionValidado, nombreAlumno)
+      .then((existente) => {
+        if (!cancelado) setPedidoExistente(existente);
+      })
+      .finally(() => {
+        if (!cancelado) setVerificandoPedidoExistente(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [codigoSeccionValidado, nombreAlumno]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4 md:p-6 animate-in fade-in duration-200">
@@ -2568,9 +2575,9 @@ export default function PortalFamiliasModal({
                   )}
 
                   {/* Auditoría 2026-09-22 (pedido de Pablo, viendo su propia galería con un
-                      pedido previo ya hecho): mientras `pedidoExistente` esté seteado (ver
-                      `handleAbrirGaleria`), se muestra este cartel en vez del botón normal —
-                      avisa que ya hay un pedido para este alumno/a y deja elegir entre verlo o
+                      pedido previo ya hecho): mientras `pedidoExistente` esté seteado (llenado
+                      automáticamente por el useEffect de arriba), se muestra este cartel en vez
+                      del botón normal — avisa que ya hay un pedido para este alumno/a y deja elegir entre verlo o
                       confirmar que se quiere hacer otro. */}
                   {pedidoExistente ? (
                     <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-xl text-left space-y-3 animate-in fade-in duration-150">
@@ -2618,7 +2625,7 @@ export default function PortalFamiliasModal({
                     <div className="pt-2 flex justify-end">
                       <button
                         id="btn-continuar-galeria"
-                        onClick={handleAbrirGaleria}
+                        onClick={() => setStep(2)}
                         disabled={verificandoPedidoExistente}
                         className="px-6 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow-md shadow-amber-400/20 flex items-center gap-2 cursor-pointer transition-all active:scale-98 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
