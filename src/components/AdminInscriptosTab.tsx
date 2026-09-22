@@ -14,13 +14,15 @@ import {
   Users,
   XCircle,
   Loader2,
-  School
+  School,
+  Trash2
 } from 'lucide-react';
 import {
   InscripcionFamilia,
   obtenerInscripcionesAdmin,
   aprobarInscripcionAdmin,
   rechazarInscripcionAdmin,
+  eliminarInscripcionAdmin,
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion,
   prepararEmailAprobacion,
@@ -235,6 +237,39 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     setToastNotificacion({
       titulo: 'Inscripción rechazada',
       mensaje: `Se marcó como rechazada la inscripción de ${item.alumnoNombre} ${item.alumnoApellido}.`,
+      tipo: 'info'
+    });
+    setTimeout(() => setToastNotificacion(null), 5000);
+  };
+
+  // Auditoría 2026-09-22 (pedido de Pablo: "como hago para eliminar a un inscripto?"): antes no
+  // había forma de sacar a nadie de este listado — "Rechazar" sólo existe para pendientes y sólo
+  // cambia el estado, no borra la fila. Esto sí la borra por completo, para cualquier estado
+  // (pendiente, rechazada o ya aprobada). No toca pedidos/fotos: eso vive en otras tablas.
+  const handleEliminar = async (item: InscripcionFamilia) => {
+    const confirmado = window.confirm(
+      `¿Eliminar por completo la inscripción de ${item.alumnoNombre} ${item.alumnoApellido}? Esto la saca de este listado para siempre (no se puede deshacer). Si la familia ya usó su Código Familiar en el Portal, sus pedidos y fotos NO se borran — sólo desaparece esta ficha de inscripción.`
+    );
+    if (!confirmado) return;
+
+    setProcesandoId(item.id);
+    const resultado = await eliminarInscripcionAdmin(item.id);
+    setProcesandoId(null);
+
+    if (!resultado.success) {
+      setToastNotificacion({
+        titulo: 'No se pudo eliminar la inscripción',
+        mensaje: resultado.error || 'Error desconocido al eliminar la inscripción.',
+        tipo: 'error'
+      });
+      setTimeout(() => setToastNotificacion(null), 6000);
+      return;
+    }
+
+    await cargarInscripciones();
+    setToastNotificacion({
+      titulo: 'Inscripción eliminada',
+      mensaje: `Se eliminó del listado la inscripción de ${item.alumnoNombre} ${item.alumnoApellido}.`,
       tipo: 'info'
     });
     setTimeout(() => setToastNotificacion(null), 5000);
@@ -802,6 +837,25 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             </button>
                           </>
                         ) : null}
+
+                        {/* Auditoría 2026-09-22 (pedido de Pablo): antes no había forma de sacar
+                            a nadie del listado, ni siquiera a una inscripción ya aprobada —
+                            "Rechazar" sólo existe para pendientes. Este botón elimina la ficha
+                            por completo, para cualquier estado. */}
+                        <button
+                          type="button"
+                          onClick={() => handleEliminar(item)}
+                          disabled={procesandoId === item.id}
+                          className="px-2.5 py-1 bg-white hover:bg-red-50 disabled:opacity-60 text-red-600 border border-red-200 font-bold text-[11px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                          title="Eliminar esta inscripción del listado (no borra pedidos ni fotos ya generados)"
+                        >
+                          {procesandoId === item.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3 h-3" />
+                          )}
+                          <span>Eliminar</span>
+                        </button>
                       </div>
                     </td>
                   </tr>
