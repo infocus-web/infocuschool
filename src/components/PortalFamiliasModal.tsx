@@ -34,7 +34,6 @@ import {
   Plus,
   Minus,
   ChevronDown,
-  Users,
   RefreshCw,
   Send,
   Images,
@@ -1760,8 +1759,13 @@ export default function PortalFamiliasModal({
         {/* Auditoría 2026-09-22: padding vertical reducido (antes p-5 sm:p-8) para ganar algo más
             de alto disponible en pantalla y scrollear un poco menos en escritorio — ver también el
             bloque sticky del Paso 2 más abajo, que compensa este mismo valor para poder pegarse
-            al borde superior real de esta zona con scroll. */}
-        <div className="overflow-y-auto p-4 sm:p-6 flex-1 bg-slate-50/50">
+            al borde superior real de esta zona con scroll.
+            Auditoría 2026-09-22 (bis, pedido de Pablo: "hay un espacio transparente que se podría
+            eliminar, se nota porque pasa la barra azul por detrás"): el fondo de esta zona tenía
+            50% de opacidad (bg-slate-50/50) en vez de sólido. Con el modal superpuesto sobre un
+            fondo oscuro desenfocado (backdrop-blur), cualquier hueco de esta zona dejaba pasar ese
+            fondo oscuro. Ahora es 100% opaco (bg-slate-50, sin "/50"). */}
+        <div className="overflow-y-auto p-4 sm:p-6 flex-1 bg-slate-50">
           {/* TRACKING TOOL VIEW */}
           {modalMode === 'seguimiento' && (
             <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-200">
@@ -2352,73 +2356,40 @@ export default function PortalFamiliasModal({
           {/* STEP 2: Interactive Photo Gallery */}
           {step === 2 && (
             <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-200">
-              {/* Auditoría 2026-09-22 (tercer pedido de Pablo sobre esta misma pantalla:
-                  "tengo que scrollear sí o sí para cosas básicas como elegir el botón 'Elegir' y
-                  el botón 'sofia alder'"): antes, la barra de datos del alumno y el selector de
-                  hijos/as eran dos tarjetas más dentro del flujo normal de scroll — al bajar para
-                  tocar "Elegir" en una foto, ambas quedaban fuera de pantalla, y para cambiar de
-                  hijo había que volver a subir. Ahora este bloque queda FIJO (sticky) arriba del
-                  todo, dentro de la misma zona con scroll: cambiar de hijo o ver el estado del
-                  alumno activo nunca vuelve a necesitar scrollear hacia arriba. De paso se
-                  redujeron paddings y márgenes de las dos tarjetas (mismo contenido, menos alto)
-                  para que quede más foto visible sin scrollear antes de llegar a "Elegir". */}
-              <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-slate-50 space-y-3 shadow-[0_8px_12px_-8px_rgba(15,23,42,0.12)]">
-                {/* Top info bar */}
-                <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-900 font-['Outfit']">
-                        {nombreAlumno}
-                      </span>
-                      <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full">
-                        {grado} "{division}" · Turno {turno}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {selectedColegio?.nombre} · {selectedColegio?.eventoActual}
-                    </p>
-                  </div>
-
-                  {/* Active info & Change data button */}
-                  <div className="flex items-center flex-wrap gap-3">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 text-amber-900 border border-amber-300/80 text-[11px] font-bold">
-                      <Lock className="w-3.5 h-3.5 text-amber-700" />
-                      <span>{fotosDisponibles.length > 0 ? 'Fotos protegidas con marca de agua' : 'Esperando fotos del curso'}</span>
+              {/* Auditoría 2026-09-22 (cuarto pedido de Pablo sobre esta misma pantalla: "en esas
+                  filas sobra espacio para poner todo en una sola"): antes esto eran DOS tarjetas
+                  apiladas (datos del alumno arriba, selector de hermanos/as abajo), cada una con su
+                  propio padding, borde y texto explicativo — mucho alto para lo poco que aportaba
+                  una vez que ya se entendía el uso. Ahora es UNA sola fila compacta: nombre + grado
+                  y turno + colegio a la izquierda, botones de hermanos/as al medio (solo si hay más
+                  de uno) y el estado de protección + "Cambiar datos" a la derecha. También se
+                  corrigió un bug real de esta misma pantalla ("hay un espacio transparente... se
+                  nota porque pasa la barra azul por detrás"): el contenedor con scroll tenía el
+                  fondo con 50% de opacidad (bg-slate-50/50, ver más abajo en "Modal Scrollable
+                  Body"), dejando ver el fondo oscuro y desenfocado de atrás del modal en cualquier
+                  hueco — ahora es 100% opaco. */}
+              <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 -mt-4 sm:-mt-6 px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-slate-50 shadow-[0_8px_12px_-8px_rgba(15,23,42,0.12)]">
+                <div className="bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs font-bold text-slate-900 font-['Outfit'] truncate">
+                      {nombreAlumno}
                     </span>
-
-                    <button
-                      onClick={() => setStep(1)}
-                      className="text-xs text-slate-500 hover:text-slate-800 font-medium cursor-pointer"
-                    >
-                      Cambiar datos
-                    </button>
+                    <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+                      {grado} "{division}" · {turno}
+                    </span>
                   </div>
-                </div>
 
-                {/* Selector de hijo/a (Código Familiar): solo se muestra si hay más de uno para
-                    elegir — familias de un solo hijo no ven ningún cambio acá. Auditoría 2026-09-16:
-                    esto es lo que hace real la promesa de "1 solo Código Familiar... alterná entre
-                    tus hijos con un solo toque" que ya está en la web (Hero, /proceso, FAQ).
-                    Auditoría 2026-09-21 (pedido de Pablo: "lo vi, pero es muy pequeño, pasa
-                    desapercibido"): antes era una tarjeta blanca chica, igual a cualquier otra de la
-                    pantalla — nada la distinguía como el control más importante para una familia con
-                    más de un hijo/a. Ahora tiene fondo y borde ámbar (el color de acción del sitio),
-                    ícono + título más grande, y una bajada explicando qué hace, para que no se
-                    confunda con una tarjeta informativa más. */}
-                {hijosFamilia.length > 1 && (
-                  <div className="bg-amber-50 p-3 rounded-2xl border-2 border-amber-300 shadow-sm flex flex-col gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4.5 h-4.5 text-amber-700 shrink-0" />
-                        <span className="text-sm font-extrabold text-amber-950">
-                          Tus hijos/as en este colegio
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-amber-800 mt-0.5">
-                        Elegí a quién le vas a armar el pedido — la selección de fotos de cada uno se guarda por separado.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-slate-400 truncate hidden md:inline max-w-[200px]">
+                    {selectedColegio?.nombre}
+                  </span>
+
+                  {/* Selector de hijo/a (Código Familiar): solo se muestra si hay más de uno para
+                      elegir — familias de un solo hijo no ven ningún cambio acá. Auditoría
+                      2026-09-16: esto es lo que hace real la promesa de "1 solo Código Familiar...
+                      alterná entre tus hijos con un solo toque" que ya está en la web (Hero,
+                      /proceso, FAQ). */}
+                  {hijosFamilia.length > 1 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {hijosFamilia.map((h) => {
                         // Auditoría 2026-09-16 (pedido de Pablo: "un solo pedido, un solo pago"):
                         // un hijo cuenta como "listo" si ya eligió sus 3 fotos del pack, sea porque
@@ -2433,29 +2404,33 @@ export default function PortalFamiliasModal({
                             key={h.id}
                             type="button"
                             onClick={() => seleccionarHijo(h.id)}
-                            className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-colors cursor-pointer flex items-center gap-2 ${
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1 whitespace-nowrap ${
                               esActivo
-                                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/30 ring-2 ring-amber-600'
-                                : 'bg-white text-slate-700 border border-amber-300 hover:bg-amber-100'
+                                ? 'bg-amber-500 text-slate-950 shadow-xs ring-1 ring-amber-600'
+                                : 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100'
                             }`}
                           >
-                            {listo && <CheckCircle2 className={`w-4 h-4 ${esActivo ? 'text-slate-900' : 'text-emerald-600'}`} />}
+                            {listo && <CheckCircle2 className={`w-3 h-3 ${esActivo ? 'text-slate-900' : 'text-emerald-600'}`} />}
                             {h.nombreCompleto}
-                            <span className="font-normal opacity-80 text-xs"> · {h.grado} "{h.division}"</span>
                           </button>
                         );
                       })}
                     </div>
-                    {valoresDelCarrito(carritoHijos).some((c) => c.completo) && (
-                      <p className="text-[11px] text-emerald-700 flex items-center gap-1.5">
-                        <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
-                        <span>
-                          Ya tenés fotos elegidas para {valoresDelCarrito(carritoHijos).filter((c) => c.completo).length === 1 ? '1 hijo/a' : `${valoresDelCarrito(carritoHijos).filter((c) => c.completo).length} hijos/as`}. Al pagar, vas a poder confirmar todos los pedidos juntos en un solo pago.
-                        </span>
-                      </p>
-                    )}
+                  )}
+
+                  <div className="flex items-center gap-2 ml-auto shrink-0">
+                    <span className="hidden lg:inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-500/10 text-amber-900 border border-amber-300/80 text-[10px] font-bold whitespace-nowrap">
+                      <Lock className="w-3 h-3 text-amber-700" />
+                      {fotosDisponibles.length > 0 ? 'Protegidas' : 'Esperando fotos'}
+                    </span>
+                    <button
+                      onClick={() => setStep(1)}
+                      className="text-[11px] text-slate-500 hover:text-slate-800 font-medium cursor-pointer whitespace-nowrap"
+                    >
+                      Cambiar datos
+                    </button>
                   </div>
-                )}
+                </div>
               </div>
 
               {fotosDisponibles.length === 0 ? (
@@ -2484,10 +2459,11 @@ export default function PortalFamiliasModal({
                 <>
 
               {/* 3 Fotos Incluidas Top Panel — padding y margen inferior reducidos el 22/9 (antes
-                  p-4 sm:p-5 / mb-3) para dejar más alto libre para las fotos y el botón "Elegir"
-                  sin scrollear, mismo pedido de espacio en escritorio. */}
-              <div className="bg-slate-900 text-white rounded-2xl p-3 sm:p-4 shadow-md border border-slate-800">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                  p-4 sm:p-5 / mb-3, y de nuevo achicado ese mismo día — antes p-3 sm:p-4 / mb-2 —
+                  como parte del mismo pedido de Pablo de necesitar menos scroll) para dejar más
+                  alto libre para las fotos y el botón "Elegir" sin scrollear. */}
+              <div className="bg-slate-900 text-white rounded-2xl p-2.5 sm:p-3 shadow-md border border-slate-800">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-extrabold uppercase">
@@ -2512,11 +2488,11 @@ export default function PortalFamiliasModal({
                 </div>
 
                 {/* 3 Slots + Otras Fotos (mismo estilo, para que se vea igual de accesible que las 3 del pack) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1 text-left">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-0.5 text-left">
                   {/* Slot 1: Grupal */}
                   <div
                     onClick={() => setCategoriaActiva('grupal')}
-                    className={`rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
+                    className={`rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border ${
                       fotoGrupalSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
                         : categoriaActiva === 'grupal'
@@ -2524,7 +2500,7 @@ export default function PortalFamiliasModal({
                           : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
-                    <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
+                    <div className="w-11 h-11 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       {fotoGrupalSeleccionada ? <><img src={fotoGrupalSeleccionada.thumbnail} alt="Foto grupal elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -2541,7 +2517,7 @@ export default function PortalFamiliasModal({
                   {/* Slot 2: Retrato Individual */}
                   <div
                     onClick={() => setCategoriaActiva('individual')}
-                    className={`rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
+                    className={`rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border ${
                       fotoIndividualSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
                         : categoriaActiva === 'individual'
@@ -2549,7 +2525,7 @@ export default function PortalFamiliasModal({
                           : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
-                    <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
+                    <div className="w-11 h-11 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       {fotoIndividualSeleccionada ? <><img src={fotoIndividualSeleccionada.thumbnail} alt="Retrato individual elegido" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -2566,7 +2542,7 @@ export default function PortalFamiliasModal({
                   {/* Slot 3: Con Docente */}
                   <div
                     onClick={() => setCategoriaActiva('docente')}
-                    className={`rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border ${
+                    className={`rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border ${
                       fotoDocenteSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
                         : categoriaActiva === 'docente'
@@ -2574,7 +2550,7 @@ export default function PortalFamiliasModal({
                           : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 hover:border-slate-600'
                     }`}
                   >
-                    <div className="w-13 h-13 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
+                    <div className="w-11 h-11 rounded-lg overflow-hidden bg-slate-950 shrink-0 relative border border-slate-700">
                       {fotoDocenteSeleccionada ? <><img src={fotoDocenteSeleccionada.thumbnail} alt="Foto con docente elegida" className="w-full h-full object-cover" /><div className="absolute inset-0 bg-black/20 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" /></div></> : <Images className="w-5 h-5 text-slate-500 absolute inset-0 m-auto" />}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -2593,11 +2569,11 @@ export default function PortalFamiliasModal({
                       sin check) para que se note que NO forma parte de las 3 fotos incluidas. */}
                   {hayFotosDeEventos && <div
                     onClick={() => setCategoriaActiva('patio')}
-                    className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-xl p-2.5 flex items-center gap-3 transition-all cursor-pointer group border border-dashed ${
+                    className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-xl p-2 flex items-center gap-2 transition-all cursor-pointer group border border-dashed ${
                       categoriaActiva === 'patio' ? 'border-amber-400 ring-1 ring-amber-400/40 bg-slate-800/70' : 'border-slate-600 hover:border-slate-500'
                     }`}
                   >
-                    <div className="w-13 h-13 rounded-lg shrink-0 bg-slate-950/60 border border-slate-700 flex items-center justify-center">
+                    <div className="w-11 h-11 rounded-lg shrink-0 bg-slate-950/60 border border-slate-700 flex items-center justify-center">
                       <Images className="w-5 h-5 text-slate-400" />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -2616,7 +2592,7 @@ export default function PortalFamiliasModal({
               {/* Debajo del panel de arriba: sólo el título de la categoría que se está mostrando —
                   el acceso a las 4 categorías (3 del pack + Otras Fotos) ya está arriba, con el
                   mismo tamaño y estilo para las 4. */}
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2">
                 <h5 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                   {categoriaActiva === 'patio'
                     ? 'Otras Fotos (no incluidas en el paquete)'
@@ -2633,8 +2609,20 @@ export default function PortalFamiliasModal({
 
               {/* Photo Cards Grid — 4 columnas desde "xl" (ver el ancho del modal más arriba,
                   ampliado a la par para que esas 4 columnas entren cómodas) para que un curso con
-                  muchas fotos por categoría necesite menos filas y, con eso, menos scroll. */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  muchas fotos por categoría necesite menos filas y, con eso, menos scroll.
+                  Auditoría 2026-09-22 (pedido de Pablo: "hay un espacio en blanco que no tiene
+                  utilidad"): antes el grid siempre reservaba 4 columnas desde "xl" aunque la
+                  categoría activa tuviera menos fotos (las 3 del pack, por ejemplo), dejando un
+                  hueco vacío donde iría la 4ª columna. Ahora la cantidad de columnas se ajusta a
+                  la cantidad real de fotos de la categoría activa, así 3 fotos ocupan 3 columnas
+                  completas sin dejar espacio de más. */}
+              <div className={`grid grid-cols-1 gap-4 ${(() => {
+                const cantidad = fotosDisponibles.filter((f) => f.categoria === categoriaActiva).length;
+                if (cantidad >= 4) return 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
+                if (cantidad === 3) return 'sm:grid-cols-2 lg:grid-cols-3';
+                if (cantidad === 2) return 'sm:grid-cols-2';
+                return '';
+              })()}`}>
                 {fotosDisponibles.filter((f) => f.categoria === categoriaActiva).map((foto) => {
                   const isSelected =
                     foto.id === fotoSeleccionadaIndividual ||

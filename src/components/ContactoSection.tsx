@@ -69,10 +69,10 @@ export default function ContactoSection() {
                 <div>
                   <p className="text-xs font-bold text-slate-900">Correo Electrónico</p>
                   <a
-                    href="mailto:fotos@retratoescolar.com.ar"
+                    href="mailto:colegios@contacto.retratoescolar.com.ar"
                     className="text-xs text-slate-600 mt-0.5 font-medium hover:text-amber-700 hover:underline block"
                   >
-                    fotos@retratoescolar.com.ar
+                    colegios@contacto.retratoescolar.com.ar
                   </a>
                   <p className="text-[11px] text-slate-400">Respuesta promedio en menos de 2 hs</p>
                 </div>
