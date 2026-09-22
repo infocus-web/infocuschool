@@ -423,23 +423,66 @@ function personalizarPlantillaZoho(texto: string, destinatario: DestinatarioCamp
 // correo colapsa todos los saltos de línea — el mail llegó como un solo párrafo corrido, sin
 // forma de carta. Esta función convierte ese texto plano a un HTML simple y prolijo (párrafos,
 // viñetas como lista real, y links autodetectados) antes de mandarlo.
+// Pablo pidió (22/9/2026) que se vea "lindo, con color" como el mail de "fotos en HD listas"
+// (franja oscura + naranja arriba, cajas con color para destacar puntos) en vez de texto plano
+// en blanco y negro. Se reutiliza la misma paleta de esos templates: navy #0f172a + naranja
+// #f59e0b/#d97706 en el header, caja celeste con tildes verdes para las viñetas, y una placa
+// ámbar/roja para el título de sección en mayúsculas — todo generado a partir del texto plano
+// que Pablo escribe en el panel, sin que tenga que tocar HTML él.
 function formatearCuerpoCartaHtml(textoPlano: string): string {
   const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const linkificar = (s: string) => s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#1d4ed8;">$1</a>');
+  const esTituloCorto = (l: string) => l.length > 0 && l.length <= 45 && l === l.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(l);
 
   const bloques = String(textoPlano || '').trim().split(/\n\s*\n/);
-  const html = bloques.map((bloque) => {
+  const cuerpoHtml = bloques.map((bloque) => {
     const lineas = bloque.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
     if (lineas.length === 0) return '';
+
+    // Un renglón corto y en MAYÚSCULAS ("COBERTURA ESCOLAR 2026") se destaca como placa de color
+    // en vez de quedar como una línea de texto más.
+    if (lineas.length === 1 && esTituloCorto(lineas[0])) {
+      return `<div style="margin:22px 0 14px 0;"><span style="display:inline-block;background-color:#fef3c7;color:#b91c1c;font-size:12px;font-weight:800;letter-spacing:1px;padding:6px 14px;border-radius:999px;">${escapeHtml(lineas[0])}</span></div>`;
+    }
+
+    // Viñetas ("• ") → caja con marco celeste y tilde verde por ítem, no una lista pelada.
     const esLista = lineas.every((l) => l.startsWith('• '));
     if (esLista) {
-      const items = lineas.map((l) => `<li style="margin-bottom:4px;">${linkificar(escapeHtml(l.slice(2)))}</li>`).join('');
-      return `<ul style="margin:0 0 16px 0;padding-left:20px;">${items}</ul>`;
+      const items = lineas
+        .map((l) => `<p style="margin:0 0 8px 0;font-size:14px;line-height:1.5;color:#1e3a5f;"><span style="color:#059669;font-weight:800;">✓</span>&nbsp;${linkificar(escapeHtml(l.slice(2)))}</p>`)
+        .join('');
+      return `<div style="margin:0 0 20px 0;padding:16px 18px;background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;">${items}</div>`;
     }
-    return `<p style="margin:0 0 16px 0;">${lineas.map((l) => linkificar(escapeHtml(l))).join('<br>')}</p>`;
+
+    // Un párrafo compuesto solo por un link (el de "conocé la propuesta completa") → botón de
+    // acción naranja, igual que el resto de los correos del sitio, en vez de un texto azul.
+    if (lineas.length === 1 && /^https?:\/\//i.test(lineas[0])) {
+      const url = lineas[0];
+      return `<div style="margin:24px 0;text-align:center;"><a href="${url}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background-color:#d97706;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;padding:13px 28px;border-radius:12px;box-shadow:0 4px 12px rgba(217,119,6,0.35);">Ver la propuesta completa →</a></div>`;
+    }
+
+    return `<p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;color:#334155;">${lineas.map((l) => linkificar(escapeHtml(l))).join('<br>')}</p>`;
   }).filter(Boolean).join('\n');
 
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1a1a1a;max-width:600px;">${html}</div>`;
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e293b;">
+  <div style="max-width:600px;margin:24px auto;background-color:#ffffff;border-radius:16px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="background-color:#0f172a;padding:32px 24px;text-align:center;border-bottom:3px solid #f59e0b;">
+      <div style="font-size:11px;font-weight:800;letter-spacing:2px;color:#f59e0b;text-transform:uppercase;margin-bottom:6px;">RETRATO ESCOLAR • PRODUCTORA INFOCUS</div>
+      <h1 style="color:#ffffff;margin:0;font-size:21px;font-weight:800;letter-spacing:-0.5px;">Propuesta de Cobertura Fotográfica 2026</h1>
+    </div>
+    <div style="padding:28px 24px;">
+      ${cuerpoHtml}
+    </div>
+    <div style="background-color:#f1f5f9;padding:18px 24px;text-align:center;font-size:11px;color:#64748b;border-top:1px solid #e2e8f0;">
+      © 2026 Retrato Escolar • Fotografía Escolar Profesional<br>
+      <a href="https://retratoescolar.com.ar" style="color:#d97706;text-decoration:none;font-weight:600;">retratoescolar.com.ar</a>
+    </div>
+  </div>
+</body>
+</html>`;
 }
 
 async function enviarZohoMail(params: {
