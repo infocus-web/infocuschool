@@ -1,7 +1,7 @@
 import {
   UserPlus,
   KeyRound,
-  Smartphone,
+  Images,
   Sparkles,
   CheckCircle2,
   Download,
@@ -43,10 +43,6 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
               <span className="truncate">Sofía (2° B Turno Tarde)</span>
             </div>
           </div>
-          <div className="pt-0.5 flex items-center gap-1 text-[10px] text-emerald-700 font-bold">
-            <CheckCircle2 className="w-3 h-3 shrink-0" />
-            <span>Opción foto de hermanos juntos</span>
-          </div>
         </div>
       ),
     },
@@ -79,8 +75,8 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
     },
     {
       numero: '3',
-      icono: Smartphone,
-      titulo: 'Mirás las fotos en tu celu',
+      icono: Images,
+      titulo: 'Mirás las fotos donde quieras',
       bajada: 'Muestras protegidas con marca de agua',
       descripcion:
         'Entrás a la web con tu código y ves la galería privada. Si tenés varios hijos, podés alternar entre ellos con un solo clic.',
@@ -131,19 +127,23 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
     {
       numero: '5',
       icono: Download,
-      titulo: 'Recibís en el celu y en papel',
+      titulo: 'Recibís en digital y en papel',
       bajada: 'Descarga al instante + carpeta',
       descripcion:
-        'Abonás seguro con Mercado Pago o Transferencia. Descargás las fotos digitales en tu celular y recibís las copias impresas en la escuela.',
+        'Abonás seguro con Mercado Pago, Nave o Transferencia. Descargás las fotos digitales en tu compu o celular y recibís las copias impresas en la escuela — te avisamos por email en cada etapa.',
       miniGrafico: (
         <div className="mt-3 p-2.5 bg-linear-to-br from-amber-50 to-amber-100/60 rounded-xl border border-amber-300 text-left space-y-1 shadow-2xs">
           <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-950">
             <Download className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-            <span>Digital HD directo al celular</span>
+            <span>Digital HD para descargar</span>
           </div>
           <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800">
             <FolderHeart className="w-3.5 h-3.5 text-amber-700 shrink-0" />
             <span>Carpeta impresa en el colegio</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-sky-800">
+            <Mail className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+            <span>Email en producción y al retirar</span>
           </div>
         </div>
       ),
@@ -163,7 +163,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
             Mirá qué fácil es ver y pedir las fotos de tus hijos
           </h2>
           <p className="text-base sm:text-lg text-slate-600">
-            Sin sobres de papel en la mochila, sin trámites complicados y desde la comodidad de tu celular.
+            Sin sobres de papel en la mochila, sin trámites complicados y desde la comodidad de tu casa — desde la compu o el celular.
           </p>
         </div>
 
@@ -174,7 +174,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
             return (
               <div
                 key={p.numero}
-                className="bg-slate-50/90 rounded-2xl p-5 border-2 border-slate-200 hover:border-amber-400 transition-all hover:shadow-md flex flex-col justify-between text-left group"
+                className="relative bg-slate-50/90 rounded-2xl p-5 border-2 border-slate-200 hover:border-amber-400 transition-all duration-200 hover:shadow-xl hover:scale-110 hover:z-10 flex flex-col justify-between text-left group"
               >
                 <div>
                   {/* Número y Cabecera del paso */}
