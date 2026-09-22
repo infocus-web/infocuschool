@@ -417,6 +417,31 @@ function personalizarPlantillaZoho(texto: string, destinatario: DestinatarioCamp
     .replace(/\{\{\s*nivel\s*\}\}/gi, destinatario.nivel || '');
 }
 
+// Bug real detectado el 22/9/2026 en el primer correo de prueba: la API de Zoho Mail interpreta
+// el campo "content" como HTML. Pablo escribe la plantilla como texto plano normal (con saltos
+// de línea y viñetas "• "), y al mandarlo tal cual, sin ninguna etiqueta HTML, el cliente de
+// correo colapsa todos los saltos de línea — el mail llegó como un solo párrafo corrido, sin
+// forma de carta. Esta función convierte ese texto plano a un HTML simple y prolijo (párrafos,
+// viñetas como lista real, y links autodetectados) antes de mandarlo.
+function formatearCuerpoCartaHtml(textoPlano: string): string {
+  const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const linkificar = (s: string) => s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#1d4ed8;">$1</a>');
+
+  const bloques = String(textoPlano || '').trim().split(/\n\s*\n/);
+  const html = bloques.map((bloque) => {
+    const lineas = bloque.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    if (lineas.length === 0) return '';
+    const esLista = lineas.every((l) => l.startsWith('• '));
+    if (esLista) {
+      const items = lineas.map((l) => `<li style="margin-bottom:4px;">${linkificar(escapeHtml(l.slice(2)))}</li>`).join('');
+      return `<ul style="margin:0 0 16px 0;padding-left:20px;">${items}</ul>`;
+    }
+    return `<p style="margin:0 0 16px 0;">${lineas.map((l) => linkificar(escapeHtml(l))).join('<br>')}</p>`;
+  }).filter(Boolean).join('\n');
+
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#1a1a1a;max-width:600px;">${html}</div>`;
+}
+
 async function enviarZohoMail(params: {
   fromAddress: string;
   toAddress: string;
@@ -436,7 +461,7 @@ async function enviarZohoMail(params: {
         fromAddress: params.fromAddress,
         toAddress: params.toAddress,
         subject: params.subject,
-        content: params.content,
+        content: formatearCuerpoCartaHtml(params.content),
         askReceipt: 'no',
       }),
     });
