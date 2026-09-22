@@ -7186,6 +7186,63 @@ app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-camb
   }
 });
 
+// Auditoría 2026-09-22 (pedido de Pablo, viendo la galería de Benjamin Alderete con un pedido
+// previo ya hecho: "por qué me deja volver a comprar si ya tengo un pedido hecho? está bien que
+// me permita hacer otro pedido, pero primero debería mostrarme el pedido que ya realicé, y un
+// cartel preguntarme si deseo hacer otro pedido"). Antes, tocar "Abrir Galería de Fotos" llevaba
+// directo al Paso 2 sin importar si ese alumno/a ya tenía un pedido — una familia podía terminar
+// pagando dos veces por accidente sin darse cuenta de que ya tenía uno hecho.
+//
+// Este endpoint se llama justo antes de abrir la galería (ver `handleAbrirGaleria` en
+// PortalFamiliasModal.tsx) para avisar si ya existe un pedido para ese alumno puntual en ese
+// curso. No requiere login porque, para llegar a este punto, la familia ya pasó por el único
+// camino real que desbloquea la galería de ese alumno (código de sección real, o identificación
+// por nombre+DNI del tutor) — este chequeo no expone nada que esa familia no pueda ya ver. Aun
+// así se devuelve sólo un resumen mínimo (sin teléfono/email/link de descarga) y se rate-limitea
+// como el resto de los endpoints públicos de pedidos.
+app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const cursoCodigo = String(req.query.cursoCodigo || '').trim().toUpperCase().slice(0, 60);
+    const alumnoNombre = String(req.query.alumnoNombre || '').trim().slice(0, 200);
+    if (!cursoCodigo || !alumnoNombre) {
+      return res.status(400).json({ success: false, error: 'Faltan datos del alumno.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
+
+    const nombreBuscado = normalizarNombrePorPalabras(alumnoNombre);
+    const { data, error } = await supabase
+      .from('pedidos')
+      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, created_at')
+      .eq('curso_codigo', cursoCodigo)
+      .neq('estado', 'cancelado')
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) throw error;
+
+    const encontrado = (data || []).find((p) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreBuscado);
+    if (!encontrado) {
+      return res.json({ success: true, existe: false });
+    }
+
+    return res.json({
+      success: true,
+      existe: true,
+      pedido: {
+        id: encontrado.pedido_friendly_id || encontrado.id,
+        kit: encontrado.kit_nombre,
+        total: encontrado.total,
+        estado: encontrado.estado,
+        fecha: encontrado.created_at,
+      },
+    });
+  } catch (err: any) {
+    console.error('Error al verificar pedido existente:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al verificar si ya existe un pedido.' });
+  }
+});
+
 // Auditoría 2026-09-09 (revisión a fondo): el buscador de "seguimiento de pedido" del Portal de
 // Familias buscaba únicamente en el localStorage del navegador — una familia que entrara desde
 // otro dispositivo o hubiera borrado los datos del navegador no encontraba su pedido, aunque
