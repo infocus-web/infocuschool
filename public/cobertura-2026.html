@@ -509,6 +509,23 @@
   .final-cta h2{font-size:clamp(28px,3.4vw,40px); margin-bottom:14px;}
   .final-cta p{font-size:17px; color:var(--ink-soft); margin-bottom:28px;}
 
+  /* SCHOOL CTA — agregada el 22/9 a pedido de Pablo ("en el email que enviaremos al colegio,
+     cómo se contactarán conmigo?"): antes esta página no tenía NINGÚN dato de contacto, y el
+     único canal era responder el email de la campaña. El email sigue siendo la vía principal
+     (por eso el botón grande es "Escribinos por email" y va primero) — el WhatsApp es una
+     alternativa secundaria, más chica, al pie. */
+  .school-cta{background:var(--ink); padding:72px 0; text-align:center; color:#fff;}
+  .school-cta .wrap{max-width:760px;}
+  .school-cta .eyebrow{color:var(--accent);}
+  .school-cta h2{font-size:clamp(26px,3.2vw,36px); margin:10px 0 14px; color:#fff;}
+  .school-cta p{font-size:16px; color:#B9C6DA; margin-bottom:28px;}
+  .contact-row{display:flex; justify-content:center; gap:40px; flex-wrap:wrap; margin-top:32px; padding-top:28px; border-top:1px solid rgba(255,255,255,0.14);}
+  .contact-item{font-size:13.5px; color:#8FA0BC;}
+  .contact-item strong{display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:#5F7291; margin-bottom:4px;}
+  .contact-link{color:#D7E3F2; text-decoration:none; border-bottom:1px solid rgba(215,227,242,0.35); transition:color .2s, border-color .2s;}
+  .contact-link:hover{color:var(--accent); border-color:var(--accent);}
+  @media(max-width:560px){.contact-row{gap:24px;}}
+
 
   footer{background:#06070A; color:#787A7E; text-align:center; padding:32px; font-size:12.5px;}
   footer strong{color:#BCBEC1;}
@@ -1055,6 +1072,19 @@
           <p>No hay ningún problema. No es obligatorio, y no comprar no afecta el acceso del alumno a ningún otro evento o servicio del colegio.</p>
         </details>
       </div>
+    </div>
+  </div>
+</section>
+
+<section class="school-cta">
+  <div class="wrap">
+    <div class="eyebrow">¿Sos parte del equipo directivo o de gestión?</div>
+    <h2>Coordinemos la cobertura para tu institución</h2>
+    <p>Escribinos y armamos juntos el calendario de eventos del ciclo lectivo 2026 — sin compromiso.</p>
+    <a href="mailto:colegios@contacto.retratoescolar.com.ar" class="btn">Escribinos por email</a>
+    <div class="contact-row">
+      <div class="contact-item"><strong>Email</strong><a href="mailto:colegios@contacto.retratoescolar.com.ar" class="contact-link">colegios@contacto.retratoescolar.com.ar</a></div>
+      <div class="contact-item"><strong>WhatsApp</strong><a href="https://wa.me/5491128625916" target="_blank" rel="noopener" class="contact-link">+54 9 11 2862-5916</a></div>
     </div>
   </div>
 </section>
