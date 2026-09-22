@@ -1006,6 +1006,37 @@ export async function buscarPedidoPorSeguimiento(query: string): Promise<PedidoS
   }
 }
 
+/** Resumen mínimo de un pedido ya existente, para el cartel de confirmación antes de comprar de nuevo. */
+export interface PedidoExistenteResumen {
+  id: string;
+  kit: string;
+  total: number;
+  estado: 'pendiente_pago' | 'pagado' | 'entregado' | 'cancelado';
+  fecha: string;
+}
+
+/**
+ * Auditoría 2026-09-22 (pedido de Pablo: "por qué me deja volver a comprar si ya tengo un
+ * pedido hecho? debería mostrarme el pedido que ya realicé y preguntarme si deseo hacer otro").
+ * Se llama justo antes de abrir la galería de un alumno/a puntual, para avisar si ese mismo
+ * alumno ya tiene un pedido registrado en ese curso. Devuelve `null` tanto si no hay ningún
+ * pedido como si falla la consulta — el chequeo nunca debe bloquear a la familia de comprar,
+ * sólo avisarle cuando puede hacerlo con conocimiento de causa.
+ */
+export async function verificarPedidoExistente(cursoCodigo: string, alumnoNombre: string): Promise<PedidoExistenteResumen | null> {
+  if (!cursoCodigo || !alumnoNombre) return null;
+  try {
+    const params = new URLSearchParams({ cursoCodigo, alumnoNombre });
+    const res = await fetch(`/api/pedidos/existente?${params.toString()}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success || !data.existe || !data.pedido) return null;
+    return data.pedido as PedidoExistenteResumen;
+  } catch (e) {
+    console.warn('Error al verificar si ya existe un pedido para este alumno:', e);
+    return null;
+  }
+}
+
 /**
  * Genera un Blob JPEG válido con los datos del alumno y código de cliente
  * para garantizar que el archivo .jpg sea real y visible incluso si la imagen remota tiene CORS.
