@@ -41,7 +41,7 @@ Pueden responder directamente a este correo — es la vía más simple para coor
 Saludos,
 
 Pablo Alderete
-Retrato Escolar | Productora Infocus
+Productora Infocus
 https://www.retratoescolar.com.ar/`;
 
 export default function AdminZohoCampanaTab() {
