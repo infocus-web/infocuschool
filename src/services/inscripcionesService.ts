@@ -201,6 +201,7 @@ export async function validarEInscribirFamilia(datos: {
   colegioId: string;
   colegioNombre: string;
   padreNombre: string;
+  padreDni: string;
   telefonoWhatsApp: string;
   email: string;
   alumnoNombre: string;
