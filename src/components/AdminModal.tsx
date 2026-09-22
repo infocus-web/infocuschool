@@ -281,6 +281,103 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     guardarPedidosEnStorage(combinados);
   };
 
+  // Aprueba UN pedido puntual (marca "pagado" en el servidor, genera el .zip HD y manda el email
+  // con el link a la familia). Extraída del onClick de "Aprobar Pago" para poder reusarla también
+  // sobre los hermanos de un mismo pago combinado (ver handleAprobarPago más abajo).
+  const aprobarPagoPedido = async (pedido: PedidoEscolarCompleto) => {
+    const fechaHora = `${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+    setPedidosCompletos((prev) => {
+      const actualizados = prev.map(item =>
+        item.id === pedido.id
+          ? {
+              ...item,
+              estadoPago: 'aprobado' as const,
+              estadoEntrega: 'laboratorio_listo' as const,
+              emailEnviado: true,
+              fechaEnvioEmail: fechaHora
+            }
+          : item
+      );
+      guardarPedidosEnStorage(actualizados);
+      return actualizados;
+    });
+
+    // Sincronizar con el servidor y Supabase mediante token admin. Auditoría 2026-09-18 (reporte
+    // de Pablo): esta llamada no se esperaba (fire-and-forget) y el email se mandaba enseguida
+    // con "pedido.linkDescargaHD", que en un pedido recién aprobado a mano todavía está vacío —
+    // el servidor ahora genera el .zip HD automáticamente al marcar "pagado" y devuelve el link
+    // en la respuesta, así que hay que esperarla y usar ese link para el email.
+    let linkDescargaHDGenerado: string | undefined;
+    try {
+      const resultadoEstado = await actualizarEstadoPedidoAdmin(pedido.supabaseId || pedido.id, {
+        estadoPago: 'aprobado',
+        estadoEntrega: 'laboratorio_listo',
+      });
+      linkDescargaHDGenerado = resultadoEstado.linkDescargaHD;
+      if (linkDescargaHDGenerado) {
+        // Auditoría 2026-09-19 (encontrada en revisión de código): usar siempre la forma
+        // funcional de setState (prev => ...) acá, nunca un array capturado por closure — al
+        // aprobar varios hermanos en secuencia (ver handleAprobarPago), un array viejo pisaría
+        // el "aprobado" que ya haya quedado puesto por una llamada anterior de este mismo bucle.
+        setPedidosCompletos((prev) => {
+          const conLink = prev.map(item =>
+            item.id === pedido.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
+          );
+          guardarPedidosEnStorage(conLink);
+          return conLink;
+        });
+      }
+    } catch (e) {
+      console.warn('Error al sincronizar estado con backend:', e);
+    }
+
+    if (pedido.tutorEmail && pedido.tutorEmail.includes('@')) {
+      try {
+        await enviarFotosPorEmail({
+          to: pedido.tutorEmail,
+          tutorNombre: pedido.tutorNombre,
+          alumnoNombre: pedido.alumnoNombre,
+          colegioNombre: pedido.colegioNombre,
+          cursoCodigo: pedido.cursoCodigo,
+          pedidoId: pedido.id,
+          // Auditoría 2026-09-20 (revisión completa de estados): este llamado (aprobar un pago en
+          // efectivo/transferencia a mano) era el tercer lugar que mandaba el correo HD sin el
+          // UUID real — sin esto, el servidor no podía grabar el resultado del envío para estos
+          // pedidos tampoco.
+          pedidoSupabaseId: pedido.supabaseId,
+          kitNombre: pedido.kitNombre,
+          total: pedido.total,
+          linkDescargaHD: linkDescargaHDGenerado || pedido.linkDescargaHD,
+          esImpreso: pedido.kitId === 'kit-clasico',
+        });
+      } catch (e) {
+        console.error('Error enviando email al aprobar pago:', e);
+      }
+    }
+  };
+
+  // Auditoría 2026-09-23 (Pablo: "¿por qué se generaron 2 pedidos si es uno solo?"): un carrito
+  // multi-hijo (mellizos, por ejemplo) genera un pedido por hermano pero los cobra juntos en un
+  // solo pago (mismo grupoPagoId). El pago automático (Mercado Pago/Nave) ya aprueba a todo el
+  // grupo de una sola vez — pero este botón, pensado sobre todo para efectivo/transferencia,
+  // hasta ahora solo conocía la fila en la que se hacía click: si Pablo aprobaba un solo hermano
+  // de un pago combinado, el otro quedaba "Pendiente" para siempre aunque ya se hubiera cobrado
+  // junto con el primero. Ahora, al aprobar un pedido que comparte grupoPagoId con otros todavía
+  // pendientes, se aprueban también en la misma acción — cada uno con su propio .zip HD y su
+  // propio email (mismo criterio que ya usa el pago automático: "un carrito multi-hijo, cada hijo
+  // recibe su propia confirmación con sus propios datos, aunque el pago haya sido uno solo").
+  const handleAprobarPago = async (pedido: PedidoEscolarCompleto) => {
+    const hermanosPendientes = pedido.grupoPagoId
+      ? pedidosCompletos.filter(
+          (item) => item.grupoPagoId === pedido.grupoPagoId && item.id !== pedido.id && item.estadoPago === 'pendiente'
+        )
+      : [];
+    await aprobarPagoPedido(pedido);
+    for (const hermano of hermanosPendientes) {
+      await aprobarPagoPedido(hermano);
+    }
+  };
+
   const handleEliminarPedido = async (pedido: PedidoEscolarCompleto) => {
     const confirmado = window.confirm(
       `¿Eliminar el pedido ${pedido.id} de ${pedido.alumnoNombre}?\n\nEsta acción no se puede deshacer.`
@@ -1489,84 +1586,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
                           <td className="py-3 px-4">
                             {p.estadoPago === 'pendiente' ? (
                               <button
-                                onClick={async () => {
-                                  const fechaHora = `${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
-                                  const actualizados = pedidosCompletos.map(item => 
-                                    item.id === p.id 
-                                      ? { 
-                                          ...item, 
-                                          estadoPago: 'aprobado' as const, 
-                                          estadoEntrega: 'laboratorio_listo' as const,
-                                          emailEnviado: true,
-                                          fechaEnvioEmail: fechaHora
-                                        } 
-                                      : item
-                                  );
-                                  setPedidosCompletos(actualizados);
-                                  guardarPedidosEnStorage(actualizados);
-
-                                  // Sincronizar con el servidor y Supabase mediante token admin. Auditoría
-                                  // 2026-09-18 (reporte de Pablo): esta llamada no se esperaba (fire-and-forget)
-                                  // y el email se mandaba enseguida con "p.linkDescargaHD", que en un pedido
-                                  // recién aprobado a mano todavía está vacío — el servidor ahora genera el
-                                  // .zip HD automáticamente al marcar "pagado" y devuelve el link en la
-                                  // respuesta, así que hay que esperarla y usar ese link para el email.
-                                  let linkDescargaHDGenerado: string | undefined;
-                                  try {
-                                    const resultadoEstado = await actualizarEstadoPedidoAdmin(p.supabaseId || p.id, {
-                                      estadoPago: 'aprobado',
-                                      estadoEntrega: 'laboratorio_listo',
-                                    });
-                                    linkDescargaHDGenerado = resultadoEstado.linkDescargaHD;
-                                    if (linkDescargaHDGenerado) {
-                                      // Auditoría 2026-09-19 (encontrada en revisión de código): esto usaba
-                                      // "pedidosCompletos" capturado por el closure del onClick — que sigue
-                                      // siendo el array de ANTES del click, con este pedido todavía en
-                                      // "pendiente" — en vez del array recién actualizado ("actualizados",
-                                      // dos líneas arriba). Como esta llamada se resuelve después del
-                                      // "await", pisaba el "aprobado" recién puesto y devolvía el pedido a
-                                      // "pendiente" en el estado de React y en localStorage (solo el link
-                                      // quedaba bien puesto), lo que hacía reaparecer el botón "Aprobar
-                                      // Pago" y arriesgaba mandar el email de fotos HD dos veces si alguien
-                                      // lo tocaba de nuevo pensando que no había funcionado. Se usa la forma
-                                      // funcional de setState (prev => ...) para partir siempre del estado
-                                      // más reciente, nunca del closure viejo.
-                                      setPedidosCompletos((prev) => {
-                                        const conLink = prev.map(item =>
-                                          item.id === p.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
-                                        );
-                                        guardarPedidosEnStorage(conLink);
-                                        return conLink;
-                                      });
-                                    }
-                                  } catch (e) {
-                                    console.warn('Error al sincronizar estado con backend:', e);
-                                  }
-
-                                  if (p.tutorEmail && p.tutorEmail.includes('@')) {
-                                    try {
-                                      await enviarFotosPorEmail({
-                                        to: p.tutorEmail,
-                                        tutorNombre: p.tutorNombre,
-                                        alumnoNombre: p.alumnoNombre,
-                                        colegioNombre: p.colegioNombre,
-                                        cursoCodigo: p.cursoCodigo,
-                                        pedidoId: p.id,
-                                        // Auditoría 2026-09-20 (revisión completa de estados): este llamado
-                                        // (aprobar un pago en efectivo a mano) era el tercer lugar que
-                                        // mandaba el correo HD sin el UUID real — sin esto, el servidor no
-                                        // podía grabar el resultado del envío para estos pedidos tampoco.
-                                        pedidoSupabaseId: p.supabaseId,
-                                        kitNombre: p.kitNombre,
-                                        total: p.total,
-                                        linkDescargaHD: linkDescargaHDGenerado || p.linkDescargaHD,
-                                        esImpreso: p.kitId === 'kit-clasico',
-                                      });
-                                    } catch (e) {
-                                      console.error('Error enviando email al aprobar pago:', e);
-                                    }
-                                  }
-                                }}
+                                onClick={() => handleAprobarPago(p)}
                                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-xs transition-colors cursor-pointer"
                               >
                                 Aprobar Pago
