@@ -141,7 +141,7 @@ export const PREGUNTAS_FRECUENTES = [
   {
     pregunta: '¿Cómo accedo a las fotos de mi hijo/a?',
     respuesta:
-      'Al momento de inscribirse en el portal como padre/madre, debés contactarte por WhatsApp con la institución educativa para solicitar el Código de Curso correspondiente a tu hijo/a. Con ese código (como SALA-3TM, SALA-4A o SALA-5B) podrás acceder directamente a ver las fotografías escolares protegidas.',
+      'Te anotás una sola vez completando el formulario de inscripción online del colegio con tus datos de contacto (email y WhatsApp) y los de tu hijo/a. El sistema compara automáticamente esos datos con el padrón oficial que cargó el colegio: si tu nombre, email o teléfono coinciden con lo registrado, la inscripción se aprueba al instante y te llega por email tu Código Familiar para ver las fotos protegidas. Por eso es clave anotarte con los mismos datos (nombre completo, email y WhatsApp) que el colegio tiene en su padrón — si no coinciden, la inscripción queda pendiente de revisión manual y el fotógrafo te envía el código a la brevedad.',
   },
   {
     pregunta: '¿Puedo comprar solo la versión digital HD sin imprimir?',
@@ -156,17 +156,22 @@ export const PREGUNTAS_FRECUENTES = [
   {
     pregunta: '¿Cómo y cuándo recibo las fotos?',
     respuesta:
-      'Los archivos digitales en alta definición (HD) sin marca de agua se descargan inmediatamente al acreditarse el pago, y además recibís una copia de respaldo por email y WhatsApp. Si elegiste el Kit Impreso, las copias físicas en papel satinado de alta durabilidad se entregan en carpeta de presentación rotulada en el colegio.',
+      'Los archivos digitales en alta definición (HD) sin marca de agua se descargan inmediatamente al acreditarse el pago, y además recibís una copia de respaldo por email. Si elegiste el Kit Impreso, las copias físicas en papel satinado de alta durabilidad se entregan en carpeta de presentación rotulada en el colegio.',
+  },
+  {
+    pregunta: '¿Me avisan cuando mi Kit Impreso esté en producción o listo para retirar?',
+    respuesta:
+      'Sí. Además del email de confirmación al acreditarse el pago, te enviamos un email cuando tu pedido entra en producción en el laboratorio y otro cuando la carpeta ya está lista para retirar en el colegio, para que no tengas que estar preguntando.',
   },
   {
     pregunta: '¿Cuáles son los medios de pago disponibles?',
     respuesta:
-      'Podés abonar 100% online y seguro mediante Mercado Pago (tarjeta de débito, crédito o saldo en cuenta) o por Transferencia Bancaria directa con comprobante. No se maneja efectivo ni sobres en la escuela.',
+      'Podés abonar 100% online y seguro mediante Mercado Pago (tarjeta de débito, crédito o saldo en cuenta), Nave (tarjetas y QR de Banco Galicia) o por Transferencia Bancaria directa con comprobante. No se maneja efectivo ni sobres en la escuela.',
   },
   {
     pregunta: '¿Qué pasa si tengo más de un hijo en el colegio? ¿Tengo que hacer todo doble?',
     respuesta:
-      '¡No, para nada! Ahora funciona con 1 solo Código Familiar para todos tus hijos. Al anotarte en la web, cargás a tu primer hijo/a y hacés clic en "Agregar Hermano/a" para sumar a los demás (sin importar si van a distintas salas, turnos o grados). El sistema te entrega un único código familiar (ej: FAM-4821) que te llega por WhatsApp y Email. Al entrar a la web con ese código podés ver las fotos de todos tus hijos en la misma pantalla y alternar entre ellos con un solo toque. Además, podés pedir la toma de foto de hermanos juntos.',
+      '¡No, para nada! Ahora funciona con 1 solo Código Familiar para todos tus hijos. Al anotarte en la web, cargás a tu primer hijo/a y hacés clic en "Agregar Hermano/a" para sumar a los demás (sin importar si van a distintas salas, turnos o grados). El sistema te entrega un único código familiar (ej: FAM-4821) que te llega por email. Al entrar a la web con ese código podés ver las fotos de todos tus hijos en la misma pantalla y alternar entre ellos con un solo toque. Además, podés pedir la toma de foto de hermanos juntos.',
   },
   {
     pregunta: '¿Es obligatorio comprar las fotos?',
