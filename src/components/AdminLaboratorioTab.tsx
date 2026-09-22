@@ -254,13 +254,19 @@ interface AdminLaboratorioTabProps {
   // Laboratorio" desde la pestaña de Pedidos, para llevar directo al pedido en
   // cuestión en vez de dejar al fotógrafo a buscarlo a mano entre todos (15/9).
   busquedaInicial?: string;
+  // Auditoría 2026-09-22 (pedido de Pablo): cantidad de colegios activos, para mostrarla en la
+  // fila de métricas de este panel — antes vivía sola en la barra "Recaudación/Pedidos/Colegios"
+  // de la cabecera de AdminModal.tsx, que Pablo pidió eliminar. La recaudación no necesita venir
+  // por prop porque ya se puede derivar de `pedidos` (que AdminModal pasa completo, sin filtrar).
+  totalColegios?: number;
 }
 
 export default function AdminLaboratorioTab({
   pedidos,
   onActualizarPedidos,
   colegioNombre = 'Instituto Madre del Divino Pastor',
-  busquedaInicial = ''
+  busquedaInicial = '',
+  totalColegios = 0
 }: AdminLaboratorioTabProps) {
   const [cursoFiltro, setCursoFiltro] = useState<string>('todos');
   const [modoEstructuraCarpetas, setModoEstructuraCarpetas] = useState<'solo_2_carpetas_tamano' | 'por_alumno'>('solo_2_carpetas_tamano');
@@ -351,6 +357,15 @@ export default function AdminLaboratorioTab({
   const pedidosAprobados = useMemo(() => {
     return pedidos.filter(p => p.estadoPago === 'aprobado');
   }, [pedidos]);
+
+  // Auditoría 2026-09-22 (pedido de Pablo): recaudación total, para la fila de métricas de acá
+  // abajo — misma fórmula que usaba la barra "Recaudación/Pedidos/Colegios" de AdminModal.tsx
+  // (que Pablo pidió eliminar), aplicada sobre `pedidos` (la lista completa sin filtrar por
+  // curso/búsqueda que llega por prop), no sobre `pedidosFiltrados`.
+  const totalRecaudado = useMemo(
+    () => pedidosAprobados.reduce((acc, p) => acc + p.total, 0),
+    [pedidosAprobados]
+  );
 
   // Auditoría 2026-09-20 (bug real reportado por Pablo): antes, si el .zip HD fallaba al momento
   // del pago, nada volvía a intentarlo — quedaba en manos de que alguien notara pedido por pedido
@@ -852,32 +867,36 @@ export default function AdminLaboratorioTab({
 
       {/* TARJETA DE DOMINIO VERIFICADO (retratoescolar.com.ar) — colapsada por defecto:
           es información de referencia que casi nunca cambia, así que solo se muestra un
-          resumen de una línea hasta que se hace clic para expandirla. */}
-      <div className="rounded-2xl bg-gradient-to-br from-emerald-950/90 via-slate-900 to-slate-900 border border-emerald-500/30 text-white shadow-sm overflow-hidden">
+          resumen de una línea hasta que se hace clic para expandirla.
+          Auditoría 2026-09-22 (pedido de Pablo): la fila colapsada ocupaba el doble de alto de
+          lo necesario para ser sólo un indicador de referencia — se reduce el padding/íconos/
+          texto a la mitad. Además se agrupa, en este wrapper sin gap propio, con el banner de
+          abajo (que normalmente quedaría separado por el space-y-6 del contenedor padre) para
+          eliminar el aire entre ambas franjas oscuras. */}
+      <div>
+      <div className="rounded-2xl bg-gradient-to-br from-emerald-950/90 via-slate-900 to-slate-900 border border-emerald-500/30 text-white shadow-sm overflow-hidden rounded-b-none">
         <button
           type="button"
           onClick={() => setDominioExpandido(!dominioExpandido)}
-          className="w-full p-4 sm:p-5 flex items-center justify-between gap-3 cursor-pointer text-left"
+          className="w-full p-2 sm:p-2.5 flex items-center justify-between gap-3 cursor-pointer text-left"
         >
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-4.5 h-4.5 text-emerald-400" />
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs uppercase tracking-wider font-bold text-slate-400">Dominio de Correo Transaccional</span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  Verificado
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 truncate">retratoescolar.com.ar · listo para enviar emails</p>
+            <div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400">Dominio de Correo Transaccional</span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0">
+                <Check className="w-2.5 h-2.5 text-emerald-400" />
+                Verificado
+              </span>
+              <span className="text-[10px] text-slate-300 truncate">retratoescolar.com.ar · listo para enviar emails</span>
             </div>
           </div>
           {dominioExpandido ? (
-            <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+            <ChevronUp className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           ) : (
-            <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           )}
         </button>
 
@@ -960,7 +979,7 @@ export default function AdminLaboratorioTab({
       </div>
 
       {/* Top Explanation Banner */}
-      <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 to-slate-800 text-white shadow-md space-y-3">
+      <div className="p-5 rounded-2xl rounded-t-none bg-gradient-to-r from-slate-900 to-slate-800 text-white shadow-md space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold shadow-md shrink-0">
@@ -1048,12 +1067,22 @@ export default function AdminLaboratorioTab({
           </span>
         </div>
       </div>
+      </div>
 
       {/* Metrics Row — pedido de Pablo (22/9): esta fila ocupaba casi media pantalla como 4
           tarjetas grandes separadas para datos que son sólo de referencia rápida. Se compacta a
-          una única tira de chips en línea (mismo criterio visual que la barra de
-          Recaudación/Pedidos/Colegios de la cabecera del panel, en AdminModal.tsx). */}
+          una única tira de chips en línea. Auditoría 2026-09-22: además absorbe la vieja barra
+          "Recaudación/Pedidos/Colegios" de la cabecera del panel (AdminModal.tsx), que Pablo pidió
+          eliminar de ahí y traer acá — se calculan con `totalRecaudado` (derivado de `pedidos`,
+          la lista completa) y con la nueva prop `totalColegios`. */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-xs text-xs">
+        <span className="text-slate-500">
+          Recaudación <strong className="text-slate-900 font-extrabold">${totalRecaudado.toLocaleString('es-AR')}</strong>
+        </span>
+        <span className="text-slate-500">
+          Colegios <strong className="text-slate-900 font-extrabold">{totalColegios}</strong>
+        </span>
+        <div className="h-3.5 w-px bg-slate-200" />
         <span className="text-slate-500">
           Pedidos para Imprenta <strong className="text-slate-900 font-extrabold">{pedidosFiltrados.length}</strong>
         </span>
@@ -1069,27 +1098,29 @@ export default function AdminLaboratorioTab({
       </div>
 
       {/* Filters & Search Toolbar */}
-      {/* min-w-0 en la fila de pills es lo que evita que la lista de cursos se
-          desborde y quede tapada por/tapando el buscador cuando ambos comparten la fila
-          (sin min-w-0, un flex item con overflow-x-auto ignora el ancho del contenedor). */}
-      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between pt-2">
-        <div className="flex items-center gap-2 w-full sm:min-w-0 sm:flex-1 overflow-x-auto pb-1">
+      {/* Pedido de Pablo (22/9): los filtros de curso/búsqueda y la barra de "Avisos de estado
+          por email" ocupaban dos bloques apilados, cada uno con su propio padding/borde grande.
+          Se compactan en UNA sola fila (flex-wrap: en pantallas angostas sigue bajando de línea
+          en vez de desbordar), con textos e íconos a la mitad de tamaño. min-w-0 en la lista de
+          cursos evita que se desborde y tape al buscador (ver auditoría anterior). */}
+      <div className="flex flex-wrap items-center gap-1.5 pt-2 text-[11px]">
+        <div className="flex items-center gap-1.5 min-w-0 max-w-full overflow-x-auto pb-1">
           <button
             onClick={() => setCursoFiltro('todos')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+            className={`px-2 py-1 rounded-lg font-bold transition-colors cursor-pointer whitespace-nowrap ${
               cursoFiltro === 'todos'
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            Todos los Cursos ({pedidosAprobados.length})
+            Todos ({pedidosAprobados.length})
           </button>
 
           {cursosPresentes.map((c) => (
             <button
               key={c.codigo}
               onClick={() => setCursoFiltro(c.codigo)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+              className={`px-2 py-1 rounded-lg font-bold transition-colors cursor-pointer whitespace-nowrap ${
                 cursoFiltro === c.codigo
                   ? 'bg-amber-400 text-slate-950 shadow-xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -1100,76 +1131,74 @@ export default function AdminLaboratorioTab({
           ))}
         </div>
 
-        {/* Search input */}
-        <div className="relative w-full sm:w-64 shrink-0">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <div className="relative w-36 shrink-0">
+          <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={busquedaAlumno}
             onChange={(e) => setBusquedaAlumno(e.target.value)}
-            placeholder="Buscar por alumno o código..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+            placeholder="Buscar..."
+            className="w-full pl-6 pr-2 py-1 rounded-lg border border-slate-200 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-400"
           />
         </div>
+
+        <div className="h-4 w-px bg-slate-200 mx-1 shrink-0" />
+
+        <div className="flex items-center gap-1.5 shrink-0 rounded-lg bg-sky-50 border border-sky-200 px-2 py-1">
+          <span className="font-bold text-sky-950">Avisos:</span>
+          <span className="text-sky-700">{pedidosSeleccionados.size} sel.</span>
+        </div>
+        <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-2 py-1 rounded-lg border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 font-bold text-sky-800 cursor-pointer whitespace-nowrap">
+          {todosSeleccionados ? 'Quitar' : 'Todos'}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleEnviarActualizacion('en_produccion')}
+          disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion) || algunoYaAvanzoMasAlla}
+          title={
+            algunoYaAvanzoMasAlla
+              ? 'Alguno de los seleccionados ya está en una etapa posterior (Listo para retirar o Retirado) — avisar "En producción" ahora lo haría retroceder, y el servidor lo va a rechazar.'
+              : todosYaEnProduccion
+                ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.'
+                : 'Enviar aviso de "En producción" a los seleccionados'
+          }
+          className="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
+        >
+          {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />} {todosYaEnProduccion ? 'Reenviar "En producción"' : 'En producción'}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleEnviarActualizacion('listo_retiro')}
+          disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion) || algunoSinProduccion}
+          title={
+            algunoSinProduccion
+              ? 'Alguno de los seleccionados todavía no pasó por "En producción" — avisale primero, o destildalo para no bloquear al resto.'
+              : todosYaListoRetiro
+                ? 'Ya se le había avisado "Listo para retirar" a todos los seleccionados — esto manda el aviso de nuevo.'
+                : 'Enviar aviso de "Listo para retirar" a los seleccionados'
+          }
+          className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
+        >
+          {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {todosYaListoRetiro ? 'Reenviar "Listo p/retirar"' : 'Listo p/retirar'}
+        </button>
       </div>
 
-      <div className="p-4 rounded-2xl bg-sky-50 border border-sky-200 flex flex-col gap-3">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-bold text-sky-950">Avisos de estado por email</p>
-            <p className="text-[11px] text-sky-700 mt-0.5">{pedidosSeleccionados.size} cliente{pedidosSeleccionados.size === 1 ? '' : 's'} seleccionado{pedidosSeleccionados.size === 1 ? '' : 's'}.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={alternarSeleccionTodos} disabled={pedidosFiltradosConEmail.length === 0 || Boolean(enviandoActualizacion)} className="px-3 py-2 rounded-xl border border-sky-300 bg-white hover:bg-sky-100 disabled:opacity-50 text-xs font-bold text-sky-800 cursor-pointer">
-              {todosSeleccionados ? 'Quitar selección' : 'Seleccionar todos'}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleEnviarActualizacion('en_produccion')}
-              disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion) || algunoYaAvanzoMasAlla}
-              title={
-                algunoYaAvanzoMasAlla
-                  ? 'Alguno de los seleccionados ya está en una etapa posterior (Listo para retirar o Retirado) — avisar "En producción" ahora lo haría retroceder, y el servidor lo va a rechazar.'
-                  : todosYaEnProduccion
-                    ? 'Ya se le había avisado "En producción" a todos los seleccionados — esto manda el aviso de nuevo.'
-                    : undefined
-              }
-              className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              {enviandoActualizacion === 'en_produccion' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} {todosYaEnProduccion ? 'Volver a enviar “En producción”' : 'Enviar “En producción”'}
-            </button>
-            <button
-              type="button"
-              onClick={() => handleEnviarActualizacion('listo_retiro')}
-              disabled={pedidosSeleccionados.size === 0 || Boolean(enviandoActualizacion) || algunoSinProduccion}
-              title={
-                algunoSinProduccion
-                  ? 'Alguno de los seleccionados todavía no pasó por "En producción" — avisale primero, o destildalo para no bloquear al resto.'
-                  : todosYaListoRetiro
-                    ? 'Ya se le había avisado "Listo para retirar" a todos los seleccionados — esto manda el aviso de nuevo.'
-                    : undefined
-              }
-              className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              {enviandoActualizacion === 'listo_retiro' ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {todosYaListoRetiro ? 'Volver a enviar “Listo para retirar”' : 'Enviar “Listo para retirar”'}
-            </button>
-          </div>
-        </div>
-        {/* Auditoría 2026-09-20: antes nada explicaba por qué convenía frenar acá — ahora el
-            aviso queda visible en vez de que el fotógrafo sólo vea el botón gris. */}
-        {algunoSinProduccion && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            No podés avisar "Listo para retirar" a alguno de los seleccionados porque todavía no pasó por "En producción". Primero enviá ese aviso, o quitalo de la selección.
-          </p>
-        )}
-        {algunoYaAvanzoMasAlla && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            No podés avisar "En producción" a alguno de los seleccionados porque ya está en una etapa posterior. Quitalo de la selección si sólo querés avisarle a los demás.
-          </p>
-        )}
-      </div>
+      {/* Auditoría 2026-09-20: antes nada explicaba por qué convenía frenar acá — ahora el
+          aviso queda visible en vez de que el fotógrafo sólo vea el botón gris. Se mantienen
+          como alertas propias (no entran en la fila compacta de arriba) porque son advertencias
+          funcionales, no controles. */}
+      {algunoSinProduccion && (
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          No podés avisar "Listo para retirar" a alguno de los seleccionados porque todavía no pasó por "En producción". Primero enviá ese aviso, o quitalo de la selección.
+        </p>
+      )}
+      {algunoYaAvanzoMasAlla && (
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+          No podés avisar "En producción" a alguno de los seleccionados porque ya está en una etapa posterior. Quitalo de la selección si sólo querés avisarle a los demás.
+        </p>
+      )}
 
       {/* Orders & Lab Files — tarjetas para celular (auditoría 2026-09-21, ver
           TarjetaPedidoLaboratorio más arriba), tabla completa para escritorio. Misma data, mismos

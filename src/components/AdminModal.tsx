@@ -1319,7 +1319,6 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
     setPadronTokens((actual) => ({ ...actual, [c.id]: resultado.codigoPadron! }));
   };
 
-  const totalRecaudado = pedidosCompletos.reduce((acc, p) => p.estadoPago === 'aprobado' ? acc + p.total : acc, 0);
   // Auditoría 2026-09-16 (pedido de Pablo): antes había 5 botones "de acceso rápido" arriba
   // (Inscriptos/Pedidos/Consultas/Laboratorio/Cargar fotos) y el resto de las 14 secciones
   // quedaba escondido en un <select> aparte. Pablo pidió que TODO quede como botones arriba,
@@ -1506,14 +1505,15 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
               })}
             </nav>
 
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:py-1.5 text-sm sm:text-[11px] text-slate-600">
-              <span>Recaudación <strong className="text-slate-950">${totalRecaudado.toLocaleString('es-AR')}</strong></span>
-              <span>Pedidos <strong className="text-slate-950">{pedidosCompletos.length}</strong></span>
-              <span>Colegios <strong className="text-slate-950">{colegiosList.length}</strong></span>
             </div>
-
-            </div>
-            {/* fin barra superior fija */}
+            {/* fin barra superior fija — Auditoría 2026-09-22 (pedido de Pablo): la fila
+                "Recaudación/Pedidos/Colegios" que estaba acá (visible en TODAS las pestañas) se
+                eliminó y sus datos (Recaudación, Colegios) se mudaron a la fila de métricas de la
+                pestaña Laboratorio (AdminLaboratorioTab.tsx), que es donde Pablo la señaló —
+                Recaudación se recalcula ahí mismo a partir de `pedidos` (la lista completa que ya
+                recibe por prop) y Colegios se le pasa como nueva prop `totalColegios`. Si en el
+                futuro hace falta volver a mostrar estos datos en otras pestañas, `colegiosList`
+                sigue disponible acá en AdminModal.tsx para recalcularlos. */}
 
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
@@ -1552,6 +1552,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                 }}
                 colegioNombre={colegiosList[0]?.nombre}
                 busquedaInicial={busquedaInicialLaboratorio}
+                totalColegios={colegiosList.length}
               />
             )}
 
