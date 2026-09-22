@@ -32,6 +32,10 @@ export default function App() {
   });
   const [escaneoModalOpen, setEscaneoModalOpen] = useState(Boolean(escaneoPedidoId));
   const [inscripcionModalOpen, setInscripcionModalOpen] = useState(false);
+  // Auditoría 2026-09-22 (pedido de Pablo: el link "¿Ya te inscribiste? Consultar código" de
+  // Hero.tsx abría el modal siempre en la pestaña "Inscribirme", igual que el botón de alta
+  // "Anotarme con mis hijos" — quien ya se había inscripto terminaba en el formulario equivocado).
+  const [inscripcionModalTab, setInscripcionModalTab] = useState<'registro' | 'login'>('registro');
   const [selectedColegioId, setSelectedColegioId] = useState<string | undefined>(undefined);
   const [selectedKitId, setSelectedKitId] = useState<string | undefined>(undefined);
   const [selectedCodigo, setSelectedCodigo] = useState<string | undefined>(undefined);
@@ -52,7 +56,8 @@ export default function App() {
     setFamiliasModalOpen(true);
   };
 
-  const handleOpenInscripcion = () => {
+  const handleOpenInscripcion = (tab?: 'registro' | 'login') => {
+    setInscripcionModalTab(tab || 'registro');
     setInscripcionModalOpen(true);
   };
 
@@ -136,6 +141,7 @@ export default function App() {
         isOpen={inscripcionModalOpen}
         onClose={() => setInscripcionModalOpen(false)}
         onInscripcionExitosa={handleInscripcionExitosa}
+        initialTab={inscripcionModalTab}
       />
 
       {/* Photographer Admin Panel Modal */}
