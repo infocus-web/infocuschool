@@ -343,27 +343,46 @@ async function obtenerZohoTokensGuardados(): Promise<ZohoTokensGuardados | null>
   };
 }
 
+// Guarda la conexión completa — SOLO se usa en el callback de OAuth, la primera vez que se
+// conecta una cuenta (o al reconectar). Todos los campos son obligatorios a propósito.
 async function guardarZohoTokens(tokens: {
   accessToken: string;
-  refreshToken?: string;
-  accountId?: string;
-  apiDomain?: string;
-  cuentaEmail?: string | null;
+  refreshToken: string;
+  accountId: string;
+  apiDomain: string;
+  cuentaEmail: string | null;
   expiresAt: number;
 }) {
   const supabase = getServerSupabase();
   if (!supabase) throw new Error('Supabase no configurado.');
-  const payload: Record<string, any> = {
+  const { error } = await supabase.from('zoho_oauth_tokens').upsert({
     id: true,
     access_token: tokens.accessToken,
+    refresh_token: tokens.refreshToken,
+    account_id: tokens.accountId,
+    api_domain: tokens.apiDomain,
+    cuenta_email: tokens.cuentaEmail,
     expires_at: new Date(tokens.expiresAt).toISOString(),
     updated_at: new Date().toISOString(),
-  };
-  if (tokens.refreshToken) payload.refresh_token = tokens.refreshToken;
-  if (tokens.accountId) payload.account_id = tokens.accountId;
-  if (tokens.apiDomain) payload.api_domain = tokens.apiDomain;
-  if (tokens.cuentaEmail !== undefined) payload.cuenta_email = tokens.cuentaEmail;
-  const { error } = await supabase.from('zoho_oauth_tokens').upsert(payload, { onConflict: 'id' });
+  }, { onConflict: 'id' });
+  if (error) throw error;
+}
+
+// Bug real detectado el 22/9/2026: la renovación automática del access_token (ver más abajo)
+// llamaba a guardarZohoTokens() con solo accessToken/expiresAt, confiando en que el upsert
+// dejara el resto de las columnas (refresh_token, account_id, api_domain) como estaban. En
+// realidad, el upsert de Supabase arma un INSERT ... ON CONFLICT DO UPDATE que también
+// actualiza esas columnas con NULL cuando no vienen en el payload — y como refresh_token es
+// NOT NULL, la renovación fallaba siempre con "null value in column refresh_token violates
+// not-null constraint", dejando la conexión rota hasta desconectar y reconectar a mano. Esta
+// función SÍ usa un UPDATE común (no upsert), que solo toca las columnas que le pasamos.
+async function actualizarZohoAccessToken(accessToken: string, expiresAt: number): Promise<void> {
+  const supabase = getServerSupabase();
+  if (!supabase) throw new Error('Supabase no configurado.');
+  const { error } = await supabase
+    .from('zoho_oauth_tokens')
+    .update({ access_token: accessToken, expires_at: new Date(expiresAt).toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', true);
   if (error) throw error;
 }
 
@@ -393,7 +412,7 @@ async function obtenerZohoAccessTokenValido(): Promise<ZohoTokensGuardados | nul
       return null;
     }
     const nuevoExpiresAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
-    await guardarZohoTokens({ accessToken: data.access_token, expiresAt: nuevoExpiresAt });
+    await actualizarZohoAccessToken(data.access_token, nuevoExpiresAt);
     return { ...tokens, accessToken: data.access_token, expiresAt: nuevoExpiresAt };
   } catch (err) {
     console.error('[Zoho] Error de red al renovar access_token:', err);
@@ -464,11 +483,15 @@ function formatearCuerpoCartaHtml(textoPlano: string): string {
     return `<p style="margin:0 0 16px 0;font-size:14px;line-height:1.6;color:#334155;">${lineas.map((l) => linkificar(escapeHtml(l))).join('<br>')}</p>`;
   }).filter(Boolean).join('\n');
 
-  return `<!DOCTYPE html>
-<html lang="es">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e293b;">
-  <div style="max-width:600px;margin:24px auto;background-color:#ffffff;border-radius:16px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
+  // OJO — bug real detectado el 22/9/2026: acá había un documento HTML completo propio
+  // (<!DOCTYPE>, <html>, <head>, <body>). Zoho mete el "content" que le mandamos DENTRO de su
+  // propio documento de correo, así que terminaba habiendo un <html>/<body> anidado dentro de
+  // otro — Gmail interpreta esa estructura como si fuera contenido citado/recortado y lo pliega
+  // detrás de un "..." por default (el correo llegaba con el cuerpo escondido). La solución es
+  // mandar solo el fragmento de contenido, sin documento propio — como el resto de los templates
+  // de este archivo que sí usan Resend directamente.
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e293b;max-width:600px;margin:0 auto;">
+  <div style="background-color:#ffffff;border-radius:16px;border:1px solid #e2e8f0;overflow:hidden;box-shadow:0 4px 6px -1px rgba(0,0,0,0.05);">
     <div style="background-color:#0f172a;padding:32px 24px;text-align:center;border-bottom:3px solid #f59e0b;">
       <div style="font-size:11px;font-weight:800;letter-spacing:2px;color:#f59e0b;text-transform:uppercase;margin-bottom:6px;">RETRATO ESCOLAR • PRODUCTORA INFOCUS</div>
       <h1 style="color:#ffffff;margin:0;font-size:21px;font-weight:800;letter-spacing:-0.5px;">Propuesta de Cobertura Fotográfica 2026</h1>
@@ -481,8 +504,7 @@ function formatearCuerpoCartaHtml(textoPlano: string): string {
       <a href="https://retratoescolar.com.ar" style="color:#d97706;text-decoration:none;font-weight:600;">retratoescolar.com.ar</a>
     </div>
   </div>
-</body>
-</html>`;
+</div>`;
 }
 
 async function enviarZohoMail(params: {
