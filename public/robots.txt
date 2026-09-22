@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /padron.html
+Disallow: /cobertura-2026.html
+Disallow: /cobertura-curso-egresados-2026.html
+
+Sitemap: https://www.retratoescolar.com.ar/sitemap.xml

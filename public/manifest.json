@@ -1,0 +1,19 @@
+{
+  "name": "Retrato Escolar",
+  "short_name": "Retrato Escolar",
+  "description": "Portal online de fotos escolares para familias. Ingresá con el código de tu curso, elegí tus fotos y recibí tus kits impresos o descarga digital HD.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#f59e0b",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
