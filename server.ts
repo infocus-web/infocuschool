@@ -3242,6 +3242,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       colegioId,
       colegioNombre,
       padreNombre,
+      padreDni,
       telefonoWhatsApp,
       email,
       alumnoNombre,
@@ -3260,6 +3261,15 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     const alumnoDniLimpio = String(alumnoDni || '').replace(/\D/g, '');
     if (alumnoDniLimpio.length < 6 || alumnoDniLimpio.length > 9) {
       return res.status(400).json({ success: false, error: 'El DNI del alumno/a no es válido' });
+    }
+    // Auditoría 2026-09-22 (pedido de Pablo, ronda 2 — el formulario de inscripción todavía no
+    // pedía el DNI del tutor, sólo se lo agregué al ingreso posterior): se pide acá también, de
+    // entrada, para que quede cargado desde el primer momento y no dependa de identificar por
+    // nombre en el primer ingreso (ver `/api/inscripciones/buscar`) — ese camino por nombre
+    // queda sólo como respaldo para las familias aprobadas ANTES de este cambio.
+    const padreDniLimpio = normalizarDniServidor(padreDni);
+    if (padreDniLimpio.length < 6 || padreDniLimpio.length > 9) {
+      return res.status(400).json({ success: false, error: 'El DNI del padre, madre o tutor no es válido' });
     }
 
     const supabase = getServerSupabase();
@@ -3487,6 +3497,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
 
     const inscripcionRow: Record<string, any> = {
       padre_nombre: String(padreNombre).trim(),
+      padre_dni: padreDniLimpio,
       telefono_whatsapp: telefonoGuardado,
       email: emailGuardado,
       alumno_nombre: String(alumnoNombre).trim(),
