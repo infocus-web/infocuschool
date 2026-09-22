@@ -18,6 +18,12 @@ export interface AlumnoHermano {
 export interface InscripcionFamilia {
   id: string;
   padreNombre: string;       // Nombre y apellido del padre o madre / tutor
+  // Auditoría 2026-09-22 (pedido de Pablo: identificar a la familia exacta dentro de un código
+  // de curso compartido por todo el grado/turno/división, pidiendo nombre + DNI del tutor junto
+  // al código en cada ingreso — ver `/api/inscripciones/buscar` en server.ts): DNI del padre,
+  // madre o tutor. Puede venir vacío para familias aprobadas antes de este cambio; se completa
+  // solo en su primer ingreso posterior.
+  padreDni?: string;
   telefonoWhatsApp: string;  // Número de teléfono de WhatsApp
   email: string;             // Correo electrónico
   alumnoNombre: string;      // Nombre del primer alumno/hijo
@@ -37,11 +43,6 @@ export interface InscripcionFamilia {
   fechaAprobacion?: string;
   notificacionWhatsAppEnviada?: boolean;
   notificacionEmailEnviada?: boolean;
-  // Auditoría 2026-09-16: true cuando este código de acceso ya lo comparte más de una familia
-  // (es un código de curso, no uno exclusivo) — en ese caso el servidor NUNCA manda nombre,
-  // apellido del alumno, email, teléfono ni DNI de la familia que lo tenga; sólo los datos del
-  // curso (colegio/grado/turno/división) para poder abrir la galería.
-  codigoCompartido?: boolean;
 }
 
 /** Fila del padrón de padres autorizados (cargado por el colegio vía Excel/CSV) */
@@ -135,6 +136,7 @@ function mapearFilaSupabaseAInscripcion(row: any): InscripcionFamilia {
   return {
     id: row.id,
     padreNombre: row.padre_nombre || '',
+    padreDni: row.padre_dni || undefined,
     telefonoWhatsApp: row.telefono_whatsapp || '',
     email: row.email || '',
     alumnoNombre: row.alumno_nombre || '',
@@ -239,28 +241,58 @@ export async function validarEInscribirFamilia(datos: {
  * devuelve la familia completa (`encontrada: true`). Si se buscó por teléfono/email y esa familia
  * YA tiene un código asignado, esta ruta nunca lo devuelve: como mucho reenvía el código al
  * correo de confianza ya guardado (`yaRegistrado` + `emailReenviado` + `emailDestino` parcial).
+ *
+ * Auditoría 2026-09-22 (pedido de Pablo: "que cada vez que vayan a ingresar, lo hagan con
+ * nombre y apellido del padre/tutor/encargado, el DNI del padre/tutor/encargado, y el código...
+ * con eso solucionamos el problema de que con un solo código por curso no se crucen los datos
+ * de los alumnos al momento de ingresar"): el código de curso lo comparte toda la sección a
+ * propósito, así que ya no alcanza con acertarlo — ahora se manda siempre `tutorNombre` + `dni`
+ * junto al código. Si el servidor no puede identificar a la familia exacta todavía (falta el
+ * DNI, o no coincide con ninguna), responde `requiereDatosTutor` (+ `cursoInfo` sólo con el
+ * curso, sin datos de ninguna familia) en vez de `inscripcion`.
  */
 export interface ResultadoBuscarInscripcion {
   encontrada: boolean;
   inscripcion?: InscripcionFamilia;
+  requiereDatosTutor?: boolean;
+  datosNoCoinciden?: boolean;
+  cursoInfo?: { colegioNombre?: string; grado?: string; division?: string; turno?: string };
   yaRegistrado?: boolean;
   emailReenviado?: boolean;
   emailDestino?: string | null;
 }
 
-export async function buscarMiInscripcion(query: string): Promise<ResultadoBuscarInscripcion> {
+export async function buscarMiInscripcion(
+  query: string,
+  tutorNombre?: string,
+  dni?: string
+): Promise<ResultadoBuscarInscripcion> {
   try {
     if (!query || query.trim().length < 3) return { encontrada: false };
     const res = await fetch('/api/inscripciones/buscar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: query.trim() })
+      body: JSON.stringify({ query: query.trim(), tutorNombre: (tutorNombre || '').trim(), dni: dni || '' })
     });
     const data = await res.json();
     if (!res.ok) return { encontrada: false };
+    if (data.success && data.requiereDatosTutor) {
+      return {
+        encontrada: false,
+        requiereDatosTutor: true,
+        datosNoCoinciden: Boolean(data.datosNoCoinciden),
+        cursoInfo: data.inscripcion
+          ? {
+              colegioNombre: data.inscripcion.colegio_nombre,
+              grado: data.inscripcion.grado,
+              division: data.inscripcion.division,
+              turno: data.inscripcion.turno
+            }
+          : undefined
+      };
+    }
     if (data.success && data.inscripcion) {
       const inscripcion = mapearFilaSupabaseAInscripcion(data.inscripcion);
-      inscripcion.codigoCompartido = Boolean(data.codigoCompartido);
       return { encontrada: true, inscripcion };
     }
     if (data.yaRegistrado) {
@@ -458,7 +490,10 @@ export function generarMensajeWhatsAppAprobacion(familia: InscripcionFamilia, co
     ? `\n📸 *Foto de hermanos:* Incluida en la sesión fotográfica.`
     : '';
 
-  return `¡Hola ${familia.padreNombre}! Tu inscripción familiar en el portal de fotos escolares para *${hijosNombres}* (${familia.colegioNombre}) ha sido APROBADA con éxito por el equipo fotográfico.\n\n🔑 Tu *CÓDIGO DE ACCESO* es: *${codigo}*${fotoHermanosNota}\n\nCon este único código podrás ingresar al portal, ver las galerías protegidas de todos tus hijos en un solo lugar y armar tu pedido o combos con un solo pago.\n\nAccedé directamente aquí: https://retratoescolar.com.ar`;
+  // Auditoría 2026-09-22 (pedido de Pablo): este código es el mismo para todo el curso, así que
+  // al entrar también va a pedir el nombre y DNI de quien se inscribió — se avisa acá para que no
+  // se sorprendan al llegar al sitio.
+  return `¡Hola ${familia.padreNombre}! Tu inscripción familiar en el portal de fotos escolares para *${hijosNombres}* (${familia.colegioNombre}) ha sido APROBADA con éxito por el equipo fotográfico.\n\n🔑 Tu *CÓDIGO DE ACCESO* es: *${codigo}*${fotoHermanosNota}\n\nCon este único código podrás ingresar al portal, ver las galerías protegidas de todos tus hijos en un solo lugar y armar tu pedido o combos con un solo pago.\n\n⚠️ Este código es el mismo para todo el curso: al entrar, además del código, te va a pedir tu *nombre y apellido* y tu *DNI* (los de quien se inscribió) para reconocer a tus hijos.\n\nAccedé directamente aquí: https://retratoescolar.com.ar`;
 }
 
 /**
@@ -485,7 +520,9 @@ export function prepararEmailAprobacion(familia: InscripcionFamilia, codigo: str
   ].join('\n');
 
   const asunto = `Retrato Escolar: Tu Código de Acceso (${codigo}) - ${familia.colegioNombre}`;
-  const contenido = `Estimado/a ${familia.padreNombre},\n\nLe confirmamos que su registro familiar para el ciclo escolar 2026 en ${familia.colegioNombre} ha sido validado con éxito.\n\nAlumnos vinculados a su cuenta familiar:\n${listaHijos}\n${familia.solicitaFotoHermanos ? '✓ Foto de hermanos juntos: Solicitada y programada\n' : ''}\n=========================================\nSU CÓDIGO DE ACCESO: ${codigo}\n=========================================\n\nCon este único código podrá:\n1. Ingresar a retratoescolar.com.ar\n2. Ver las galerías individuales y grupales de todos sus hijos sin tener que usar códigos diferentes.\n3. Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago.\n\nPara cualquier consulta, nuestro equipo fotográfico está a su entera disposición.\n\nAtentamente,\nEquipo de Fotografía Escolar · Retrato Escolar (retratoescolar.com.ar)`;
+  // Auditoría 2026-09-22 (pedido de Pablo): este código es el mismo para todo el curso, así que
+  // el ingreso también pide nombre y DNI de quien se inscribió — se aclara acá.
+  const contenido = `Estimado/a ${familia.padreNombre},\n\nLe confirmamos que su registro familiar para el ciclo escolar 2026 en ${familia.colegioNombre} ha sido validado con éxito.\n\nAlumnos vinculados a su cuenta familiar:\n${listaHijos}\n${familia.solicitaFotoHermanos ? '✓ Foto de hermanos juntos: Solicitada y programada\n' : ''}\n=========================================\nSU CÓDIGO DE ACCESO: ${codigo}\n=========================================\n\nCon este único código podrá:\n1. Ingresar a retratoescolar.com.ar con su nombre y apellido, su DNI y este código.\n2. Ver las galerías individuales y grupales de todos sus hijos sin tener que usar códigos diferentes.\n3. Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago.\n\nImportante: este código es el mismo para todo el curso. Al ingresar, además del código, va a tener que completar el nombre y apellido y el DNI de quien se inscribió, para que el sistema reconozca a sus hijos.\n\nPara cualquier consulta, nuestro equipo fotográfico está a su entera disposición.\n\nAtentamente,\nEquipo de Fotografía Escolar · Retrato Escolar (retratoescolar.com.ar)`;
 
   return {
     asunto,
@@ -546,11 +583,17 @@ export interface HijoConCodigoSeccion {
   codigoSeccion: string;
 }
 
-export async function obtenerHijosDeFamilia(codigoFamiliar: string): Promise<HijoConCodigoSeccion[]> {
+// Auditoría 2026-09-22: `codigoFamiliar` puede estar compartido por toda la sección (ver
+// `/api/inscripciones/buscar`), así que se manda también el DNI del tutor ya identificado (si
+// se tiene) para que el servidor pueda elegir la fila de la familia correcta y no la primera que
+// encuentre con ese código.
+export async function obtenerHijosDeFamilia(codigoFamiliar: string, dniTutor?: string): Promise<HijoConCodigoSeccion[]> {
   const codigo = (codigoFamiliar || '').trim();
   if (!codigo) return [];
   try {
-    const res = await fetch(`/api/familia/hijos?codigo=${encodeURIComponent(codigo)}`);
+    const params = new URLSearchParams({ codigo });
+    if (dniTutor) params.set('dni', dniTutor);
+    const res = await fetch(`/api/familia/hijos?${params.toString()}`);
     const data = await res.json();
     if (!res.ok || !data.success) return [];
     return data.hijos || [];
