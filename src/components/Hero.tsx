@@ -73,7 +73,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.12] font-['Outfit']">
               Las fotos de tus hijos,{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-600 via-amber-500 to-amber-700">
-                directo al celular
+                directo a tu pantalla
               </span>{' '}
               y en alta calidad
             </h1>
