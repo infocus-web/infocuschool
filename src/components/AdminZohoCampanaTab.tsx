@@ -246,7 +246,11 @@ export default function AdminZohoCampanaTab() {
               <div>
                 <label className="text-xs font-bold text-slate-700">Cuerpo del correo</label>
                 <textarea value={cuerpoHtml} onChange={(e) => setCuerpoHtml(e.target.value)} rows={12} className="w-full mt-1 px-3 py-2 border border-slate-200 rounded-xl text-xs font-mono resize-y" />
-                <p className="text-[10px] text-slate-400 mt-1">Variables disponibles: {'{{institucion}}'}, {'{{localidad_partido}}'}, {'{{nivel}}'}</p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Variables disponibles: {'{{institucion}}'}, {'{{localidad_partido}}'}, {'{{nivel}}'}. Escribilo como texto
+                  normal (párrafos separados por una línea en blanco, viñetas con "• ") — al enviarse se convierte
+                  automáticamente a un formato de carta prolijo, no hace falta escribir HTML.
+                </p>
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-700">Lista de colegios (CSV con columnas To/institucion/localidad_partido/nivel)</label>
