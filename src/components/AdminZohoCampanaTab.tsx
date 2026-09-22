@@ -18,7 +18,7 @@ import {
 const ASUNTO_INICIAL = 'Una propuesta pensada especialmente para {{institucion}} — Ciclo 2026';
 const CUERPO_INICIAL = `Hola equipo de {{institucion}}:
 
-Mi nombre es Pablo Alderete, de retratoescolar.com.ar. Nos dedicamos a la cobertura fotográfica escolar y nos encantaría sumar a {{institucion}} a las instituciones con las que trabajamos en la Zona Norte durante el ciclo lectivo 2026.
+Mi nombre es Pablo Alderete, de retratoescolar.com.ar. Nos dedicamos a la cobertura fotográfica escolar y nos encantaría que {{institucion}} se sume a las instituciones con las que trabajamos en la Zona Norte durante el ciclo lectivo 2026.
 
 Sabemos lo que significa para una familia tener esas fotos que después quedan para siempre — el primer día, el acto, la salida — y por eso ponemos mucho cuidado en que todo el proceso sea simple tanto para el colegio como para cada familia.
 
