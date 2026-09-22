@@ -34,6 +34,8 @@ https://www.retratoescolar.com.ar/cobertura-2026.html
 
 Si les interesa, coordinamos una charla breve, cuando les quede cómodo, para contarles cómo podemos adaptar la cobertura a {{institucion}} y responder cualquier duda.
 
+Pueden responder directamente a este correo — es la vía más simple para coordinar todo — o, si prefieren algo más rápido, escribirnos por WhatsApp al +54 9 11 2862-5916.
+
 ¡Esperamos poder acompañarlos este ciclo lectivo!
 
 Saludos,
