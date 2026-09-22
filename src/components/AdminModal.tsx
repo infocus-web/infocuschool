@@ -292,16 +292,21 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   // sobre los hermanos de un mismo pago combinado (ver handleAprobarPago más abajo).
   const aprobarPagoPedido = async (pedido: PedidoEscolarCompleto) => {
     const fechaHora = `${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+    // Auditoría 2026-09-23 (bug real encontrado en auditoría de código, ALTO): antes esta
+    // actualización optimista marcaba de una `emailEnviado: true` y `fechaEnvioEmail` (además de
+    // estadoPago/estadoEntrega) ANTES de siquiera llamar al servidor y ANTES de intentar mandar el
+    // email. Si `actualizarEstadoPedidoAdmin` fallaba (red caída, token vencido) el catch de abajo
+    // sólo hacía console.warn — nunca revertía nada — así que el panel (y lo persistido en
+    // localStorage) quedaba mostrando "Aprobado" y "Email enviado" con fecha real aunque Supabase
+    // siguiera en "pendiente" y la familia jamás hubiera recibido nada, sin ninguna forma de que
+    // Pablo se diera cuenta salvo comparar a mano contra Supabase. Ahora: estadoPago/estadoEntrega
+    // se marcan optimistamente (para que la UI responda al toque), pero se REVIERTEN si el
+    // servidor no confirma; emailEnviado/fechaEnvioEmail/linkDescargaHD sólo se graban después de
+    // que el envío de email realmente haya devuelto success:true.
     setPedidosCompletos((prev) => {
       const actualizados = prev.map(item =>
         item.id === pedido.id
-          ? {
-              ...item,
-              estadoPago: 'aprobado' as const,
-              estadoEntrega: 'laboratorio_listo' as const,
-              emailEnviado: true,
-              fechaEnvioEmail: fechaHora
-            }
+          ? { ...item, estadoPago: 'aprobado' as const, estadoEntrega: 'laboratorio_listo' as const }
           : item
       );
       guardarPedidosEnStorage(actualizados);
@@ -314,32 +319,60 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
     // el servidor ahora genera el .zip HD automáticamente al marcar "pagado" y devuelve el link
     // en la respuesta, así que hay que esperarla y usar ese link para el email.
     let linkDescargaHDGenerado: string | undefined;
+    let estadoConfirmadoPorServidor = false;
     try {
       const resultadoEstado = await actualizarEstadoPedidoAdmin(pedido.supabaseId || pedido.id, {
         estadoPago: 'aprobado',
         estadoEntrega: 'laboratorio_listo',
       });
-      linkDescargaHDGenerado = resultadoEstado.linkDescargaHD;
-      if (linkDescargaHDGenerado) {
-        // Auditoría 2026-09-19 (encontrada en revisión de código): usar siempre la forma
-        // funcional de setState (prev => ...) acá, nunca un array capturado por closure — al
-        // aprobar varios hermanos en secuencia (ver handleAprobarPago), un array viejo pisaría
-        // el "aprobado" que ya haya quedado puesto por una llamada anterior de este mismo bucle.
-        setPedidosCompletos((prev) => {
-          const conLink = prev.map(item =>
-            item.id === pedido.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
-          );
-          guardarPedidosEnStorage(conLink);
-          return conLink;
-        });
+      // Auditoría 2026-09-23: antes no se miraba `resultadoEstado.success` — un fallo del servidor
+      // que responde sin tirar excepción (401 por token vencido, 500, etc.) pasaba desapercibido y
+      // el flujo seguía como si el pedido sí se hubiera marcado "aprobado" del lado real.
+      if (resultadoEstado.success) {
+        estadoConfirmadoPorServidor = true;
+        linkDescargaHDGenerado = resultadoEstado.linkDescargaHD;
+        if (linkDescargaHDGenerado) {
+          // Auditoría 2026-09-19 (encontrada en revisión de código): usar siempre la forma
+          // funcional de setState (prev => ...) acá, nunca un array capturado por closure — al
+          // aprobar varios hermanos en secuencia (ver handleAprobarPago), un array viejo pisaría
+          // el "aprobado" que ya haya quedado puesto por una llamada anterior de este mismo bucle.
+          setPedidosCompletos((prev) => {
+            const conLink = prev.map(item =>
+              item.id === pedido.id ? { ...item, linkDescargaHD: linkDescargaHDGenerado } : item
+            );
+            guardarPedidosEnStorage(conLink);
+            return conLink;
+          });
+        }
+      } else {
+        console.warn('El servidor no confirmó la aprobación del pago:', resultadoEstado.error);
       }
     } catch (e) {
       console.warn('Error al sincronizar estado con backend:', e);
     }
 
+    if (!estadoConfirmadoPorServidor) {
+      // Revertir la marca optimista: el servidor nunca confirmó, así que no podemos dejar el
+      // panel mostrando "Aprobado" — eso llevaría a Pablo a pensar que ya está cobrado/listo
+      // cuando en Supabase sigue "pendiente".
+      setPedidosCompletos((prev) => {
+        const revertidos = prev.map(item =>
+          item.id === pedido.id
+            ? { ...item, estadoPago: pedido.estadoPago, estadoEntrega: pedido.estadoEntrega }
+            : item
+        );
+        guardarPedidosEnStorage(revertidos);
+        return revertidos;
+      });
+      window.alert(
+        `No se pudo confirmar la aprobación del pago de ${pedido.alumnoNombre} en el servidor. No se envió ningún email. Revisá tu conexión o volvé a intentarlo.`
+      );
+      return;
+    }
+
     if (pedido.tutorEmail && pedido.tutorEmail.includes('@')) {
       try {
-        await enviarFotosPorEmail({
+        const resultadoEmail = await enviarFotosPorEmail({
           to: pedido.tutorEmail,
           tutorNombre: pedido.tutorNombre,
           alumnoNombre: pedido.alumnoNombre,
@@ -356,8 +389,25 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
           linkDescargaHD: linkDescargaHDGenerado || pedido.linkDescargaHD,
           esImpreso: pedido.kitId === 'kit-clasico',
         });
+        if (resultadoEmail.success) {
+          setPedidosCompletos((prev) => {
+            const conEmail = prev.map(item =>
+              item.id === pedido.id ? { ...item, emailEnviado: true, fechaEnvioEmail: fechaHora } : item
+            );
+            guardarPedidosEnStorage(conEmail);
+            return conEmail;
+          });
+        } else {
+          console.warn('El envío del email al aprobar el pago no fue exitoso:', resultadoEmail.error);
+          window.alert(
+            `El pago de ${pedido.alumnoNombre} quedó aprobado, pero el email con las fotos no se pudo enviar (${resultadoEmail.error || 'error desconocido'}). Podés reintentarlo desde Laboratorio.`
+          );
+        }
       } catch (e) {
         console.error('Error enviando email al aprobar pago:', e);
+        window.alert(
+          `El pago de ${pedido.alumnoNombre} quedó aprobado, pero el email con las fotos no se pudo enviar. Podés reintentarlo desde Laboratorio.`
+        );
       }
     }
   };
@@ -397,9 +447,18 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
         window.alert(resultado.error || 'No se pudo eliminar el pedido.');
         return;
       }
-      const actualizados = pedidosCompletos.filter((item) => item.id !== pedido.id);
-      setPedidosCompletos(actualizados);
-      guardarPedidosEnStorage(actualizados);
+      // Auditoría 2026-09-22: antes filtraba sobre `pedidosCompletos` capturado por clausura al
+      // momento del render, no sobre el estado más reciente. Si dos borrados (o un borrado y otra
+      // actualización de `pedidosCompletos`, como aprobar un pago) se disparan casi al mismo
+      // tiempo, el `setPedidosCompletos` que resuelve último podía pisar el resultado del otro y
+      // "resucitar" en pantalla un pedido que ya se borró en el servidor. Se usa la forma
+      // funcional de setState, igual que en el resto del archivo, para operar siempre sobre el
+      // estado más reciente.
+      setPedidosCompletos((prev) => {
+        const actualizados = prev.filter((item) => item.id !== pedido.id);
+        guardarPedidosEnStorage(actualizados);
+        return actualizados;
+      });
       setPedidosSeleccionados((prev) => {
         if (!prev.has(pedido.id)) return prev;
         const siguiente = new Set(prev);
@@ -463,9 +522,13 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
     }
 
     if (idsBorrados.length > 0) {
-      const actualizados = pedidosCompletos.filter((item) => !idsBorrados.includes(item.id));
-      setPedidosCompletos(actualizados);
-      guardarPedidosEnStorage(actualizados);
+      // Auditoría 2026-09-22: mismo fix que en handleEliminarPedido — usar la forma funcional de
+      // setState para no pisar cambios concurrentes de `pedidosCompletos`.
+      setPedidosCompletos((prev) => {
+        const actualizados = prev.filter((item) => !idsBorrados.includes(item.id));
+        guardarPedidosEnStorage(actualizados);
+        return actualizados;
+      });
     }
     setPedidosSeleccionados(new Set());
     setEliminandoSeleccionados(false);

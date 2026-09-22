@@ -701,27 +701,47 @@ export default function AdminLaboratorioTab({
         esImpreso: pedido.kitId === 'kit-clasico',
       });
 
-      const pedidosActualizados = pedidos.map(p => {
-        if (p.id === pedido.id) {
-          return {
-            ...p,
-            emailEnviado: true,
-            fechaEnvioEmail: fechaHora,
-            linkDescargaHD: linkDescargaHD || p.linkDescargaHD,
-          };
-        }
-        return p;
-      });
-
-      onActualizarPedidos(pedidosActualizados);
-      guardarPedidosEnStorage(pedidosActualizados);
-
+      // Auditoría 2026-09-23 (bug real encontrado en auditoría de código, ALTO): antes esto
+      // marcaba `emailEnviado: true` y `fechaEnvioEmail` de forma incondicional, sin mirar
+      // `res.success` — el `else if (res.warning)` de abajo incluso mostraba un mensaje "ℹ️...
+      // Entrega registrada" para el caso en que RESEND_API_KEY no está configurada en el
+      // servidor, que es justamente un envío SIMULADO (`enviarCorreoFotosHD` en server.ts
+      // devuelve `success: false, warning: ..., simulated: true` en ese caso — nunca `success:
+      // true` junto con `warning`). Si Resend estaba caído, el token admin vencido, o cualquier
+      // otro error del backend, el pedido igual quedaba marcado "HD Enviado ✓" en el panel
+      // (bloque `pedido.emailEnviado && pedido.linkDescargaHD`) aunque la familia nunca hubiera
+      // recibido nada — y como el panel ya decía "enviado", Pablo no volvía a intentarlo. Esto se
+      // disparaba en cadena por "Reintentar todos" (handleReintentarTodosHD), que llama a esta
+      // función en bucle: si el proveedor de correo estaba caído durante el reintento masivo,
+      // terminaba marcando falsamente a TODOS como enviados. Ahora sólo se graba
+      // emailEnviado/fechaEnvioEmail cuando `res.success` es realmente true.
       if (res.success) {
+        const pedidosActualizados = pedidos.map(p => {
+          if (p.id === pedido.id) {
+            return {
+              ...p,
+              emailEnviado: true,
+              fechaEnvioEmail: fechaHora,
+              linkDescargaHD: linkDescargaHD || p.linkDescargaHD,
+            };
+          }
+          return p;
+        });
+        onActualizarPedidos(pedidosActualizados);
+        guardarPedidosEnStorage(pedidosActualizados);
         setEmailFeedbackMsg(`✅ Correo con enlaces HD enviado con éxito a ${pedido.tutorEmail} desde fotos@retratoescolar.com.ar (ID: ${res.messageId || 'OK'})`);
-      } else if (res.warning) {
-        setEmailFeedbackMsg(`ℹ️ ${res.warning} (Entrega registrada para ${pedido.tutorEmail})`);
+      } else if (linkDescargaHD && linkDescargaHD !== pedido.linkDescargaHD) {
+        // El envío no se confirmó, pero si se llegó a generar un .zip HD nuevo (arriba), igual
+        // vale la pena guardar ese link para no tener que regenerarlo en el próximo intento —
+        // sin tocar emailEnviado, que sigue reflejando la realidad (no se mandó).
+        const pedidosActualizados = pedidos.map(p =>
+          p.id === pedido.id ? { ...p, linkDescargaHD } : p
+        );
+        onActualizarPedidos(pedidosActualizados);
+        guardarPedidosEnStorage(pedidosActualizados);
+        setEmailFeedbackMsg(`⚠️ ${res.warning || res.error || 'No se pudo confirmar el envío del correo'} (no se marcó como enviado para ${pedido.tutorEmail})`);
       } else {
-        setEmailFeedbackMsg(`⚠️ ${res.error || 'Aviso durante el envío'}`);
+        setEmailFeedbackMsg(`⚠️ ${res.warning || res.error || 'No se pudo confirmar el envío del correo'} (no se marcó como enviado para ${pedido.tutorEmail})`);
       }
     } catch (err: any) {
       setEmailFeedbackMsg(`Error de conexión al enviar correo: ${err?.message || err}`);

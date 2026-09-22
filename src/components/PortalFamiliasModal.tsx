@@ -506,12 +506,85 @@ export default function PortalFamiliasModal({
   // o de Nave (?nave_status=vuelta&pedido_id=...) — Nave no manda el resultado en la URL de
   // vuelta (ver additional_info.callback_url en server.ts), así que acá sólo se usa para
   // saber que hay que consultar el estado real contra el servidor.
+  //
+  // Auditoría 2026-09-22 (bug real, ALTA, encontrado en auditoría de código — no reportado por
+  // Pablo): para un carrito multi-hijo (2+ hermanos, un solo pago combinado) la URL de vuelta de
+  // Mercado Pago y de Nave NUNCA trae "pedido_id" — trae "grupo_pago_id" (ver
+  // /api/mercadopago/crear-preferencia-multiple y /api/nave/crear-intencion-multiple en
+  // server.ts). Como este efecto sólo miraba "pedido_id", para el caso insignia de esta función
+  // ("un solo Código Familiar, un solo pago") NO PASABA NADA al volver del pago: no se mostraba
+  // ninguna confirmación, no se consultaba el estado real, la familia quedaba mirando la pantalla
+  // que sea que hubiera quedado antes de la redirección completa a la pasarela de pago — aunque
+  // el pago y los pedidos en Supabase estuvieran perfectamente bien. Se agrega acá el mismo
+  // manejo para "grupo_pago_id", buscando en localStorage TODOS los pedidos de ese grupo (ahora
+  // sí se cachean ahí, ver registrarCarritoMultipleDesdePortal) para armar una confirmación con
+  // los nombres y el total reales, igual que hace handleCompletarPagoMultiple antes de pagar.
   useEffect(() => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
       const mpStatus = searchParams.get('mp_status');
       const naveStatus = searchParams.get('nave_status');
       const pedidoId = searchParams.get('pedido_id');
+      const grupoPagoId = searchParams.get('grupo_pago_id');
+
+      const armarConfirmacionGrupo = (metodo: 'mercadopago' | 'nave', estadoInicial: 'aprobado' | 'pendiente') => {
+        const pedidosGuardados = obtenerPedidosGuardados();
+        const pedidosDelGrupo = pedidosGuardados.filter((item) => item.grupoPagoId === grupoPagoId);
+        if (pedidosDelGrupo.length > 0) {
+          const totalGrupo = pedidosDelGrupo.reduce((acc, p) => acc + (p.total || 0), 0);
+          const nombreFriendly = pedidosDelGrupo.map((p) => p.id).join(', ');
+          setPedidoGenerado({
+            ...pedidosDelGrupo[0],
+            id: nombreFriendly,
+            alumnoNombre: pedidosDelGrupo.map((p) => p.alumnoNombre).join(', '),
+            kitNombre: `${pedidosDelGrupo.length} hijos/as`,
+            total: totalGrupo,
+          });
+          setNumeroPedido(nombreFriendly);
+          setStep(5);
+          // El estado real (aprobado/rechazado/pendiente) es el mismo para todo el grupo — el
+          // webhook de pago marca todas las filas del grupo juntas con una sola confirmación —
+          // así que alcanza con consultar por el primer pedido del grupo.
+          verificarEstadoRealPedido(pedidosDelGrupo[0].supabaseId || pedidosDelGrupo[0].id);
+        } else {
+          // Mismo fallback genérico que ya existía para el camino de un solo hijo cuando no se
+          // encuentra nada en localStorage (otro navegador/dispositivo, storage limpiado, etc.)
+          // — acá no hay ningún id de pedido individual para consultar el estado real, sólo el
+          // grupoPagoId, que /api/pedidos/:id/status no sabe buscar.
+          setNumeroPedido(grupoPagoId || '');
+          setPedidoGenerado({
+            id: grupoPagoId || '',
+            supabaseId: undefined,
+            grupoPagoId: grupoPagoId || undefined,
+            fecha: new Date().toLocaleDateString(),
+            colegioId: '',
+            colegioNombre: 'Colegio',
+            cursoCodigo: '',
+            grado: '',
+            division: '',
+            alumnoNombre: 'tus hijos/as',
+            tutorNombre: 'Familia',
+            kitId: 'kit-clasico',
+            kitNombre: 'Varios kits',
+            total: 0,
+            metodoPago: metodo,
+            estadoPago: estadoInicial,
+            estadoEntrega: 'laboratorio_listo',
+            fotosSeleccionadas: {},
+          });
+          setStep(5);
+        }
+      };
+
+      if (naveStatus && grupoPagoId && !mpStatus && !pedidoId) {
+        armarConfirmacionGrupo('nave', 'pendiente');
+        return;
+      }
+
+      if (mpStatus && grupoPagoId && !pedidoId) {
+        armarConfirmacionGrupo('mercadopago', mpStatus === 'approved' ? 'aprobado' : 'pendiente');
+        return;
+      }
 
       if (naveStatus && pedidoId && !mpStatus) {
         const pedidosGuardados = obtenerPedidosGuardados();
@@ -1055,6 +1128,17 @@ export default function PortalFamiliasModal({
   const renderFilaCarpetaExtra = (hijo: HijoConCodigoSeccion, compacto = false) => {
     const cantidad = obtenerExtraCarpetasDeHijo(hijo.id);
     const completo = hijoTieneFotosCompletas(hijo.id);
+    // Auditoría 2026-09-22 (bug real, MEDIA): el botón "+" de esta fila sólo miraba si ESE
+    // hermano ya había elegido sus 3 fotos (`completo`), pero nunca si su propio kit trae carpeta
+    // de base para duplicar — el mismo chequeo que ya existe para el hijo activo (ver comentario
+    // más arriba de `hijoTieneCarpetaBaseIncluida`, "no tiene sentido en un kit que no trae
+    // carpeta de base") no se aplicaba fila por fila acá. Con dos hermanos, uno en "Kit Impreso +
+    // Digital" y el otro en "Solo Digital HD" (sin carpeta física), se podía agregar sin ningún
+    // aviso una "Carpeta Escolar Extra" para el hermano que no tiene carpeta de base que duplicar
+    // — un ítem que se cobra bien pero que en el laboratorio no tiene sentido, porque no hay
+    // ninguna carpeta original de ese kit para hacerle una copia.
+    const tieneCarpetaBase = hijoTieneCarpetaBaseIncluida(hijo.id);
+    const puedeSumar = completo && tieneCarpetaBase;
     const tamañoBoton = compacto ? 'w-8 h-8' : 'w-9 h-9';
     const tamañoIcono = compacto ? 'w-3.5 h-3.5' : 'w-4 h-4';
     return (
@@ -1066,6 +1150,9 @@ export default function PortalFamiliasModal({
           <span className="text-xs font-bold text-slate-900 truncate block">{hijo.nombreCompleto}</span>
           {!completo && (
             <span className="text-[10px] text-slate-500 block">Elegí primero sus 3 fotos para poder sumarle una copia</span>
+          )}
+          {completo && !tieneCarpetaBase && (
+            <span className="text-[10px] text-slate-500 block">Su kit no incluye carpeta física para duplicar</span>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -1084,9 +1171,15 @@ export default function PortalFamiliasModal({
           <button
             type="button"
             onClick={() => ajustarExtraCarpetasDeHijo(hijo.id, 1)}
-            disabled={!completo}
+            disabled={!puedeSumar}
             className={`${tamañoBoton} rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs disabled:opacity-30 disabled:cursor-not-allowed`}
-            title={completo ? `Sumar carpeta extra para ${hijo.nombreCompleto}` : 'Elegí primero sus 3 fotos'}
+            title={
+              !completo
+                ? 'Elegí primero sus 3 fotos'
+                : !tieneCarpetaBase
+                  ? 'Su kit no incluye carpeta física para duplicar'
+                  : `Sumar carpeta extra para ${hijo.nombreCompleto}`
+            }
           >
             <Plus className={tamañoIcono} />
           </button>
@@ -1447,6 +1540,7 @@ export default function PortalFamiliasModal({
       const pedidoSintetico: PedidoEscolarCompleto = {
         id: resultadoCarrito.pedidoFriendlyIds[0] || resultadoCarrito.pedidoIds[0] || `GRUPO-${Date.now()}`,
         supabaseId: resultadoCarrito.pedidoIds[0],
+        grupoPagoId: resultadoCarrito.grupoPagoId,
         fecha: new Date().toLocaleString('es-AR'),
         colegioId: selectedColegio?.id || 'col-general',
         colegioNombre: selectedColegio?.nombre || 'Colegio Escolar',
@@ -1467,6 +1561,13 @@ export default function PortalFamiliasModal({
         estadoPago: 'pendiente',
         estadoEntrega: 'en_espera',
         fotosSeleccionadas: { individualId: '', grupalId: '' },
+        // Auditoría 2026-09-22 (bug real, BAJA, cosmético): sin esto, el cartel de "¡N carpeta(s)
+        // extra(s) generada(s)!" del Paso 5 nunca aparecía para un carrito multi-hijo, aunque
+        // alguno de los hermanos sí hubiera pedido copias extra — quedaba en blanco porque
+        // `copiasExtras` nunca se completaba acá (a diferencia del pedido de un solo hijo).
+        copiasExtras: {
+          carpetasExtras: todosLosItems.reduce((acc, it) => acc + (it.copiasExtras?.carpetasExtras || 0), 0),
+        },
         archivosParaLaboratorio: [],
         linkDescargaHD: '',
         emailEnviado: false,

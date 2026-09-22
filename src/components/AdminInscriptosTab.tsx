@@ -208,6 +208,15 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
   };
 
   const handleRechazar = async (item: InscripcionFamilia) => {
+    // Auditoría 2026-09-22: a diferencia de las demás acciones destructivas/irreversibles del
+    // panel (borrar pedido, borrar colegio, ejecutar cierre de año, borrar foto, etc.), rechazar
+    // una inscripción no pedía confirmación — un clic accidental rechazaba a la familia sin forma
+    // de deshacerlo desde la UI. Se agrega el mismo guard window.confirm que usan esas acciones.
+    const confirmado = window.confirm(
+      `¿Rechazar la inscripción de ${item.alumnoNombre} ${item.alumnoApellido}? Esta acción no se puede deshacer desde acá.`
+    );
+    if (!confirmado) return;
+
     setProcesandoId(item.id);
     const resultado = await rechazarInscripcionAdmin(item.id);
     setProcesandoId(null);

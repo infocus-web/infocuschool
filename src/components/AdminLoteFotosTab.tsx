@@ -587,8 +587,17 @@ export default function AdminLoteFotosTab() {
       return;
     }
     await recargarFotosActivas();
-    setStatusMessage('Foto eliminada de Supabase.');
-    setTimeout(() => setStatusMessage(null), 3000);
+    // Auditoría 2026-09-22: eliminarFotoActivaAdmin ahora puede devolver success:true con un
+    // `error` informativo cuando el registro se borró del catálogo pero el archivo en el bucket
+    // no se pudo borrar (antes esto pasaba desapercibido). Se muestra ese caso como advertencia
+    // en vez del mensaje de éxito normal.
+    if (resultado.error) {
+      setErrorMessage(resultado.error);
+      setTimeout(() => setErrorMessage(null), 8000);
+    } else {
+      setStatusMessage('Foto eliminada de Supabase.');
+      setTimeout(() => setStatusMessage(null), 3000);
+    }
   };
 
   const handleToggleModoSeleccion = () => {
