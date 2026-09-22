@@ -294,6 +294,163 @@ async function obtenerNaveAccessToken(): Promise<string | null> {
 }
 
 // ==============================================================================
+// ZOHO MAIL — CAMPAÑA DE PROSPECCIÓN A COLEGIOS (agregado 22/9/2026 a pedido de Pablo)
+// La función nativa "Mail Merge" de la interfaz web de Zoho falló con un error genérico
+// ("Disculpas: Algo salió mal") tanto con la cuenta principal (ventas@contacto...) como con
+// el alias (colegios@contacto...) y sin dejar ningún registro en el historial — todo indica
+// un bloqueo de envío masivo a nivel de cuenta nueva, no un problema de datos ni de alias.
+// Esta integración evita esa función puntual: manda los correos uno por uno con la API REST
+// de Zoho Mail (POST /api/accounts/{accountId}/messages), autenticada por OAuth2. Datacenter
+// zoho.com (US), confirmado en la consola de API de Zoho al crear la aplicación.
+const ZOHO_ACCOUNTS_BASE = 'https://accounts.zoho.com';
+const ZOHO_SCOPES = 'ZohoMail.messages.CREATE,ZohoMail.accounts.READ';
+// Lista blanca de remitentes — sin esto, cualquiera que pudiera llamar al endpoint de envío
+// (aun detrás de requireAdminAuth) podría hacer que el "De" fuera una dirección arbitraria.
+const ZOHO_REMITENTES_PERMITIDOS = [
+  'colegios@contacto.retratoescolar.com.ar',
+  'ventas@contacto.retratoescolar.com.ar',
+];
+
+function getZohoCredenciales(): { clientId: string; clientSecret: string; redirectUri: string } | null {
+  const clientId = process.env.ZOHO_CLIENT_ID?.trim();
+  const clientSecret = process.env.ZOHO_CLIENT_SECRET?.trim();
+  const redirectUri = process.env.ZOHO_REDIRECT_URI?.trim();
+  if (!clientId || !clientSecret || !redirectUri) return null;
+  return { clientId, clientSecret, redirectUri };
+}
+
+interface ZohoTokensGuardados {
+  accessToken: string;
+  refreshToken: string;
+  accountId: string;
+  apiDomain: string;
+  cuentaEmail: string | null;
+  expiresAt: number; // epoch ms
+}
+
+async function obtenerZohoTokensGuardados(): Promise<ZohoTokensGuardados | null> {
+  const supabase = getServerSupabase();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('zoho_oauth_tokens').select('*').eq('id', true).maybeSingle();
+  if (error || !data) return null;
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    accountId: data.account_id,
+    apiDomain: data.api_domain,
+    cuentaEmail: data.cuenta_email,
+    expiresAt: new Date(data.expires_at).getTime(),
+  };
+}
+
+async function guardarZohoTokens(tokens: {
+  accessToken: string;
+  refreshToken?: string;
+  accountId?: string;
+  apiDomain?: string;
+  cuentaEmail?: string | null;
+  expiresAt: number;
+}) {
+  const supabase = getServerSupabase();
+  if (!supabase) throw new Error('Supabase no configurado.');
+  const payload: Record<string, any> = {
+    id: true,
+    access_token: tokens.accessToken,
+    expires_at: new Date(tokens.expiresAt).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  if (tokens.refreshToken) payload.refresh_token = tokens.refreshToken;
+  if (tokens.accountId) payload.account_id = tokens.accountId;
+  if (tokens.apiDomain) payload.api_domain = tokens.apiDomain;
+  if (tokens.cuentaEmail !== undefined) payload.cuenta_email = tokens.cuentaEmail;
+  const { error } = await supabase.from('zoho_oauth_tokens').upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
+}
+
+// Devuelve un access_token vigente, renovándolo con el refresh_token si ya venció (con 2
+// minutos de margen). Nunca pide el consentimiento de nuevo: eso solo pasa una vez, al
+// conectar la cuenta desde el panel.
+async function obtenerZohoAccessTokenValido(): Promise<ZohoTokensGuardados | null> {
+  const creds = getZohoCredenciales();
+  if (!creds) return null;
+  const tokens = await obtenerZohoTokensGuardados();
+  if (!tokens) return null;
+  if (tokens.expiresAt - Date.now() > 2 * 60 * 1000) return tokens;
+  try {
+    const resp = await fetch(`${ZOHO_ACCOUNTS_BASE}/oauth/v2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        refresh_token: tokens.refreshToken,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+        grant_type: 'refresh_token',
+      }),
+    });
+    const data: any = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data?.access_token) {
+      console.error('[Zoho] Error al renovar access_token:', resp.status, data);
+      return null;
+    }
+    const nuevoExpiresAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
+    await guardarZohoTokens({ accessToken: data.access_token, expiresAt: nuevoExpiresAt });
+    return { ...tokens, accessToken: data.access_token, expiresAt: nuevoExpiresAt };
+  } catch (err) {
+    console.error('[Zoho] Error de red al renovar access_token:', err);
+    return null;
+  }
+}
+
+interface DestinatarioCampanaZoho {
+  email: string;
+  institucion?: string;
+  localidad_partido?: string;
+  nivel?: string;
+}
+
+// Reemplaza las variables {{institucion}}, {{localidad_partido}} y {{nivel}} del asunto/cuerpo
+// de la plantilla con los datos reales de cada colegio.
+function personalizarPlantillaZoho(texto: string, destinatario: DestinatarioCampanaZoho): string {
+  return String(texto || '')
+    .replace(/\{\{\s*institucion\s*\}\}/gi, destinatario.institucion || '')
+    .replace(/\{\{\s*localidad_partido\s*\}\}/gi, destinatario.localidad_partido || '')
+    .replace(/\{\{\s*nivel\s*\}\}/gi, destinatario.nivel || '');
+}
+
+async function enviarZohoMail(params: {
+  fromAddress: string;
+  toAddress: string;
+  subject: string;
+  content: string;
+}): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  const tokens = await obtenerZohoAccessTokenValido();
+  if (!tokens) return { ok: false, error: 'Zoho no está conectado, o no se pudo renovar el token de acceso.' };
+  try {
+    const resp = await fetch(`${tokens.apiDomain}/api/accounts/${tokens.accountId}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Zoho-oauthtoken ${tokens.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fromAddress: params.fromAddress,
+        toAddress: params.toAddress,
+        subject: params.subject,
+        content: params.content,
+        askReceipt: 'no',
+      }),
+    });
+    const data: any = await resp.json().catch(() => ({}));
+    if (!resp.ok || data?.status?.code !== 200) {
+      return { ok: false, error: data?.data?.moreInfo || data?.status?.description || `Zoho respondió con error HTTP ${resp.status}.` };
+    }
+    return { ok: true, messageId: data?.data?.messageId };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red al llamar a la API de Zoho Mail.' };
+  }
+}
+
+// ==============================================================================
 // 2. AUTENTICACIÓN ADMINISTRATIVA (ADMIN PIN Y TOKENS FIRMADOS)
 // ==============================================================================
 function getAdminPin(): string | null {
@@ -6212,6 +6369,286 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('
     console.error('[Nave Webhook Error]:', error);
     return res.status(200).send('OK');
   }
+});
+
+// ==============================================================================
+// RUTAS: ZOHO MAIL — CAMPAÑA DE PROSPECCIÓN A COLEGIOS
+// ==============================================================================
+
+// 1) Inicia el flujo OAuth: devuelve la URL de consentimiento de Zoho para que el panel
+// redirija al navegador. Requiere sesión de admin — solo Pablo puede iniciar esto.
+app.get('/api/admin/zoho/connect', requireAdminAuth, (req: Request, res: Response) => {
+  const creds = getZohoCredenciales();
+  if (!creds) {
+    return res.status(500).json({
+      success: false,
+      error: 'ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REDIRECT_URI no están configuradas en las variables de entorno del servidor.',
+    });
+  }
+  const sessionSecret = getAdminSessionSecret();
+  if (!sessionSecret) {
+    return res.status(500).json({ success: false, error: 'ADMIN_SESSION_SECRET no configurada en las variables de entorno del servidor.' });
+  }
+  // El callback de abajo llega como una navegación normal del navegador (Zoho redirige ahí
+  // directamente), sin nuestro header de admin — este "state" firmado es lo que prueba que
+  // el flujo lo inició una sesión de admin válida, y evita que alguien lo dispare por CSRF.
+  const timestamp = Date.now();
+  const random = crypto.randomBytes(12).toString('hex');
+  const payload = `${timestamp}.${random}`;
+  const signature = crypto.createHmac('sha256', sessionSecret).update(payload).digest('hex');
+  const state = `${payload}.${signature}`;
+
+  const url = new URL(`${ZOHO_ACCOUNTS_BASE}/oauth/v2/auth`);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', creds.clientId);
+  url.searchParams.set('scope', ZOHO_SCOPES);
+  url.searchParams.set('redirect_uri', creds.redirectUri);
+  url.searchParams.set('access_type', 'offline'); // imprescindible para recibir refresh_token
+  url.searchParams.set('prompt', 'consent');
+  url.searchParams.set('state', state);
+  res.json({ success: true, url: url.toString() });
+});
+
+// 2) Callback: Zoho redirige el navegador acá después de que Pablo acepta el consentimiento.
+// Ruta pública (no puede llevar el header de admin), protegida por la firma del "state".
+app.get('/api/zoho/callback', async (req: Request, res: Response) => {
+  const redirigirConError = (mensaje: string) => res.redirect(`/?zoho=error&mensaje=${encodeURIComponent(mensaje)}`);
+  try {
+    const { code, state, error: zohoError } = req.query as { code?: string; state?: string; error?: string };
+    if (zohoError) return redirigirConError(`Zoho rechazó la conexión: ${zohoError}`);
+    if (!code || !state) return redirigirConError('Falta el código o el estado de la conexión.');
+
+    const sessionSecret = getAdminSessionSecret();
+    if (!sessionSecret) return redirigirConError('ADMIN_SESSION_SECRET no configurada en el servidor.');
+    const partes = state.split('.');
+    if (partes.length !== 3) return redirigirConError('Estado de conexión inválido.');
+    const [timestampStr, random, signature] = partes;
+    const timestamp = parseInt(timestampStr, 10);
+    if (isNaN(timestamp) || Date.now() - timestamp > 10 * 60 * 1000) {
+      return redirigirConError('El enlace de conexión expiró — iniciá el proceso de nuevo desde el panel.');
+    }
+    const esperada = crypto.createHmac('sha256', sessionSecret).update(`${timestampStr}.${random}`).digest('hex');
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(esperada);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return redirigirConError('Estado de conexión inválido.');
+    }
+
+    const creds = getZohoCredenciales();
+    if (!creds) return redirigirConError('Credenciales de Zoho no configuradas en el servidor.');
+
+    const tokenResp = await fetch(`${ZOHO_ACCOUNTS_BASE}/oauth/v2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+        redirect_uri: creds.redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tokenData: any = await tokenResp.json().catch(() => ({}));
+    if (!tokenResp.ok || !tokenData.access_token || !tokenData.refresh_token) {
+      console.error('[Zoho] Error al intercambiar código por tokens:', tokenResp.status, tokenData);
+      return redirigirConError('Zoho no devolvió un token válido.');
+    }
+    const apiDomain = tokenData.api_domain || 'https://mail.zoho.com';
+
+    // Con el access_token recién obtenido pedimos el accountId (lo exige el endpoint de envío)
+    // y el email de la cuenta, para poder mostrarlo en el panel.
+    const cuentasResp = await fetch(`${apiDomain}/api/accounts`, {
+      headers: { Authorization: `Zoho-oauthtoken ${tokenData.access_token}` },
+    });
+    const cuentasData: any = await cuentasResp.json().catch(() => ({}));
+    const primeraCuenta = cuentasData?.data?.[0];
+    if (!cuentasResp.ok || !primeraCuenta?.accountId) {
+      console.error('[Zoho] Error al obtener accountId:', cuentasResp.status, cuentasData);
+      return redirigirConError('No se pudo obtener la cuenta de Zoho conectada.');
+    }
+
+    await guardarZohoTokens({
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      accountId: String(primeraCuenta.accountId),
+      apiDomain,
+      cuentaEmail: primeraCuenta.primaryEmailAddress || null,
+      expiresAt: Date.now() + (Number(tokenData.expires_in) || 3600) * 1000,
+    });
+
+    return res.redirect('/?zoho=conectado');
+  } catch (err) {
+    console.error('[Zoho] Error en callback OAuth:', err);
+    return redirigirConError('Error inesperado al conectar con Zoho.');
+  }
+});
+
+// 3) Estado de la conexión — usado por el panel para mostrar "conectado como X" o el botón de
+// conectar.
+app.get('/api/admin/zoho/estado', requireAdminAuth, async (req: Request, res: Response) => {
+  const tokens = await obtenerZohoTokensGuardados();
+  res.json({
+    success: true,
+    conectado: Boolean(tokens),
+    cuentaEmail: tokens?.cuentaEmail || null,
+    remitentesPermitidos: ZOHO_REMITENTES_PERMITIDOS,
+    zohoConfigurado: Boolean(getZohoCredenciales()),
+  });
+});
+
+// 4) Desconectar (borra los tokens guardados; no revoca el permiso del lado de Zoho, pero deja
+// a esta app sin forma de mandar correos hasta reconectar).
+app.post('/api/admin/zoho/desconectar', requireAdminAuth, async (req: Request, res: Response) => {
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+  const { error } = await supabase.from('zoho_oauth_tokens').delete().eq('id', true);
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true });
+});
+
+// 5) Correo de prueba — SIEMPRE manda a un único destinatario que se pasa explícitamente
+// (nunca a un colegio real), usando los datos del primer colegio de ejemplo para previsualizar
+// cómo quedan las variables personalizadas. Es un paso obligatorio antes de habilitar el envío
+// real (ver el chequeo en /api/admin/zoho/enviar más abajo).
+app.post('/api/admin/zoho/prueba', requireAdminAuth, limitarFrecuencia('zoho-prueba', 15, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const { destinatarioEjemplo, asunto, cuerpoHtml, remitente, emailPrueba } = req.body || {};
+    if (typeof remitente !== 'string' || !ZOHO_REMITENTES_PERMITIDOS.includes(remitente)) {
+      return res.status(400).json({ success: false, error: 'Remitente no permitido.' });
+    }
+    if (typeof asunto !== 'string' || !asunto.trim() || typeof cuerpoHtml !== 'string' || !cuerpoHtml.trim()) {
+      return res.status(400).json({ success: false, error: 'Falta el asunto o el cuerpo del correo.' });
+    }
+    if (typeof emailPrueba !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailPrueba.trim())) {
+      return res.status(400).json({ success: false, error: 'Falta un email de destino válido para la prueba.' });
+    }
+    const destinatario: DestinatarioCampanaZoho = destinatarioEjemplo || {};
+    const asuntoPersonalizado = personalizarPlantillaZoho(asunto, destinatario);
+    const cuerpoPersonalizado = personalizarPlantillaZoho(cuerpoHtml, destinatario);
+    const resultado = await enviarZohoMail({
+      fromAddress: remitente,
+      toAddress: emailPrueba.trim(),
+      subject: `[PRUEBA] ${asuntoPersonalizado}`,
+      content: cuerpoPersonalizado,
+    });
+    const supabase = getServerSupabase();
+    if (supabase) {
+      await supabase.from('zoho_campana_envios').insert({
+        destinatario_email: emailPrueba.trim().toLowerCase(),
+        institucion: destinatario.institucion || null,
+        asunto: asuntoPersonalizado,
+        tipo: 'prueba',
+        estado: resultado.ok ? 'enviado' : 'error',
+        zoho_message_id: resultado.messageId || null,
+        error: resultado.error || null,
+      });
+    }
+    if (!resultado.ok) return res.status(502).json({ success: false, error: resultado.error });
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Zoho] Error al mandar correo de prueba:', err);
+    res.status(500).json({ success: false, error: err?.message || 'Error inesperado al mandar el correo de prueba.' });
+  }
+});
+
+// 6) Envío real — en lotes chicos (máx. 15 por llamada, el panel los va encadenando) para no
+// pisar el límite de 60s de la función serverless. Salvaguardas: exige un remitente de la
+// lista blanca, exige que haya al menos una prueba exitosa en las últimas 24hs, salta
+// destinatarios a los que ya se les mandó un correo real antes (dedup), y espera un poco entre
+// cada envío para no disparar límites de tasa / filtros antispam de Zoho.
+app.post('/api/admin/zoho/enviar', requireAdminAuth, limitarFrecuencia('zoho-enviar', 40, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const { destinatarios, asunto, cuerpoHtml, remitente } = req.body || {};
+    if (typeof remitente !== 'string' || !ZOHO_REMITENTES_PERMITIDOS.includes(remitente)) {
+      return res.status(400).json({ success: false, error: 'Remitente no permitido.' });
+    }
+    if (typeof asunto !== 'string' || !asunto.trim() || typeof cuerpoHtml !== 'string' || !cuerpoHtml.trim()) {
+      return res.status(400).json({ success: false, error: 'Falta el asunto o el cuerpo del correo.' });
+    }
+    if (!Array.isArray(destinatarios) || destinatarios.length === 0) {
+      return res.status(400).json({ success: false, error: 'No hay destinatarios para enviar.' });
+    }
+    if (destinatarios.length > 15) {
+      return res.status(400).json({ success: false, error: 'Máximo 15 destinatarios por llamada — el panel los manda en lotes automáticamente.' });
+    }
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+
+    const { data: pruebaReciente } = await supabase
+      .from('zoho_campana_envios')
+      .select('id')
+      .eq('tipo', 'prueba')
+      .eq('estado', 'enviado')
+      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .limit(1);
+    if (!pruebaReciente || pruebaReciente.length === 0) {
+      return res.status(412).json({
+        success: false,
+        error: 'Mandá primero un correo de prueba exitoso (en las últimas 24hs) antes de habilitar el envío real.',
+      });
+    }
+
+    const resultados: { email: string; estado: 'enviado' | 'error' | 'omitido'; error?: string }[] = [];
+    for (const destinatario of destinatarios as DestinatarioCampanaZoho[]) {
+      const email = String(destinatario?.email || '').trim().toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        resultados.push({ email: destinatario?.email || '(vacío)', estado: 'error', error: 'Email inválido.' });
+        continue;
+      }
+      // Dedup: si ya le mandamos una campaña real exitosa a este email, lo salteamos — evita
+      // reescribirle a la misma institución si Pablo repite el envío tras un corte a mitad de
+      // camino.
+      const { data: yaEnviado } = await supabase
+        .from('zoho_campana_envios')
+        .select('id')
+        .eq('destinatario_email', email)
+        .eq('tipo', 'real')
+        .eq('estado', 'enviado')
+        .limit(1);
+      if (yaEnviado && yaEnviado.length > 0) {
+        resultados.push({ email, estado: 'omitido' });
+        continue;
+      }
+      const asuntoPersonalizado = personalizarPlantillaZoho(asunto, destinatario);
+      const cuerpoPersonalizado = personalizarPlantillaZoho(cuerpoHtml, destinatario);
+      const resultado = await enviarZohoMail({
+        fromAddress: remitente,
+        toAddress: email,
+        subject: asuntoPersonalizado,
+        content: cuerpoPersonalizado,
+      });
+      await supabase.from('zoho_campana_envios').insert({
+        destinatario_email: email,
+        institucion: destinatario.institucion || null,
+        asunto: asuntoPersonalizado,
+        tipo: 'real',
+        estado: resultado.ok ? 'enviado' : 'error',
+        zoho_message_id: resultado.messageId || null,
+        error: resultado.error || null,
+      });
+      resultados.push({ email, estado: resultado.ok ? 'enviado' : 'error', error: resultado.error });
+      // Pausa entre envíos — no vamos a mandar 15 de una sola vez sin respiro.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+    res.json({ success: true, resultados });
+  } catch (err: any) {
+    console.error('[Zoho] Error al mandar campaña real:', err);
+    res.status(500).json({ success: false, error: err?.message || 'Error inesperado al mandar la campaña.' });
+  }
+});
+
+// 7) Historial — bitácora de lo mandado (de prueba y real) para el panel.
+app.get('/api/admin/zoho/historial', requireAdminAuth, async (req: Request, res: Response) => {
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+  const { data, error } = await supabase
+    .from('zoho_campana_envios')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  res.json({ success: true, envios: data });
 });
 
 // Endpoint público para que el cliente consulte el estado de pago actualizado de su pedido
