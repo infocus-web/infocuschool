@@ -1049,35 +1049,23 @@ export default function AdminLaboratorioTab({
         </div>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Pedidos para Imprenta</span>
-          <div className="text-xl font-extrabold text-slate-900 mt-1 font-['Outfit']">
-            {pedidosFiltrados.length} <span className="text-xs font-normal text-slate-500">alumnos</span>
-          </div>
-        </div>
-
-        <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Ampliaciones 15x21 cm</span>
-          <div className="text-xl font-extrabold text-indigo-600 mt-1 font-['Outfit']">
-            {totalCopias15x21} <span className="text-xs font-normal text-slate-500">copias</span>
-          </div>
-        </div>
-
-        <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Grupales 20x30 cm</span>
-          <div className="text-xl font-extrabold text-emerald-600 mt-1 font-['Outfit']">
-            {totalCopias20x30} <span className="text-xs font-normal text-slate-500">copias</span>
-          </div>
-        </div>
-
-        <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Entregas HD por Email</span>
-          <div className="text-xl font-extrabold text-amber-600 mt-1 font-['Outfit']">
-            {pedidosFiltrados.filter(p => p.emailEnviado).length} / {pedidosFiltrados.length}
-          </div>
-        </div>
+      {/* Metrics Row — pedido de Pablo (22/9): esta fila ocupaba casi media pantalla como 4
+          tarjetas grandes separadas para datos que son sólo de referencia rápida. Se compacta a
+          una única tira de chips en línea (mismo criterio visual que la barra de
+          Recaudación/Pedidos/Colegios de la cabecera del panel, en AdminModal.tsx). */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 shadow-xs text-xs">
+        <span className="text-slate-500">
+          Pedidos para Imprenta <strong className="text-slate-900 font-extrabold">{pedidosFiltrados.length}</strong>
+        </span>
+        <span className="text-slate-500">
+          Ampliaciones 15x21cm <strong className="text-indigo-600 font-extrabold">{totalCopias15x21}</strong>
+        </span>
+        <span className="text-slate-500">
+          Grupales 20x30cm <strong className="text-emerald-600 font-extrabold">{totalCopias20x30}</strong>
+        </span>
+        <span className="text-slate-500">
+          Entregas HD por Email <strong className="text-amber-600 font-extrabold">{pedidosFiltrados.filter(p => p.emailEnviado).length}/{pedidosFiltrados.length}</strong>
+        </span>
       </div>
 
       {/* Filters & Search Toolbar */}
