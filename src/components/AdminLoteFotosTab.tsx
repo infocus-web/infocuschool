@@ -72,6 +72,15 @@ export default function AdminLoteFotosTab() {
   const [modoSeleccionActivas, setModoSeleccionActivas] = useState(false);
   const [idsSeleccionados, setIdsSeleccionados] = useState<Set<string>>(new Set());
   const [borrandoSeleccionadas, setBorrandoSeleccionadas] = useState(false);
+
+  // Auditoría 2026-09-22 (pedido de Pablo: "necesito un listado de los cursos que tiene sus
+  // fotos subidas, y un botón para eliminar las carpetas"). Antes, para saber si un curso ya
+  // tenía fotos había que elegirlo a mano en los desplegables de arriba, uno por uno — no existía
+  // ninguna vista de conjunto. `fotosColegioCompleto` guarda TODAS las fotos del colegio elegido
+  // (sin filtrar por curso) y se agrupa más abajo en `resumenCursosConFotos`.
+  const [fotosColegioCompleto, setFotosColegioCompleto] = useState<FotoRegistrada[]>([]);
+  const [cargandoResumenCursos, setCargandoResumenCursos] = useState(false);
+  const [cursoEliminandoCarpeta, setCursoEliminandoCarpeta] = useState<string | null>(null);
   // Filtro por categoría en "Fotos Activas": permite ver/seleccionar/borrar sólo una
   // categoría puntual (por ejemplo, sólo "Grupal") sin tocar el resto del curso.
   const [filtroCategoriaActivas, setFiltroCategoriaActivas] = useState<'todas' | 'individual' | 'grupal' | 'docente' | 'patio'>('todas');
@@ -190,6 +199,111 @@ export default function AdminLoteFotosTab() {
     setAlumnoSeleccionadoId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gradoSeleccionado, turnoSeleccionado, divisionSeleccionada, colegioSeleccionado]);
+
+  // Trae TODAS las fotos del colegio elegido (sin filtrar por curso) para armar el listado de
+  // "qué cursos ya tienen fotos subidas". Se llama al entrar, al cambiar de colegio, y de nuevo
+  // después de subir o borrar fotos (arriba, o desde el listado mismo) para que quede al día.
+  const recargarResumenCursos = async () => {
+    if (!colegioSeleccionado) {
+      setFotosColegioCompleto([]);
+      return;
+    }
+    setCargandoResumenCursos(true);
+    const fotos = await obtenerFotosActivasAdmin({ colegioId: colegioSeleccionado });
+    setFotosColegioCompleto(fotos);
+    setCargandoResumenCursos(false);
+  };
+
+  useEffect(() => {
+    recargarResumenCursos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colegioSeleccionado]);
+
+  // Agrupa `fotosColegioCompleto` por curso (grado+turno+división) para el listado — cada fila
+  // es un curso con al menos una foto, con el conteo total y por categoría.
+  const resumenCursosConFotos = useMemo(() => {
+    const mapa = new Map<string, {
+      clave: string;
+      grado: string;
+      turno: string;
+      division: string;
+      codigoCurso: string;
+      total: number;
+      individual: number;
+      grupal: number;
+      docente: number;
+      patio: number;
+    }>();
+    for (const f of fotosColegioCompleto) {
+      const grado = f.grado || '';
+      const turno = f.turno || '';
+      const division = f.division || '';
+      const clave = `${grado}__${turno}__${division}`;
+      let fila = mapa.get(clave);
+      if (!fila) {
+        fila = {
+          clave, grado, turno, division,
+          codigoCurso: f.codigoCurso || '',
+          total: 0, individual: 0, grupal: 0, docente: 0, patio: 0,
+        };
+        mapa.set(clave, fila);
+      }
+      fila.total++;
+      if (f.categoria === 'individual') fila.individual++;
+      else if (f.categoria === 'grupal') fila.grupal++;
+      else if (f.categoria === 'docente') fila.docente++;
+      else if (f.categoria === 'patio') fila.patio++;
+    }
+    return Array.from(mapa.values()).sort((a, b) =>
+      a.grado.localeCompare(b.grado, 'es') ||
+      a.division.localeCompare(b.division, 'es') ||
+      a.turno.localeCompare(b.turno, 'es')
+    );
+  }, [fotosColegioCompleto]);
+
+  const handleVerCursoDelResumen = (fila: { grado: string; turno: string; division: string }) => {
+    setGradoSeleccionado(fila.grado);
+    setTurnoSeleccionado(fila.turno);
+    setDivisionSeleccionada(fila.division);
+  };
+
+  // Elimina TODAS las fotos de un curso de una sola vez ("eliminar la carpeta") — reutiliza
+  // eliminarFotoActivaAdmin foto por foto (mismo que ya usa handleEliminarSeleccionadas), así
+  // borra también los archivos reales en Storage, no sólo el registro en la tabla `fotos`.
+  const handleEliminarCarpetaCurso = async (fila: { clave: string; grado: string; turno: string; division: string; total: number }) => {
+    const etiqueta = [fila.grado, fila.division, fila.turno].filter(Boolean).join(' · ');
+    const confirmar = window.confirm(
+      `¿Eliminar TODA la carpeta de "${etiqueta}"? Se van a borrar las ${fila.total} foto(s) de ese curso (Supabase y Storage). Esta acción no se puede deshacer.`
+    );
+    if (!confirmar) return;
+
+    setCursoEliminandoCarpeta(fila.clave);
+    const aBorrar = fotosColegioCompleto.filter(
+      f => (f.grado || '') === fila.grado && (f.turno || '') === fila.turno && (f.division || '') === fila.division
+    );
+    let exitosas = 0;
+    let fallidas = 0;
+    for (const foto of aBorrar) {
+      const resultado = await eliminarFotoActivaAdmin(foto);
+      if (resultado.success) exitosas++;
+      else fallidas++;
+    }
+    setCursoEliminandoCarpeta(null);
+
+    await recargarResumenCursos();
+    // Si la carpeta borrada es la que está abierta abajo, refrescá también esa vista.
+    if (fila.grado === gradoSeleccionado && fila.turno === turnoSeleccionado && fila.division === divisionSeleccionada) {
+      await recargarFotosActivas();
+    }
+
+    if (fallidas > 0) {
+      setErrorMessage(`Carpeta "${etiqueta}": se eliminaron ${exitosas} foto(s), ${fallidas} no se pudieron eliminar.`);
+      setTimeout(() => setErrorMessage(null), 6000);
+    } else {
+      setStatusMessage(`Carpeta "${etiqueta}" eliminada: ${exitosas} foto(s) borradas.`);
+      setTimeout(() => setStatusMessage(null), 4000);
+    }
+  };
 
   // Ejecutar diagnóstico automático al iniciar
   useEffect(() => {
@@ -478,6 +592,7 @@ export default function AdminLoteFotosTab() {
     setCancelandoSubida(false);
     cancelarSubidaRef.current = false;
     await recargarFotosActivas();
+    await recargarResumenCursos();
 
     const fueCancelada = canceladaEn !== -1;
     const pendientes = colaActualizada.filter(f => f.estado !== 'subida').length;
@@ -587,6 +702,7 @@ export default function AdminLoteFotosTab() {
       return;
     }
     await recargarFotosActivas();
+    await recargarResumenCursos();
     // Auditoría 2026-09-22: eliminarFotoActivaAdmin ahora puede devolver success:true con un
     // `error` informativo cuando el registro se borró del catálogo pero el archivo en el bucket
     // no se pudo borrar (antes esto pasaba desapercibido). Se muestra ese caso como advertencia
@@ -660,6 +776,7 @@ export default function AdminLoteFotosTab() {
     setIdsSeleccionados(new Set());
     setModoSeleccionActivas(false);
     await recargarFotosActivas();
+    await recargarResumenCursos();
 
     if (fallidas > 0) {
       setErrorMessage(`Se eliminaron ${exitosas} foto(s). ${fallidas} no se pudieron eliminar.`);
@@ -740,41 +857,76 @@ USING (bucket_id = 'fotos-web');
         </div>
       )}
 
-      {/* Supabase Connection Status Card */}
-      <div className="p-5 rounded-2xl bg-slate-900 text-white shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
-              <Database className="w-5 h-5" />
+      {/* Supabase Connection Status Card — Auditoría 2026-09-22 (pedido de Pablo): los dos
+          casilleros de estado de buckets ("Bucket Público"/"Bucket Privado") vivían en su propia
+          fila grande debajo del título. Se meten como chips compactos EN la misma fila del título
+          y los botones, y todo el sector se achica a la mitad (padding, íconos y tipografía). */}
+      <div className="p-2.5 rounded-2xl bg-slate-900 text-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 shrink-0">
+              <Database className="w-3.5 h-3.5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold tracking-wide">Almacenamiento Supabase Pro (100 GB)</h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs font-bold tracking-wide">Almacenamiento Supabase Pro (100 GB)</h3>
+                <span className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   Activo
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">Estado del almacenamiento de fotografías</p>
+              <p className="text-[10px] text-slate-400">Estado del almacenamiento de fotografías</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Diagnostic Status Chips — compactos, ahora en línea con el título */}
+          <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold">
+            <span className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700/60">
+              <span className="text-slate-400 font-sans font-normal">Web:</span>
+              <span className="text-amber-300">fotos-web</span>
+              {diagnostico ? (
+                diagnostico.fotosWebStatus === 'ok' ? (
+                  <span className="text-emerald-400">✓</span>
+                ) : diagnostico.fotosWebStatus === 'rls_blocked' ? (
+                  <span className="text-amber-400" title="Falta RLS">⚠</span>
+                ) : (
+                  <span className="text-rose-400" title="Error">✗</span>
+                )
+              ) : (
+                <span className="text-slate-500 font-sans font-normal">…</span>
+              )}
+            </span>
+            <span className="flex items-center gap-1 bg-slate-800/80 px-2 py-1 rounded-lg border border-slate-700/60">
+              <span className="text-slate-400 font-sans font-normal">HD:</span>
+              <span className="text-sky-300">fotos-hd</span>
+              {diagnostico ? (
+                diagnostico.fotosHdStatus === 'ok' ? (
+                  <span className="text-emerald-400" title="Bucket privado, protegido por el servidor (no por RLS pública) — así debe estar.">✓</span>
+                ) : (
+                  <span className="text-rose-400" title={diagnostico.fotosHdError || 'Servidor no responde'}>✗</span>
+                )
+              ) : (
+                <span className="text-slate-500 font-sans font-normal">…</span>
+              )}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
             <button
               onClick={handleEjecutarDiagnostico}
               disabled={isTestingSupabase}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-[10px] font-bold rounded-lg transition-all border border-slate-700 flex items-center gap-1 cursor-pointer"
               title="Probar conexión con Supabase Storage"
             >
-              <RefreshCw className={`w-3.5 h-3.5 text-amber-400 ${isTestingSupabase ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3 h-3 text-amber-400 ${isTestingSupabase ? 'animate-spin' : ''}`} />
               <span>Probar Conexión</span>
             </button>
             <button
               onClick={handleRegenerarMiniaturas}
               disabled={regenerandoMiniaturas}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-[10px] font-bold rounded-lg transition-all border border-slate-700 flex items-center gap-1 cursor-pointer"
               title="Generar la miniatura limpia (sin marca de agua) para fotos subidas antes de este cambio"
             >
-              <Wand2 className={`w-3.5 h-3.5 text-amber-400 ${regenerandoMiniaturas ? 'animate-pulse' : ''}`} />
+              <Wand2 className={`w-3 h-3 text-amber-400 ${regenerandoMiniaturas ? 'animate-pulse' : ''}`} />
               <span>
                 {regenerandoMiniaturas
                   ? `Regenerando miniaturas... (${progresoMiniaturas?.procesadas || 0} listas, ${progresoMiniaturas?.restantes ?? '…'} restantes)`
@@ -784,10 +936,10 @@ USING (bucket_id = 'fotos-web');
             <button
               onClick={handleRegenerarMarcaAgua}
               disabled={regenerandoMarcaAgua}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-bold rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer"
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-[10px] font-bold rounded-lg transition-all border border-slate-700 flex items-center gap-1 cursor-pointer"
               title="Re-generar la vista ampliada con la marca de agua nueva, más liviana, para fotos subidas antes de este cambio"
             >
-              <Sparkles className={`w-3.5 h-3.5 text-amber-400 ${regenerandoMarcaAgua ? 'animate-pulse' : ''}`} />
+              <Sparkles className={`w-3 h-3 text-amber-400 ${regenerandoMarcaAgua ? 'animate-pulse' : ''}`} />
               <span>
                 {regenerandoMarcaAgua
                   ? `Actualizando marca de agua... (${progresoMarcaAgua?.procesadas || 0} listas, ${progresoMarcaAgua?.restantes ?? '…'} restantes)`
@@ -797,57 +949,9 @@ USING (bucket_id = 'fotos-web');
           </div>
         </div>
 
-        {/* Diagnostic Status Chips */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-            <span className="text-slate-400 text-[11px] block">Bucket Público (Muestras):</span>
-            <div className="flex items-center gap-2 mt-1 font-mono font-bold">
-              <span className="text-amber-300">fotos-web</span>
-              {diagnostico ? (
-                diagnostico.fotosWebStatus === 'ok' ? (
-                  <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
-                    ✓ Listo
-                  </span>
-                ) : diagnostico.fotosWebStatus === 'rls_blocked' ? (
-                  <span className="text-[10px] text-amber-400 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
-                    ⚠ Falta RLS
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800">
-                    ✗ Error
-                  </span>
-                )
-              ) : (
-                <span className="text-[10px] text-slate-400">Verificando...</span>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700/60">
-            <span className="text-slate-400 text-[11px] block">Bucket Privado (Originales HD):</span>
-            <div className="flex items-center gap-2 mt-1 font-mono font-bold">
-              <span className="text-sky-300">fotos-hd</span>
-              {diagnostico ? (
-                diagnostico.fotosHdStatus === 'ok' ? (
-                  <span className="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800" title="Bucket privado, protegido por el servidor (no por RLS pública) — así debe estar.">
-                    ✓ Listo (privado)
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-rose-400 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-800" title={diagnostico.fotosHdError || ''}>
-                    ✗ Servidor no responde
-                  </span>
-                )
-              ) : (
-                <span className="text-[10px] text-slate-400">Verificando...</span>
-              )}
-            </div>
-          </div>
-
-        </div>
-
         {/* Expandable SQL RLS Helper */}
         {mostrarSqlHelper && (
-          <div className="bg-amber-950/40 border border-amber-500/40 p-4 rounded-xl space-y-3">
+          <div className="mt-2.5 bg-amber-950/40 border border-amber-500/40 p-4 rounded-xl space-y-3">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <h5 className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
@@ -990,6 +1094,83 @@ USING (bucket_id = 'fotos-web');
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Cursos con fotos subidas — pedido de Pablo (22/9): "necesito un listado de los cursos
+          que tiene sus fotos subidas, y un boton para eliminar las carpetas". Antes había que
+          elegir cada grado/turno/división a mano arriba para saber si ya tenía fotos; esto trae
+          TODAS las fotos del colegio elegido y las agrupa por curso, con conteo y un botón para
+          borrar la carpeta completa (todas las fotos de ese curso) de una sola vez. */}
+      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-amber-600" />
+            <span>Cursos con Fotos Subidas — {colegioActualObj?.nombre || 'este colegio'}</span>
+          </h3>
+          <button
+            type="button"
+            onClick={recargarResumenCursos}
+            disabled={cargandoResumenCursos}
+            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-[11px] font-bold text-slate-600 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+          >
+            <RefreshCw className={`w-3 h-3 ${cargandoResumenCursos ? 'animate-spin' : ''}`} />
+            <span>Actualizar</span>
+          </button>
+        </div>
+
+        {cargandoResumenCursos && resumenCursosConFotos.length === 0 ? (
+          <p className="text-xs text-slate-500">Buscando cursos con fotos...</p>
+        ) : resumenCursosConFotos.length === 0 ? (
+          <p className="text-xs text-slate-500">Todavía no hay fotos subidas para ningún curso de este colegio.</p>
+        ) : (
+          <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+            {resumenCursosConFotos.map((fila) => {
+              const esActual = fila.grado === gradoSeleccionado && fila.turno === turnoSeleccionado && fila.division === divisionSeleccionada;
+              return (
+                <div
+                  key={fila.clave}
+                  className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs ${esActual ? 'bg-amber-50' : 'bg-white'}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleVerCursoDelResumen(fila)}
+                    className="flex-1 min-w-[160px] text-left cursor-pointer group"
+                    title="Ver este curso en el selector de arriba"
+                  >
+                    <span className="font-extrabold text-slate-900 group-hover:text-amber-700 transition-colors">
+                      {[fila.grado, fila.division, fila.turno].filter(Boolean).join(' · ') || fila.codigoCurso || '(sin datos de curso)'}
+                    </span>
+                    {esActual && (
+                      <span className="ml-1.5 text-[9px] uppercase font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full border border-amber-200">
+                        viendo
+                      </span>
+                    )}
+                  </button>
+                  <span className="text-slate-500">
+                    Total <strong className="text-slate-900">{fila.total}</strong>
+                  </span>
+                  <span className="text-slate-400 text-[11px]">
+                    Ind. {fila.individual} · Grup. {fila.grupal} · Doc. {fila.docente} · Sueltas {fila.patio}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleEliminarCarpetaCurso(fila)}
+                    disabled={cursoEliminandoCarpeta === fila.clave}
+                    className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 font-bold rounded-lg border border-rose-200 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                    title={`Eliminar toda la carpeta de ${[fila.grado, fila.division, fila.turno].filter(Boolean).join(' · ')}`}
+                  >
+                    {cursoEliminandoCarpeta === fila.clave ? (
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3 h-3" />
+                    )}
+                    <span>Eliminar carpeta</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* STAGING QUEUE: Fotos seleccionadas pendientes de subir */}
