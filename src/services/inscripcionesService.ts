@@ -364,6 +364,26 @@ export async function rechazarInscripcionAdmin(
   }
 }
 
+/**
+ * Panel admin: elimina por completo una inscripción del listado (pendiente, rechazada o ya
+ * aprobada). Auditoría 2026-09-22 (pedido de Pablo). No borra pedidos, fotos ni el acceso que la
+ * familia ya haya generado con su Código Familiar — eso vive en otras tablas, no en ésta.
+ */
+export async function eliminarInscripcionAdmin(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/inscripciones/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, error: data.error || 'Error al eliminar la inscripción' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al eliminar la inscripción' };
+  }
+}
+
 /** Panel admin: lista el padrón de padres autorizados, opcionalmente filtrado por colegio */
 export async function obtenerPadronAdmin(colegioId?: string): Promise<FilaPadron[]> {
   try {
