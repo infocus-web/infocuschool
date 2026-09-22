@@ -6453,7 +6453,13 @@ app.get('/api/zoho/callback', async (req: Request, res: Response) => {
       console.error('[Zoho] Error al intercambiar código por tokens:', tokenResp.status, tokenData);
       return redirigirConError('Zoho no devolvió un token válido.');
     }
-    const apiDomain = tokenData.api_domain || 'https://mail.zoho.com';
+    // OJO — bug real encontrado el 22/9/2026: el "api_domain" que devuelve el token de OAuth es
+    // el dominio genérico de la API de Zoho (el que usan CRM, Books, etc., algo como
+    // www.zohoapis.com), NO el de Zoho Mail. Zoho Mail vive en un dominio propio y separado
+    // por datacenter (mail.zoho.com para EE.UU., mail.zoho.eu, mail.zoho.in, etc.) — nunca hay
+    // que derivarlo del "api_domain" del token. Como la cuenta de Pablo es del datacenter de
+    // EE.UU. (confirmado al crear la app en la consola de Zoho), queda fijo en mail.zoho.com.
+    const apiDomain = 'https://mail.zoho.com';
 
     // Con el access_token recién obtenido pedimos el accountId (lo exige el endpoint de envío)
     // y el email de la cuenta, para poder mostrarlo en el panel.
@@ -6464,7 +6470,8 @@ app.get('/api/zoho/callback', async (req: Request, res: Response) => {
     const primeraCuenta = cuentasData?.data?.[0];
     if (!cuentasResp.ok || !primeraCuenta?.accountId) {
       console.error('[Zoho] Error al obtener accountId:', cuentasResp.status, cuentasData);
-      return redirigirConError('No se pudo obtener la cuenta de Zoho conectada.');
+      const detalle = cuentasData?.data?.errorCode || cuentasData?.data?.moreInfo || cuentasData?.message;
+      return redirigirConError(`No se pudo obtener la cuenta de Zoho conectada.${detalle ? ` (${detalle})` : ''}`);
     }
 
     await guardarZohoTokens({
