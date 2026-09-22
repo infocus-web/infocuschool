@@ -3916,6 +3916,29 @@ app.post('/api/admin/inscripciones/:id/rechazar', requireAdminAuth, async (req: 
   }
 });
 
+// Auditoría 2026-09-22 (pedido de Pablo: "como hago para eliminar a un inscripto?"): antes NO
+// existía ninguna forma de borrar una fila de `inscripciones` — "Rechazar" (arriba) sólo cambia
+// el estado a "rechazado" y sólo está disponible para inscripciones pendientes; una ya aprobada
+// se quedaba en el listado para siempre. Este DELETE borra directamente la fila de `inscripciones`
+// (pendiente, rechazada o aprobada). Es seguro: aprobar una inscripción sólo actualiza esta misma
+// fila (ver POST .../aprobar más arriba) — NO crea filas en `familias`/`alumnos`/`pedidos`, esas
+// se crean recién cuando la familia usa su Código Familiar desde el Portal — así que borrar acá
+// nunca borra en cascada pedidos, fotos ni el acceso que la familia ya haya generado.
+app.delete('/api/admin/inscripciones/:id', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { error } = await supabase.from('inscripciones').delete().eq('id', id);
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar la inscripción' });
+  }
+});
+
 app.get('/api/admin/padron', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const supabase = getServerSupabase();
