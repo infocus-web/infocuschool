@@ -150,7 +150,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       ¿Tenés hijos en la institución?
                     </h3>
                     <p className="text-xs text-slate-600">
-                      ¡Un solo registro para toda tu familia! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>Código Familiar único</strong>.
+                      ¡Un solo registro para toda tu familia, sin costo! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>Código Familiar único</strong>. Vas a pagar recién más adelante, cuando entres a elegir las fotos de tu hijo/a — inscribirte acá no tiene ningún cargo.
                     </p>
                   </div>
                   {onOpenInscripcion && (
@@ -223,6 +223,13 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
 
             {/* Micro value props */}
             <div className="pt-2 flex flex-wrap items-center gap-y-2 gap-x-6 text-xs text-slate-600">
+              {/* Pedido de Pablo: tiene que quedar muy claro que inscribirse no cuesta nada — se
+                  paga recién al elegir las fotos, no en este paso. Se agrega como su propio chip
+                  (no sólo en el texto chico de arriba) para que se vea de entrada. */}
+              <div className="flex items-center gap-2 font-bold text-emerald-700">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Inscribirte es gratis — pagás recién al elegir las fotos</span>
+              </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Múltiples tomas por alumno</span>
