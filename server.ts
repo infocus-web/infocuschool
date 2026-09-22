@@ -600,6 +600,22 @@ function verifyAdminToken(token?: string): boolean {
   }
 }
 
+// Auditoría 2026-09-22 (posible bug de seguridad, BAJO): comparación genérica en tiempo
+// constante para secretos cortos comparados por igualdad de string (además del PIN/token admin,
+// que ya usaban este patrón cada uno por su lado — ver verifyAdminToken arriba). Se centraliza
+// acá para que cualquier otra comparación de "secreto que viene del cliente vs. secreto guardado"
+// (por ejemplo el código de acceso al padrón de un colegio) no vuelva a compararse con `!==`
+// plano, que es vulnerable en teoría a timing attacks.
+function compararTimingSafe(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
+
 function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
   const secret = getAdminSessionSecret();
   if (!secret) {
@@ -1229,9 +1245,12 @@ app.get('/api/admin/pedidos', requireAdminAuth, async (req, res) => {
     // Auditoría 2026-09-09 (revisión a fondo): se suma el join con "familias" (nombre, whatsapp,
     // email) para que el panel pueda mostrar los datos del tutor sin depender de que el pedido
     // haya quedado además guardado en el localStorage del navegador de esa familia.
+    // Auditoría 2026-09-22: se agrega colegio_id al join con familias para que el panel de
+    // "Resumen de Kits" (ver server-side fix en resumenKitsService.ts) pueda agrupar por
+    // colegio sin necesitar una consulta aparte.
     const { data, error } = await supabase
       .from('pedidos')
-      .select('*, pedido_fotos(*), familias(nombre, whatsapp, email)')
+      .select('*, pedido_fotos(*), familias(nombre, whatsapp, email, colegio_id)')
       .order('created_at', { ascending: false });
     if (error) throw error;
     return res.json({ success: true, pedidos: data || [] });
@@ -2179,19 +2198,22 @@ async function idsDeColegioParaCierre(
 ) {
   const todos = colegioId === 'todos';
 
-  const familiasQuery = supabase.from('familias').select('id');
-  const { data: familias, error: errF } = todos
-    ? await familiasQuery
-    : await familiasQuery.eq('colegio_id', colegioId);
-  if (errF) throw errF;
-
-  const alumnosQuery = supabase.from('alumnos').select('id');
+  // Auditoría 2026-09-22 (bug real encontrado en auditoría de código, ALTO): antes esto filtraba
+  // `familias.eq('colegio_id', colegioId)`, pero familias.colegio_id es la columna uuid del
+  // modelo VIEJO (referencia a la tabla "colegios") que /api/pedidos/crear deliberadamente NUNCA
+  // completa al crear una familia real (ver el comentario ahí: ese valor es texto/slug en el
+  // resto de la app, no un uuid, y escribirlo rompería el INSERT). Como resultado, esa condición
+  // no matcheaba NINGUNA fila real — "resumen" mostraba siempre "familias: 0" y "ejecutar" jamás
+  // borraba nombre/whatsapp/email de esas familias, que quedaban huérfanas para siempre pese a
+  // que el cierre de año promete limpiar los datos de la temporada. Ahora las familias del
+  // colegio se derivan de sus alumnos (alumnos.familia_id) y de sus pedidos (pedidos.familia_id),
+  // que son las dos relaciones reales que sí se completan siempre.
+  const alumnosQuery = supabase.from('alumnos').select('id, familia_id');
   const { data: alumnos, error: errA } = todos
     ? await alumnosQuery
     : await alumnosQuery.eq('colegio_id', colegioId);
   if (errA) throw errA;
 
-  const familiaIds: string[] = (familias || []).map((f: any) => f.id);
   const alumnoIds: string[] = (alumnos || []).map((a: any) => a.id);
 
   let fotosQuery = supabase.from('fotos').select('id, storage_path, thumb_path, preview_path');
@@ -2204,7 +2226,7 @@ async function idsDeColegioParaCierre(
   if (errFo) throw errFo;
   const fotos = (fotosData || []) as { id: string; storage_path: string | null; thumb_path: string | null; preview_path: string | null }[];
 
-  let pedidosQuery = supabase.from('pedidos').select('id');
+  let pedidosQuery = supabase.from('pedidos').select('id, familia_id');
   if (!todos) {
     // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): esto filtraba
     // sólo por familia_id/alumno_id, pero esas dos columnas del pedido casi nunca se completan
@@ -2214,14 +2236,23 @@ async function idsDeColegioParaCierre(
     // huérfanos casi todos sus pedidos: no se borraban del cierre y, peor, "resumen" mostraba un
     // conteo de pedidos falso (casi siempre 0) aunque el colegio tuviera pedidos reales.
     const filtros: string[] = [`colegio_id.eq.${colegioId}`];
-    if (familiaIds.length > 0) filtros.push(`familia_id.in.(${familiaIds.join(',')})`);
     if (alumnoIds.length > 0) filtros.push(`alumno_id.in.(${alumnoIds.join(',')})`);
     pedidosQuery = pedidosQuery.or(filtros.join(','));
   }
   const { data: pedidosData, error: errP } = await pedidosQuery;
   if (errP) throw errP;
+  const pedidosDelColegio = (pedidosData || []) as { id: string; familia_id: string | null }[];
 
-  return { familiaIds, alumnoIds, fotos, pedidoIds: (pedidosData || []).map((p: any) => p.id) };
+  const familiaIdsSet = new Set<string>();
+  for (const a of (alumnos || []) as { id: string; familia_id: string | null }[]) {
+    if (a.familia_id) familiaIdsSet.add(a.familia_id);
+  }
+  for (const p of pedidosDelColegio) {
+    if (p.familia_id) familiaIdsSet.add(p.familia_id);
+  }
+  const familiaIds: string[] = Array.from(familiaIdsSet);
+
+  return { familiaIds, alumnoIds, fotos, pedidoIds: pedidosDelColegio.map((p) => p.id) };
 }
 
 // Las miniaturas/vistas ampliadas (thumb_path/preview_path) se guardan como URL pública
@@ -2312,6 +2343,9 @@ app.get('/api/admin/cerrar-anio/resumen', requireAdminAuth, async (req: Request,
 });
 
 app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Request, res: Response) => {
+  // Declarado fuera del try/catch para que el catch de abajo pueda seguir leyéndolo (una
+  // variable `let`/`const` declarada DENTRO de un bloque try no es visible en su catch).
+  let pasoActual = 'validación';
   try {
     const supabase = getServerSupabase();
     if (!supabase) {
@@ -2352,6 +2386,15 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
     const { familiaIds, alumnoIds, fotos, pedidoIds } = await idsDeColegioParaCierre(supabase, colegioId);
     const fotoIds = fotos.map((f) => f.id);
 
+    // Auditoría 2026-09-22 (posible bug de integridad, BAJO): esta operación borra en varios
+    // pasos secuenciales SIN transacción (Supabase/PostgREST no expone transacciones multi-tabla
+    // desde acá sin escribir una función RPC en la base, que es un cambio de esquema que no se
+    // aplica solo desde este archivo). Si un paso intermedio falla (timeout, error puntual), el
+    // cierre de año queda a medio hacer sin forma de saber en cuál. Mitigación barata: se guarda
+    // en qué paso se está y se lo suma al mensaje de error, para que quede claro qué se alcanzó a
+    // borrar y qué no si algo se corta a mitad de camino.
+    pasoActual = 'pedido_fotos';
+
     // 1) pedido_fotos (depende de pedidos y fotos)
     if (pedidoIds.length > 0 || fotoIds.length > 0) {
       const filtros: string[] = [];
@@ -2362,6 +2405,7 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
     }
 
     // 2) pedidos
+    pasoActual = 'pedidos';
     if (pedidoIds.length > 0) {
       const { error } = await supabase.from('pedidos').delete().in('id', pedidoIds);
       if (error) throw error;
@@ -2391,18 +2435,21 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
     }
 
     // 4) fotos
+    pasoActual = 'fotos';
     if (fotoIds.length > 0) {
       const { error } = await supabase.from('fotos').delete().in('id', fotoIds);
       if (error) throw error;
     }
 
     // 5) alumnos
+    pasoActual = 'alumnos';
     if (alumnoIds.length > 0) {
       const { error } = await supabase.from('alumnos').delete().in('id', alumnoIds);
       if (error) throw error;
     }
 
     // 6) familias
+    pasoActual = 'familias';
     if (familiaIds.length > 0) {
       const { error } = await supabase.from('familias').delete().in('id', familiaIds);
       if (error) throw error;
@@ -2412,6 +2459,7 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
     // Igual que en /api/admin/fotos (DELETE), .not('id','is',null) es el filtro "matchea todo"
     // que exige el cliente de Supabase para no permitir un delete() totalmente sin condición.
     const borrarPorColegio = async (tabla: string) => {
+      pasoActual = tabla;
       const q = supabase.from(tabla).delete();
       const { error } = colegioId === 'todos' ? await q.not('id', 'is', null) : await q.eq('colegio_id', colegioId);
       if (error) throw error;
@@ -2433,8 +2481,11 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
       erroresStorage: erroresStorage.length > 0 ? erroresStorage : undefined,
     });
   } catch (err: any) {
-    console.error('Error al ejecutar el cierre de año:', err);
-    return res.status(500).json({ success: false, error: err?.message || 'Error al cerrar el año' });
+    console.error(`Error al ejecutar el cierre de año (paso: ${pasoActual}):`, err);
+    return res.status(500).json({
+      success: false,
+      error: `${err?.message || 'Error al cerrar el año'} (se cortó en el paso "${pasoActual}" — revisá qué se alcanzó a borrar antes de reintentar)`,
+    });
   }
 });
 
@@ -2762,6 +2813,28 @@ function normalizarTelefonoServidor(tel: string): string {
   return (tel || '').replace(/\D/g, '');
 }
 
+// Auditoría 2026-09-22 (bug real encontrado en auditoría de código, BAJO): los timestamps
+// legibles que se guardan en `fecha_inscripcion`/`fecha_aprobacion` se armaban con
+// `now.getDate()/getMonth()/getHours()`, que usan la hora LOCAL DEL PROCESO NODE, no la de
+// Argentina. En un despliegue serverless (Vercel) el runtime suele correr en UTC, así que esas
+// fechas quedaban grabadas y mostradas en el panel con ~3hs de diferencia respecto a la hora
+// real en la que la familia se inscribió o se la aprobó — confuso para el fotógrafo al revisar
+// "cuándo pasó esto". Se centraliza acá con Intl.DateTimeFormat fijando explícitamente el huso
+// horario de Argentina, sin importar en qué huso corra el servidor.
+function formatearFechaHoraArgentina(fecha: Date): string {
+  const partes = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(fecha);
+  const obtener = (tipo: string) => partes.find((p) => p.type === tipo)?.value || '';
+  return `${obtener('day')}/${obtener('month')}/${obtener('year')} ${obtener('hour')}:${obtener('minute')}`;
+}
+
 // Auditoría 2026-09-22 (Pablo: "¿por qué el código minilab no figura en esos pedidos de
 // prueba?"): mismo criterio de refuerzo que ya se aplicó a curso_codigo — nunca confiar en un
 // valor derivado que mande el navegador cuando el servidor puede calcularlo solo con datos que
@@ -2798,7 +2871,32 @@ async function obtenerNumeroListaSecuencial(supabase: ReturnType<typeof getServe
       .select('id', { count: 'exact', head: true })
       .eq('curso_codigo', cursoCodigo);
     if (error || typeof count !== 'number') return 1;
-    return count + 1;
+    let candidato = count + 1;
+
+    // Auditoría 2026-09-22 (posible bug de integridad, MEDIO/BAJO — mitigación parcial): el
+    // comentario original de arriba decía que "dos pedidos del mismo curso nunca van a coincidir
+    // en el mismo número", pero esto sigue siendo un patrón leer-luego-escribir sin ningún lock
+    // ni columna UNIQUE en la base: dos checkouts casi simultáneos del mismo curso (día de venta,
+    // varios hermanos/familias comprando a la vez) pueden leer el mismo `count` y terminar con el
+    // mismo `alumno_numero_lista`, duplicando el nombre de archivo del minilab. Una solución
+    // realmente atómica necesita una restricción UNIQUE (curso_codigo, alumno_numero_lista) en
+    // Supabase + reintento ante conflicto 23505, que requiere una migración de base de datos (no
+    // se aplica sola desde acá). Como mitigación sin tocar el esquema: se vuelve a chequear que
+    // el número candidato no esté ya usado justo antes de devolverlo, y si otro pedido lo tomó en
+    // el medio, se corre al siguiente — esto angosta muchísimo la ventana de colisión (que ahora
+    // requiere que dos requests lean Y verifiquen en el mismo instante) sin eliminarla del todo.
+    for (let intento = 0; intento < 5; intento++) {
+      const { data: yaExiste, error: errChequeo } = await supabase!
+        .from('pedidos')
+        .select('id')
+        .eq('curso_codigo', cursoCodigo)
+        .eq('alumno_numero_lista', candidato)
+        .limit(1);
+      if (errChequeo) break; // si el chequeo falla, mejor devolver el candidato que trabar el pedido
+      if (!yaExiste || yaExiste.length === 0) break;
+      candidato += 1;
+    }
+    return candidato;
   } catch {
     return 1;
   }
@@ -3243,7 +3341,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     }
 
     const now = new Date();
-    const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const fechaStr = formatearFechaHoraArgentina(now);
 
     // Si la familia ya estaba aceptada (con código asignado), mantenemos su estado y código:
     // sólo actualizamos sus datos de contacto/curso, nunca le hacemos perder el acceso ya otorgado.
@@ -3722,7 +3820,7 @@ app.post('/api/admin/inscripciones/:id/aprobar', requireAdminAuth, async (req: R
     );
 
     const now = new Date();
-    const fechaStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const fechaStr = formatearFechaHoraArgentina(now);
 
     const { data, error } = await supabase
       .from('inscripciones')
@@ -3924,7 +4022,7 @@ async function validarTokenPadronInstitucion(colegioId: string, codigo: string) 
   if (error || !colegio || !colegio.codigo_padron) {
     return { ok: false as const, status: 404, error: 'Link no válido' };
   }
-  if (String(codigo).trim().toUpperCase() !== String(colegio.codigo_padron).trim().toUpperCase()) {
+  if (!compararTimingSafe(String(codigo).trim().toUpperCase(), String(colegio.codigo_padron).trim().toUpperCase())) {
     return { ok: false as const, status: 403, error: 'El código de este link no es correcto' };
   }
   return { ok: true as const, supabase, colegio };
@@ -4335,11 +4433,20 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 
     // Si escribió el mismo email con el que se registró, el código sólo se reenvía a esa
     // dirección. No se devuelve en la respuesta pública ni se revela si pertenece a otra persona.
     {
+      // Auditoría 2026-09-22 (bug real encontrado en auditoría de código, MEDIO): la regex de
+      // arriba valida "forma de email" pero no excluye los comodines de ilike ('%' y '_'), así
+      // que un input como "%@gmail.com" la pasaba igual y convertía este "match exacto" en un
+      // patrón que matcheaba CUALQUIER inscripción aceptada con ese dominio — rompiendo la
+      // garantía de coincidencia exacta que promete el comentario de arriba (vector de spam:
+      // reenviar el código de una familia al azar a partir de su dominio de email). Se escapan
+      // los caracteres especiales de ilike antes de usarlos para que sólo pueda matchear el
+      // email exacto (case-insensitive), nunca un patrón.
+      const emailParaIlike = contactoLimpio.replace(/[%_\\]/g, (c) => `\\${c}`);
       let inscripcionesQuery = supabase
         .from('inscripciones')
         .select('id,email,padre_nombre,colegio_nombre,codigo_asignado,alumno_nombre,alumno_apellido,grado,division,turno,hermanos,solicita_foto_hermanos')
         .eq('estado', 'aceptado')
-        .ilike('email', contactoLimpio)
+        .ilike('email', emailParaIlike)
         .order('updated_at', { ascending: false })
         .limit(1);
       if (colegioId) inscripcionesQuery = inscripcionesQuery.eq('colegio_id', colegioId);
