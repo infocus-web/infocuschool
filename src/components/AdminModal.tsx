@@ -63,6 +63,7 @@ import AdminBuscadorAlumnosTab from './AdminBuscadorAlumnosTab';
 import AdminImportarAlumnosTab from './AdminImportarAlumnosTab';
 import AdminSolicitudesCodigoTab from './AdminSolicitudesCodigoTab';
 import AdminConsultasFamiliasTab from './AdminConsultasFamiliasTab';
+import AdminZohoCampanaTab from './AdminZohoCampanaTab';
 import { obtenerSolicitudesCodigoAdmin } from '../services/solicitudesCodigoService';
 import AdminConfigWhatsAppTab from './AdminConfigWhatsAppTab';
 import AdminResumenKitsSection from './AdminResumenKitsSection';
@@ -74,6 +75,9 @@ interface AdminModalProps {
   isOpen: boolean;
   onClose: () => void;
   onProbarCodigo?: (codigo: string) => void;
+  // Pestaña con la que abre el panel — usado por App.tsx para saltar directo a "Campaña Zoho"
+  // cuando se vuelve del flujo de conexión OAuth (ver "?zoho=conectado" / "?zoho=error").
+  tabInicial?: string;
 }
 
 const OPCIONES_GRADOS_COLEGIO = [
@@ -185,7 +189,7 @@ function SelectorMultiple({ value, onChange, opciones, placeholderOtro }: Select
   );
 }
 
-export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminModalProps) {
+export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial }: AdminModalProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [pinError, setPinError] = useState('');
@@ -203,7 +207,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
   }, [isOpen]);
 
   // Admin tabs - Inscriptos & Laboratorio as primary tools for photographers
-  const [activeTab, setActiveTab] = useState<'inscriptos' | 'buscar-alumno' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'consultas' | 'estado-pagos' | 'importar-alumnos'>('inscriptos');
+  const [activeTab, setActiveTab] = useState<'inscriptos' | 'buscar-alumno' | 'padron' | 'laboratorio' | 'pedidos' | 'subir' | 'codigos' | 'alumnos' | 'colegios' | 'cerrar-anio' | 'whatsapp' | 'solicitudes' | 'consultas' | 'estado-pagos' | 'importar-alumnos' | 'zoho'>(
+    (tabInicial as any) || 'inscriptos'
+  );
   // Nombre de alumno con el que arrancar la búsqueda al entrar a Laboratorio desde
   // "Ver en Laboratorio" en Pedidos — así el fotógrafo cae directo en el pedido que
   // estaba viendo, en vez de tener que buscarlo a mano entre todos (15/9).
@@ -1272,6 +1278,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
     { id: 'alumnos', label: `Nómina (${alumnosNominaReal.length})`, icono: FileSpreadsheet },
     { id: 'whatsapp', label: 'WhatsApp', icono: MessageSquare },
     { id: 'cerrar-anio', label: 'Cerrar año', icono: RefreshCw },
+    { id: 'zoho', label: 'Campaña colegios', icono: Globe },
   ] as const;
 
   return (
@@ -1466,6 +1473,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo }: AdminMod
             )}
             {activeTab === 'consultas' && (
               <AdminConsultasFamiliasTab />
+            )}
+
+            {activeTab === 'zoho' && (
+              <AdminZohoCampanaTab />
             )}
 
             {/* TAB: LABORATORIO & ENSOBRADO */}
