@@ -62,6 +62,11 @@ export default function ModalInscripcionFamilia({
 
   // Form states for New Inscription
   const [padreNombre, setPadreNombre] = useState('');
+  // Auditoría 2026-09-22 (segunda ronda del mismo pedido de Pablo — el DNI del tutor se había
+  // agregado sólo al ingreso posterior, no acá): se pide también al inscribirse, para que quede
+  // cargado desde el primer momento y sirva de entrada directamente por DNI + código sin
+  // depender de identificar por nombre la primera vez.
+  const [padreDni, setPadreDni] = useState('');
   const [telefonoWhatsApp, setTelefonoWhatsApp] = useState('');
   const [email, setEmail] = useState('');
   const [alumnoNombre, setAlumnoNombre] = useState('');
@@ -206,6 +211,7 @@ export default function ModalInscripcionFamilia({
     if (!activa) return;
 
     setPadreNombre(activa.padreNombre || '');
+    setPadreDni(activa.padreDni || '');
     setTelefonoWhatsApp(activa.telefonoWhatsApp || '');
     setEmail(activa.email || '');
     setAlumnoNombre(activa.alumnoNombre || '');
@@ -244,6 +250,10 @@ export default function ModalInscripcionFamilia({
     // Validations
     if (!padreNombre.trim()) {
       setFormError('Por favor ingresá el nombre y apellido del padre, madre o tutor.');
+      return;
+    }
+    if (!dniEsValido(padreDni)) {
+      setFormError('Por favor ingresá un número de DNI válido del padre, madre o tutor (sin puntos).');
       return;
     }
     if (!telefonoWhatsApp.trim() || telefonoWhatsApp.trim().length < 8) {
@@ -291,6 +301,7 @@ export default function ModalInscripcionFamilia({
       colegioId: colegioSeleccionado.id,
       colegioNombre: colegioSeleccionado.nombre,
       padreNombre: padreNombre.trim(),
+      padreDni: limpiarDni(padreDni),
       telefonoWhatsApp: telefonoWhatsApp.trim(),
       email: email.trim(),
       alumnoNombre: alumnoNombre.trim(),
@@ -780,18 +791,41 @@ export default function ModalInscripcionFamilia({
                 </div>
 
                 <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Nombre y apellido del padre / madre <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={padreNombre}
-                      onChange={(e) => setPadreNombre(e.target.value)}
-                      placeholder="Ej: Mariana Gómez"
-                      className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
-                    />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Nombre y apellido del padre / madre <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={padreNombre}
+                        onChange={(e) => setPadreNombre(e.target.value)}
+                        placeholder="Ej: Mariana Gómez"
+                        className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                      />
+                    </div>
+
+                    {/* Auditoría 2026-09-22 (pedido de Pablo): el código de acceso real termina
+                        siendo compartido por todo el curso — este DNI, junto con el código, es lo
+                        que después permite identificar a la familia exacta al ingresar (ver
+                        `/api/inscripciones/buscar`). Se pide acá, de entrada, para no depender de
+                        identificar por nombre en el primer ingreso. */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        DNI del padre / madre / tutor <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        required
+                        value={padreDni}
+                        onChange={(e) => setPadreDni(e.target.value)}
+                        placeholder="Sin puntos, ej: 30456789"
+                        autoComplete="off"
+                        className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
