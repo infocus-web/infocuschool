@@ -35,6 +35,12 @@ export interface CopiasExtrasConfig {
 export interface PedidoEscolarCompleto {
   id: string; // Ej: IFS-2026-8812 (Identificador amigable para la familia)
   supabaseId?: string; // UUID estricto de la fila en Supabase (para webhooks y Mercado Pago)
+  // Auditoría 2026-09-23 (Pablo: "¿por qué se generaron 2 pedidos si es uno solo?"): un carrito
+  // multi-hijo (mellizos, por ejemplo) crea un pedido por hermano pero los cobra juntos en un
+  // solo pago — todas las filas de ese pago comparten este id (ver grupo_pago_id en
+  // /api/pedidos/crear-multiple). Se expone acá para que el panel pueda encontrar y aprobar
+  // juntos los pedidos de un mismo pago combinado (ver handleAprobarPago en AdminModal.tsx).
+  grupoPagoId?: string;
   fecha: string;
   colegioId: string;
   colegioNombre: string;
@@ -759,6 +765,7 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
   return {
     id: fila.pedido_friendly_id || fila.id,
     supabaseId: fila.id,
+    grupoPagoId: fila.grupo_pago_id || undefined,
     fecha: fechaStr,
     colegioId: fila.colegio_id || '',
     colegioNombre: fila.colegio_nombre || 'Colegio',
