@@ -48,12 +48,20 @@ interface ModalInscripcionFamiliaProps {
   isOpen: boolean;
   onClose: () => void;
   onInscripcionExitosa: (familia: InscripcionFamilia, codigoCurso?: string) => void;
+  // Auditoría 2026-09-22 (pedido de Pablo, viendo la landing real: "este botón me envía al
+  // formulario de inscripción también, al igual que el botón 'anotarme con mis hijos'"): el link
+  // "¿Ya te inscribiste? Consultar código" de Hero.tsx llamaba al mismo `onOpenInscripcion` sin
+  // parámetros que "Anotarme con mis hijos", y el modal siempre abría en la pestaña "Inscribirme"
+  // — quien ya se había inscripto terminaba en el formulario de alta en vez de en la pestaña para
+  // consultar su código. Con esto, quien lo abre puede pedir la pestaña "Ya me inscribí" directo.
+  initialTab?: 'registro' | 'login';
 }
 
 export default function ModalInscripcionFamilia({
   isOpen,
   onClose,
-  onInscripcionExitosa
+  onInscripcionExitosa,
+  initialTab
 }: ModalInscripcionFamiliaProps) {
   const [tab, setTab] = useState<'registro' | 'login'>('registro');
   const [paso, setPaso] = useState<'formulario' | 'resultado'>('formulario');
@@ -209,6 +217,19 @@ export default function ModalInscripcionFamilia({
   // en vez de mostrarse en blanco como si fuera una familia nueva).
   React.useEffect(() => {
     if (!isOpen) return;
+    // Auditoría 2026-09-22: `setPaso`/`setTab`/la limpieza del login deben correr siempre que se
+    // abre el modal, tenga o no esta familia una sesión guardada en este navegador — antes
+    // quedaban dentro del `if (!activa) return` de abajo, así que alguien sin sesión guardada acá
+    // (por ejemplo, ya inscripto desde OTRO dispositivo) que pedía la pestaña "Ya me inscribí"
+    // igual terminaba en "Inscribirme", porque el efecto cortaba antes de llegar a `setTab`.
+    setPaso('formulario');
+    setTab(initialTab || 'registro');
+    setFormError(null);
+    setLoginQuery('');
+    setLoginTutorNombre('');
+    setLoginTutorDni('');
+    setLoginError(null);
+
     const activa = obtenerFamiliaActiva();
     if (!activa) return;
 
@@ -235,17 +256,6 @@ export default function ModalInscripcionFamilia({
       }))
     );
     setSolicitaFotoHermanos(activa.solicitaFotoHermanos ?? false);
-    setPaso('formulario');
-    setTab('registro');
-    setFormError(null);
-    // Auditoría 2026-09-22 (bug reportado por Pablo: su email apareció solo en el campo de
-    // Código de Acceso de la pestaña "Ya me inscribí"): ese campo se prellenaba en otro momento
-    // del flujo (ver más abajo) y quedaba así aunque se reabriera el modal más tarde. Se limpia
-    // acá siempre que se abre el modal, para que nunca arrastre un valor de una sesión anterior.
-    setLoginQuery('');
-    setLoginTutorNombre('');
-    setLoginTutorDni('');
-    setLoginError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 

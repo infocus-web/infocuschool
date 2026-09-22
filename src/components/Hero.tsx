@@ -6,7 +6,7 @@ import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '.
 
 interface HeroProps {
   onOpenFamilias: (colegioId?: string, codigo?: string) => void;
-  onOpenInscripcion?: () => void;
+  onOpenInscripcion?: (tab?: 'registro' | 'login') => void;
 }
 
 export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
@@ -165,7 +165,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                         <ArrowRight className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={onOpenInscripcion}
+                        onClick={() => onOpenInscripcion?.('login')}
                         className="text-[11px] text-center text-amber-800 hover:text-amber-900 underline font-medium cursor-pointer"
                       >
                         ¿Ya te inscribiste? Consultar código
@@ -287,22 +287,21 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 </div>
               </div>
 
-              {/* Bottom Card Summary */}
-              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-slate-500 font-medium">Kits y fotos escolares</p>
-                  <p className="text-sm sm:text-base font-bold text-slate-900 font-['Outfit']">
-                    Impresos con carpeta y Digitales HD
-                  </p>
-                </div>
-                <button
-                  id="btn-ver-galeria-card"
-                  onClick={() => onOpenFamilias('col-modelo-2026')}
-                  className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-slate-900/10"
-                >
-                  <span>Ingresar a Galería</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-amber-400" />
-                </button>
+              {/* Auditoría 2026-09-22 (pregunta de Pablo viendo la landing real: "tiene sentido
+                  estos dos botones ahí?"): este botón y el buscador "Ver mis fotos" de la columna
+                  de la izquierda hacían exactamente lo mismo (abrir el Portal de Familias), pero
+                  ESTE quedaba pegado a un colegio de muestra fijo ('col-modelo-2026', hardcodeado)
+                  sin ninguna relación con lo que la visita haya buscado — alguien podía terminar
+                  en el portal de un colegio de ejemplo en vez del suyo. Con el mandato de esta
+                  sesión de que la entrada sea mínima y sin acciones duplicadas, se saca el botón y
+                  la tarjeta queda como lo que en el fondo es: una muestra visual del producto, no
+                  un segundo punto de entrada. El único botón real para entrar sigue siendo "Ver mis
+                  fotos" del buscador de arriba. */}
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <p className="text-xs text-slate-500 font-medium">Kits y fotos escolares</p>
+                <p className="text-sm sm:text-base font-bold text-slate-900 font-['Outfit']">
+                  Impresos con carpeta y Digitales HD
+                </p>
               </div>
             </div>
           </div>
