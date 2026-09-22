@@ -2096,6 +2096,16 @@ export default function PortalFamiliasModal({
                 </p>
               </div>
 
+              {/* Auditoría 2026-09-22 (pedido de Pablo, tras repaso completo de la pantalla real:
+                  "es demasiado! el sistema debe ser extremadamente simple para ingresar"): con la
+                  familia ya identificada en este navegador, esta tarjeta de identificación
+                  (nombre+DNI+código) y la tarjeta de abajo con los mismos hijos repetidos se
+                  mostraban las DOS a la vez, con el código y los datos duplicados. Ahora esta
+                  tarjeta sólo aparece mientras la familia todavía no está identificada; apenas se
+                  valida (o al reabrir con la sesión ya guardada) desaparece y queda una sola
+                  tarjeta abajo con el saludo y el botón para entrar. */}
+              {!familiaActiva && (
+              <>
               {/* Hero Course Code Access Card */}
               <div className="bg-linear-to-br from-amber-500/10 via-amber-50 to-white rounded-2xl p-5 sm:p-6 border-2 border-amber-300 shadow-sm space-y-4">
                 <div className="flex flex-col gap-3">
@@ -2340,21 +2350,25 @@ export default function PortalFamiliasModal({
                   </p>
                 </div>
               )}
+              </>
+              )}
 
               {/* Student details form */}
               {selectedColegio && codigoValidadoMsg && (
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 space-y-4 text-left shadow-xs animate-in fade-in duration-150">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                      <User className="w-4 h-4 text-amber-600" />
-                      <span>Datos del alumno/a en {selectedColegio.nombre}:</span>
-                    </h4>
-                    {familiaActiva ? (
+                  {familiaActiva ? (
+                    // Auditoría 2026-09-22: única tarjeta que ve una familia ya identificada — antes
+                    // se sumaba, arriba, una segunda tarjeta con el código+nombre+DNI ya validados y
+                    // los mismos hijos repetidos. Encabezado con saludo directo en vez del rótulo
+                    // impersonal "Datos del alumno/a en...".
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-lg font-extrabold text-slate-900 font-['Outfit']">
+                          ¡Hola, {familiaActiva.padreNombre}!
+                        </h4>
+                        <p className="text-[11px] text-slate-500">{selectedColegio.nombre}</p>
+                      </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          Inscripto: {familiaActiva.padreNombre} (Tutor)
-                        </span>
                         {onOpenInscripcion && (
                           <button
                             type="button"
@@ -2393,8 +2407,13 @@ export default function PortalFamiliasModal({
                           Cerrar sesión
                         </button>
                       </div>
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : (
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <User className="w-4 h-4 text-amber-600" />
+                      <span>Datos del alumno/a en {selectedColegio.nombre}:</span>
+                    </h4>
+                  )}
 
                   {/* Auditoría 2026-09-21 (pedido de Pablo: "esto no sé si los padres deban
                       tocarlo ya que turno/grado/división ya está registrado... a lo sumo debería
@@ -2415,9 +2434,6 @@ export default function PortalFamiliasModal({
                       necesita el código real de su curso). */}
                   {familiaActiva ? (
                     <div className="space-y-2">
-                      <p className="text-[11px] text-slate-500">
-                        Estos datos ya están confirmados para tu familia — no hace falta cargarlos de nuevo.
-                      </p>
                       {hijosFamilia.length > 0 ? (
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {hijosFamilia.map((h) => (

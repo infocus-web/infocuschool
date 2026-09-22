@@ -91,7 +91,9 @@ export default function ModalInscripcionFamilia({
       division: string;
     }>
   >([]);
-  const [solicitaFotoHermanos, setSolicitaFotoHermanos] = useState(true);
+  // Auditoría 2026-09-22 (pedido de Pablo, repaso de pantalla real: "por defecto debería estar
+  // desactivada, es opción"): es un adicional pago, no algo que la familia deba destildar.
+  const [solicitaFotoHermanos, setSolicitaFotoHermanos] = useState(false);
 
   const handleAgregarHermano = () => {
     setHermanos((prev) => [
@@ -232,10 +234,18 @@ export default function ModalInscripcionFamilia({
         division: h.division
       }))
     );
-    setSolicitaFotoHermanos(activa.solicitaFotoHermanos ?? true);
+    setSolicitaFotoHermanos(activa.solicitaFotoHermanos ?? false);
     setPaso('formulario');
     setTab('registro');
     setFormError(null);
+    // Auditoría 2026-09-22 (bug reportado por Pablo: su email apareció solo en el campo de
+    // Código de Acceso de la pestaña "Ya me inscribí"): ese campo se prellenaba en otro momento
+    // del flujo (ver más abajo) y quedaba así aunque se reabriera el modal más tarde. Se limpia
+    // acá siempre que se abre el modal, para que nunca arrastre un valor de una sesión anterior.
+    setLoginQuery('');
+    setLoginTutorNombre('');
+    setLoginTutorDni('');
+    setLoginError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -385,7 +395,10 @@ export default function ModalInscripcionFamilia({
     } else if (resultado.yaRegistrado && resultado.emailReenviado) {
       // Ya fue aprobada mientras tanto: por seguridad el código no llega acá, se reenvió por
       // correo — se lo hacemos saber a la familia en vez de dejar el botón sin efecto visible.
-      setMensajeVerificacionEstado(`¡Tu inscripción ya fue aprobada! Te reenviamos el código a ${resultado.emailDestino || 'tu correo registrado'}. Revisá tu bandeja de entrada (y spam).`);
+      // Auditoría 2026-09-22 (pedido de Pablo: "son personas tontas, debe ser muy concisa la info
+      // de las ventanas" — este mensaje sonaba técnico para alguien que no sabe qué es "reenviar
+      // por seguridad"): directo al grano, con un solo dato accionable (dónde buscar el código).
+      setMensajeVerificacionEstado(`¡Ya está aprobado! Te enviamos el código a ${resultado.emailDestino || 'tu correo'}. Buscalo ahí (revisá también spam) y pegalo para entrar.`);
     } else {
       setMensajeVerificacionEstado('Todavía sigue pendiente de revisión por el equipo fotográfico.');
     }
@@ -520,50 +533,14 @@ export default function ModalInscripcionFamilia({
           {paso === 'resultado' ? (
             /* Step: Result of validation against the authorized parent list */
             <div className="space-y-6 text-left">
-              {/* Registration confirmation banner */}
-              <div className="p-4 bg-gradient-to-r from-emerald-500/10 via-emerald-50 to-amber-50 border border-emerald-300 rounded-2xl flex items-start gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-500/20">
-                  <CheckCircle2 className="w-6 h-6" />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                      Inscripción Familiar Registrada
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium">1 Código para toda la familia</span>
-                  </div>
-                  {/* Auditoría 2026-09-22: antes acá había una rama "código de curso verificado"
-                      anónima (sin nombre ni alumno) para cuando el código ya lo compartía otra
-                      familia y el servidor no podía saber cuál era. Ya no hace falta: ahora, para
-                      llegar a este paso ('resultado'), el servidor ya identificó a la familia
-                      exacta por nombre + DNI del tutor (ver `validarCodigoIngresado` /
-                      `/api/inscripciones/buscar`) — si todavía faltaban esos datos o no
-                      coincidían, `handleLoginSubmit` ni siquiera avanza hasta acá, se queda
-                      pidiéndolos en el formulario. */}
-                  <h3 className="text-base sm:text-lg font-extrabold text-slate-900 mt-1">
-                    ¡Hola {tutorDisplay}! Registramos a tu familia
-                  </h3>
-                  <div className="text-xs text-slate-700 space-y-0.5">
-                    <p className="font-semibold text-slate-800">
-                      • {alumnoDisplay} ({gradoDisplay} "{divisionDisplay}" · Turno {turnoDisplay})
-                    </p>
-                    {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0 && (
-                      familiaCreada.hermanos.map((h, i) => (
-                        <p key={h.id || i} className="font-semibold text-slate-800">
-                          • {h.alumnoNombre} {h.alumnoApellido} ({h.grado} "{h.division}" · Turno {h.turno})
-                        </p>
-                      ))
-                    )}
-                    {familiaCreada?.solicitaFotoHermanos && (
-                      <span className="inline-block mt-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
-                        📸 Foto especial de hermanos juntos: Solicitada
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Adaptive Card: Auto-approved (matched authorized parent list) vs Pending manual review */}
+              {/* Auditoría 2026-09-22 (pedido de Pablo, repaso de pantalla real: "demasiada
+                  información, extremadamente confuso" en esta pantalla, y luego, sobre la versión
+                  ya aprobada, "otra ventana más! con muchísima información... no tiene sentido"):
+                  antes había DOS tarjetas apiladas mostrando la misma info de la familia dos veces
+                  (una tarjeta genérica de "registro" arriba, y abajo la de aprobado/pendiente que
+                  repetía el saludo y agregaba la suya propia). Ahora es una sola tarjeta por
+                  estado, con el saludo, un resumen de una línea de los hijos, y lo único accionable
+                  (el código o el estado de la revisión) — nada se repite dos veces. */}
               {familiaCreada?.estado === 'aceptado' ? (
                 <div className="bg-gradient-to-b from-emerald-50 via-white to-emerald-50/50 border-2 border-emerald-400 rounded-3xl p-5 sm:p-6 space-y-4 shadow-sm">
                   <div className="flex items-start gap-3.5">
@@ -571,24 +548,18 @@ export default function ModalInscripcionFamilia({
                       <CheckCircle2 className="w-7 h-7" />
                     </div>
                     <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                          Inscripción Aprobada
-                        </span>
-                        <span className="text-xs text-emerald-800 font-semibold">Código de Acceso Habilitado</span>
-                      </div>
+                      <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                        Código de acceso activo
+                      </span>
                       <h4 className="text-lg font-black text-slate-900 font-['Outfit']">
-                        ¡Tu Código de Acceso ya está activo!
+                        ¡Hola {tutorDisplay}! Ya podés ver las fotos
                       </h4>
-                      {/* Auditoría 2026-09-09: por seguridad, el código real ya no se muestra acá salvo
-                          que la propia familia lo haya escrito ella misma (pestaña "Ya me inscribí" con
-                          el código real) — cuando la aprobación es automática, sólo avisamos que se
-                          mandó por correo, nunca lo mostramos ni lo entregamos por acá.
-                          Auditoría 2026-09-22: para llegar a este paso identificado por código, el
-                          servidor ya validó nombre + DNI del tutor contra ESTA familia (ver
-                          `handleLoginSubmit`), así que el email mostrado abajo siempre es el suyo. */}
-                      <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        Verificamos tus datos contra el padrón del colegio y ya te despachamos tu <strong>Código de Acceso</strong> por correo a <strong>{familiaCreada.email}</strong>.
+                      <p className="text-xs sm:text-sm text-slate-600">
+                        {alumnoDisplay}
+                        {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0
+                          ? ` y ${familiaCreada.hermanos.length} hermano${familiaCreada.hermanos.length > 1 ? 's' : ''} más`
+                          : ''}
+                        {' · '}{colegioDisplay}
                       </p>
                     </div>
                   </div>
@@ -674,10 +645,17 @@ export default function ModalInscripcionFamilia({
                         </span>
                       </div>
                       <h4 className="text-base sm:text-lg font-black text-slate-900 font-['Outfit']">
-                        Tu solicitud está en revisión
+                        ¡Hola {tutorDisplay}! Tu solicitud está en revisión
                       </h4>
+                      <p className="text-xs text-slate-500">
+                        {alumnoDisplay}
+                        {familiaCreada?.hermanos && familiaCreada.hermanos.length > 0
+                          ? ` y ${familiaCreada.hermanos.length} hermano${familiaCreada.hermanos.length > 1 ? 's' : ''} más`
+                          : ''}
+                        {' · '}{colegioDisplay}
+                      </p>
                       <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                        No encontramos automáticamente tus datos en el padrón del colegio, así que tu solicitud quedó pendiente de revisión manual por el equipo fotográfico. En cuanto sea validada, vas a recibir tu <strong>Código de Acceso</strong> por Email.
+                        El equipo fotográfico la va a revisar y te vamos a mandar tu <strong>Código de Acceso</strong> por email.
                       </p>
                     </div>
                   </div>
@@ -748,8 +726,35 @@ export default function ModalInscripcionFamilia({
                 </div>
               )}
 
+              {/* Auditoría 2026-09-22 (pedido de Pablo: "si ya tiene el código, este botón es muy
+                  muy discreto, debería estar más visible, como los demás"): antes era un texto
+                  subrayado chiquito al lado de "Modificar datos", muy por debajo en peso visual de
+                  los dos botones negros de arriba. Ahora es un botón con el mismo tamaño, sólo que
+                  en estilo secundario (contorno) para no competir con "Verificar si ya fue
+                  aprobada", que sigue siendo la acción principal mientras está pendiente.
+                  También se saca el precargado del campo con el email/teléfono (ver bug reportado
+                  por Pablo: "figura mi correo electrónico en el lugar donde va el código, no lo
+                  puse yo, solo apareció") — ese campo es para el código real; precargarlo con el
+                  email de un paso distinto (pedir reenvío) confundía appareciendo ahí después. */}
+              {familiaCreada?.estado !== 'aceptado' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaso('formulario');
+                    setTab('login');
+                    setLoginQuery('');
+                    setLoginError(null);
+                  }}
+                  className="w-full py-3 px-4 bg-white hover:bg-amber-50 text-amber-900 border-2 border-amber-400 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                >
+                  <Key className="w-4 h-4" />
+                  <span>Ya tengo mi código, ingresar ahora</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
+
               {/* Bottom navigation actions */}
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs border-t border-slate-200">
+              <div className="pt-2 flex items-center justify-center text-xs border-t border-slate-200">
                 <button
                   type="button"
                   onClick={() => setPaso('formulario')}
@@ -757,20 +762,6 @@ export default function ModalInscripcionFamilia({
                 >
                   ← Modificar datos de inscripción
                 </button>
-
-                {familiaCreada?.estado !== 'aceptado' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaso('formulario');
-                      setTab('login');
-                      setLoginQuery(familiaCreada?.email || familiaCreada?.telefonoWhatsApp || '');
-                    }}
-                    className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer"
-                  >
-                    Ya tengo mi código, ingresar ahora →
-                  </button>
-                )}
               </div>
             </div>
           ) : tab === 'registro' ? (
