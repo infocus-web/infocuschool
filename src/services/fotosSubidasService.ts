@@ -120,8 +120,18 @@ function extraerPathStorageWeb(valor?: string | null): string | undefined {
 /** Panel admin: elimina una foto (fila en Supabase + los archivos reales en Storage) */
 export async function eliminarFotoActivaAdmin(foto: FotoRegistrada): Promise<{ success: boolean; error?: string }> {
   try {
+    let advertenciaStorage: string | undefined;
     if (foto.pathStorageWeb || foto.pathStorageHD) {
-      await eliminarFotoDeStorage(extraerPathStorageWeb(foto.pathStorageWeb), foto.pathStorageHD || undefined);
+      // Auditoría 2026-09-22: antes se ignoraba por completo el resultado de
+      // eliminarFotoDeStorage (que a su vez, hasta este mismo audit, reportaba éxito sin revisar
+      // la respuesta del servidor). Si el borrado del archivo en el bucket fallaba, el registro
+      // en la tabla `fotos` se borraba igual y el panel mostraba "eliminada" sin avisar que el
+      // archivo real (en un bucket de lectura pública) seguía existiendo, accesible por su URL.
+      const resultadoStorage = await eliminarFotoDeStorage(extraerPathStorageWeb(foto.pathStorageWeb), foto.pathStorageHD || undefined);
+      if (!resultadoStorage.ok) {
+        advertenciaStorage = resultadoStorage.error || 'No se pudo eliminar el archivo del almacenamiento.';
+        console.warn('eliminarFotoActivaAdmin: el borrado en storage falló, se continúa borrando el registro:', advertenciaStorage);
+      }
     }
     const res = await fetchAdminAutenticado(`/api/admin/fotos/${encodeURIComponent(foto.id)}`, {
       method: 'DELETE',
@@ -129,6 +139,13 @@ export async function eliminarFotoActivaAdmin(foto: FotoRegistrada): Promise<{ s
     const data = await res.json();
     if (!res.ok || !data.success) {
       return { success: false, error: data.error || 'No se pudo eliminar la foto.' };
+    }
+    // Se borró el registro del catálogo (que es lo que el admin ve y lo que evita que se siga
+    // mostrando/entregando la foto), pero si el archivo en el bucket no se pudo borrar, se avisa
+    // igual con success:true + error para que quede visible en el panel y se pueda reintentar o
+    // limpiar el bucket a mano — en vez de reportar un éxito silenciosamente incompleto.
+    if (advertenciaStorage) {
+      return { success: true, error: `Foto quitada del catálogo, pero el archivo no se pudo borrar del almacenamiento: ${advertenciaStorage}` };
     }
     return { success: true };
   } catch (err: any) {

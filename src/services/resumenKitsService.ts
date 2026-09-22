@@ -1,6 +1,6 @@
-import { getSupabase } from './supabaseClient';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { obtenerPedidosGuardados } from './pedidosLabService';
+import { fetchAdminAutenticado } from './adminAuthService';
 
 export interface FamiliaKitInfo {
   id: string;
@@ -94,42 +94,29 @@ export async function extraerResumenKitsDesdeSupabase(): Promise<{
   totalRecaudado: number;
   error: string | null;
 }> {
-  const supabase = getSupabase();
   let pedidosSupabase: any[] = [];
   let errorMsg: string | null = null;
 
-  if (supabase) {
-    try {
-      const { data, error } = await supabase
-        .from('pedidos')
-        .select(`
-          id,
-          tipo_kit,
-          estado,
-          total,
-          carpetas_impresas,
-          created_at,
-          familia_id,
-          familias (
-            id,
-            nombre,
-            colegio_id
-          )
-        `)
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.warn('Error al consultar tabla pedidos en Supabase:', error.message);
-        errorMsg = error.message;
-      } else if (data && data.length > 0) {
-        pedidosSupabase = data;
-      }
-    } catch (err: any) {
-      console.warn('Excepción al conectar con Supabase pedidos:', err);
-      errorMsg = err?.message || 'Error de conexión con Supabase';
+  // Auditoría 2026-09-22 (bug real, MEDIA): esta función consultaba `pedidos` directo desde el
+  // navegador con la clave anónima. Las políticas RLS públicas sobre `pedidos` se cerraron a
+  // propósito el 2026-09-07/09 (ver migrations_consolidadas_recuperacion.sql) para que nadie sin
+  // sesión de admin pudiera leer qué compró cada familia — así que esta consulta SIEMPRE fallaba
+  // silenciosamente (RLS la bloquea) y el panel terminaba mostrando el fallback de
+  // `pedidosLocales` (casi vacío en el navegador del admin), con una insignia verde de "Supabase
+  // DB (pedidos)" que daba a entender que estaba todo conectado y funcionando. Se cambia a pedir
+  // los pedidos por el mismo endpoint admin autenticado (con Service Role Key en el servidor) que
+  // ya usa el resto del panel.
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/pedidos');
+    const data = await res.json();
+    if (!res.ok || !data?.success) {
+      errorMsg = data?.error || `No se pudo consultar pedidos (HTTP ${res.status}).`;
+    } else if (Array.isArray(data.pedidos) && data.pedidos.length > 0) {
+      pedidosSupabase = data.pedidos;
     }
-  } else {
-    errorMsg = 'Supabase no inicializado';
+  } catch (err: any) {
+    console.warn('Excepción al conectar con el servidor para pedidos:', err);
+    errorMsg = err?.message || 'Error de conexión con el servidor';
   }
 
   // Si Supabase no tiene pedidos o hubo error, complementamos con pedidos locales

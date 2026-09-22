@@ -239,20 +239,34 @@ export async function limpiarStorageBucket(bucket: 'fotos-web' | 'fotos-hd' | 'f
  * Borra una foto puntual de los buckets web y/o HD.
  */
 export async function eliminarFotoDeStorage(pathWeb?: string, pathHD?: string): Promise<{ ok: boolean; error?: string }> {
+  // Auditoría 2026-09-22: antes esta función devolvía { ok: true } con tal de que el fetch no
+  // tirara una excepción de red, sin revisar si el servidor realmente confirmó el borrado
+  // (res.ok / data.success). Un 401 por token vencido, un 500 transitorio, o un
+  // { success:false } del servidor pasaban desapercibidos: el admin veía "eliminada" en el
+  // panel y el registro se borraba de la base, pero el archivo real quedaba huérfano en el
+  // bucket (fotos-web es de lectura pública) sin que nadie se enterara.
   try {
     if (pathWeb) {
-      await fetchAdminAutenticado('/api/admin/storage/eliminar-archivos', {
+      const resWeb = await fetchAdminAutenticado('/api/admin/storage/eliminar-archivos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bucket: 'fotos-web', paths: [pathWeb] }),
       });
+      const dataWeb = await resWeb.json().catch(() => null);
+      if (!resWeb.ok || !dataWeb?.success) {
+        return { ok: false, error: dataWeb?.error || `No se pudo eliminar la foto web (HTTP ${resWeb.status}).` };
+      }
     }
     if (pathHD) {
-      await fetchAdminAutenticado('/api/admin/storage/eliminar-archivos', {
+      const resHD = await fetchAdminAutenticado('/api/admin/storage/eliminar-archivos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bucket: 'fotos-hd', paths: [pathHD] }),
       });
+      const dataHD = await resHD.json().catch(() => null);
+      if (!resHD.ok || !dataHD?.success) {
+        return { ok: false, error: dataHD?.error || `No se pudo eliminar la foto HD (HTTP ${resHD.status}).` };
+      }
     }
     return { ok: true };
   } catch (err: any) {

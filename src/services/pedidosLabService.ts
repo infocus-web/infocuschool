@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { FOTOS_MUESTRA } from '../data/colegiosData';
+import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { enviarFotosPorEmail } from './emailService';
 import { fetchAdminAutenticado } from './adminAuthService';
 import { Foto } from '../types';
@@ -635,6 +635,21 @@ export interface ResultadoRegistroCarrito {
   errorSincronizacion?: string;
 }
 
+// Mismos precios que PRECIOS_KITS/PRECIO_CARPETA_EXTRA/PRECIO_FOTO_EVENTO en server.ts (y que las
+// constantes locales del mismo nombre en PortalFamiliasModal.tsx) — el servidor es SIEMPRE quien
+// calcula el monto que realmente se cobra (ver calcularTotalPedido en server.ts, usado por
+// /api/pedidos/crear-multiple y por la creación de la preferencia de pago). Este cálculo acá es
+// sólo para reconstruir, para esta pantalla, el mismo total que la familia ya vio y confirmó
+// antes de pagar — nunca se manda a ningún endpoint de cobro.
+const PRECIO_CARPETA_EXTRA_LOCAL = 15000;
+const PRECIO_FOTO_EVENTO_LOCAL = 5000;
+function calcularTotalItemLocal(item: { kitId: string; copiasExtras?: CopiasExtrasConfig }): number {
+  const precioBase = KITS_DISPONIBLES.find((k) => k.id === item.kitId)?.precio || 0;
+  const carpetasExtras = Math.max(0, Math.floor(Number(item.copiasExtras?.carpetasExtras) || 0));
+  const fotosSueltas = Math.max(0, Math.floor(Number(item.copiasExtras?.otras15x21) || 0));
+  return precioBase + carpetasExtras * PRECIO_CARPETA_EXTRA_LOCAL + fotosSueltas * PRECIO_FOTO_EVENTO_LOCAL;
+}
+
 /**
  * Auditoría 2026-09-16 (pedido de Pablo: "el cliente debe poder hacer multiple pedido en una
  * sola sesion, un solo pago"): equivalente a registrarPedidoDesdePortal, pero para el carrito
@@ -689,6 +704,55 @@ export async function registrarCarritoMultipleDesdePortal(params: {
     });
     const data = await res.json().catch(() => null);
     if (res.ok && data?.success) {
+      // Auditoría 2026-09-22 (bug real, ALTA): a diferencia de registrarPedidoDesdePortal (que
+      // guarda el pedido en localStorage antes de redirigir a pagar), esta función nunca lo
+      // hacía. Mercado Pago y Nave fuerzan una recarga completa de la página (window.location.href
+      // al checkout externo), así que al volver, el único rastro que le queda a este navegador de
+      // lo que se acababa de pagar es lo que haya en localStorage — y para un carrito multi-hijo
+      // eso siempre estaba vacío. Resultado: la pantalla de confirmación mostraba "Alumno" / "Kit
+      // Retrato Escolar" / $0 en vez de los hijos y el total reales, justo para las familias que
+      // usan el caso insignia de esta función (varios hijos, un solo pago). Se guardan acá los N
+      // pedidos del carrito (uno por hijo, todos con el mismo grupoPagoId) igual que hace
+      // registrarPedidoDesdePortal para el camino de un solo hijo — no se manda nada nuevo a
+      // Supabase, sólo se cachea localmente lo que el servidor ya confirmó.
+      const pedidosGuardadosPrevios = obtenerPedidosGuardados();
+      const nuevosPedidos: PedidoEscolarCompleto[] = params.items.map((item, idx) => {
+        const totalItem = calcularTotalItemLocal(item);
+        const numLista = item.alumnoNumeroLista || pedidosGuardadosPrevios.length + idx + 1;
+        const codigoAlumno = `${sanitizarParaMinilab(item.cursoCodigo)}_${String(numLista).padStart(2, '0')}_${sanitizarParaMinilab(item.alumnoNombre)}`;
+        return {
+          id: pedidoFriendlyIds[idx],
+          supabaseId: data.pedidoIds?.[idx],
+          grupoPagoId: data.grupoPagoId,
+          fecha: new Date().toLocaleString('es-AR'),
+          colegioId: item.colegioId,
+          colegioNombre: item.colegioNombre,
+          cursoCodigo: item.cursoCodigo.toUpperCase(),
+          grado: item.grado,
+          division: item.division,
+          turno: item.turno,
+          alumnoNumeroLista: numLista,
+          alumnoNombre: item.alumnoNombre,
+          codigoAlumno,
+          tutorNombre: params.tutorNombre,
+          tutorTelefono: params.tutorTelefono,
+          tutorEmail: params.tutorEmail,
+          kitId: item.kitId,
+          kitNombre: item.kitNombre,
+          total: totalItem,
+          metodoPago: item.metodoPago,
+          estadoPago: 'pendiente',
+          estadoEntrega: 'en_espera',
+          fotosSeleccionadas: item.fotosSeleccionadas,
+          copiasExtras: item.copiasExtras,
+          archivosParaLaboratorio: [],
+          linkDescargaHD: '',
+          emailEnviado: false,
+          fechaEnvioEmail: undefined,
+        };
+      });
+      guardarPedidosEnStorage([...nuevosPedidos, ...pedidosGuardadosPrevios]);
+
       return {
         grupoPagoId: data.grupoPagoId,
         pedidoIds: data.pedidoIds || [],
@@ -1100,7 +1164,22 @@ export async function descargarLoteLaboratorioZip(
         // Nombre de archivo con el código de cliente (ej: 3ATT_FABRICIO_PEREZ.jpg o 3ATT_FABRICIO_PEREZ_COPIA2.jpg)
         let nombreJpg = foto.nombreArchivoLab || `${codigoCliente}.jpg`;
         if (foto.esCopiaExtra) {
-          nombreJpg = `${codigoCliente}_COPIA${foto.numeroCopia || 2}.jpg`;
+          // Auditoría 2026-09-22: acá se pisaba el nombre con un genérico CODIGO_COPIAn.jpg,
+          // descartando el sufijo de TIPO (docente/otras) que generarNombreArchivoLab ya había
+          // calculado en foto.nombreArchivoLab. Con eso, una copia extra individual y una copia
+          // extra de la foto de docente (mismo numeroCopia, mismo tamaño 15x21) generaban el
+          // mismo nombre, colisionaban, y la de docente terminaba renombrada a un genérico
+          // "CODIGO_2.jpg" por el fallback de más abajo — sin ninguna marca de que era la copia
+          // extra pagada de la foto con el/la docente, con riesgo real de que se arme mal el
+          // sobre en el laboratorio. Mismo criterio de sufijo que usa la rama "por_alumno" (más
+          // abajo en este archivo, fix del 15/9) para no perder el tipo de foto.
+          const sufijoTipoCopia =
+            foto.tipo === 'docente'
+              ? '_DOCENTE'
+              : foto.nombreArchivoOriginal === 'OTRAS_HD.jpg'
+                ? '_OTRAS'
+                : '';
+          nombreJpg = `${codigoCliente}_COPIA${foto.numeroCopia || 2}${sufijoTipoCopia}.jpg`;
         } else if (setNombres.has(nombreJpg)) {
           nombreJpg = `${codigoCliente}_${sanitizarParaMinilab(foto.tipo)}.jpg`;
         }
