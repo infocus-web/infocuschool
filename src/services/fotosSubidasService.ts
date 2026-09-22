@@ -78,18 +78,24 @@ export async function registrarFotosAdmin(fotos: DatosFotoParaRegistrar[]): Prom
   }
 }
 
-/** Panel admin: lista las fotos activas de un curso puntual (grado+turno+división) para mostrarlas/borrarlas */
+/**
+ * Panel admin: lista las fotos activas de un curso puntual (grado+turno+división) para
+ * mostrarlas/borrarlas. Auditoría 2026-09-22 (pedido de Pablo: listado de qué cursos ya tienen
+ * fotos subidas): `grado`/`turno` pasan a ser opcionales — si se omiten (dejando sólo
+ * `colegioId`), el servidor devuelve TODAS las fotos del colegio sin filtrar por curso (ver
+ * `/api/admin/fotos` en server.ts, que ya soportaba esto), y quien llama las agrupa por curso.
+ */
 export async function obtenerFotosActivasAdmin(params: {
   colegioId?: string;
-  grado: string;
-  turno: string;
+  grado?: string;
+  turno?: string;
   division?: string;
 }): Promise<FotoRegistrada[]> {
   try {
     const query = new URLSearchParams();
     if (params.colegioId) query.set('colegioId', params.colegioId);
-    query.set('grado', params.grado);
-    query.set('turno', params.turno);
+    if (params.grado) query.set('grado', params.grado);
+    if (params.turno) query.set('turno', params.turno);
     if (params.division) query.set('division', params.division);
 
     const res = await fetchAdminAutenticado(`/api/admin/fotos?${query.toString()}`);
