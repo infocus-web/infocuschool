@@ -20,6 +20,7 @@ import {
   Heart,
   QrCode,
   Package,
+  PackageCheck,
   Clock,
   Truck,
   FileText,
@@ -50,6 +51,8 @@ import {
   cambiarMetodoPagoPedido,
   PedidoEscolarCompleto,
   buscarPedidoPorSeguimiento,
+  verificarPedidoExistente,
+  PedidoExistenteResumen,
   ItemCarritoHijo,
 } from '../services/pedidosLabService';
 import { crearPreferenciaMercadoPago, crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
@@ -177,6 +180,13 @@ export default function PortalFamiliasModal({
   const [searchedOrder, setSearchedOrder] = useState<any | null>(null);
   const [trackingError, setTrackingError] = useState('');
   const [buscandoSeguimiento, setBuscandoSeguimiento] = useState(false);
+  // Auditoría 2026-09-22 (pedido de Pablo: "por qué me deja volver a comprar si ya tengo un
+  // pedido hecho? debería mostrarme el pedido que ya realicé y preguntarme si deseo hacer otro").
+  // `pedidoExistente` se llena cuando, al tocar "Abrir Galería de Fotos", ya hay un pedido
+  // registrado para ese alumno/a puntual — mientras esté seteado se muestra un cartel de
+  // confirmación en vez de pasar directo al Paso 2.
+  const [pedidoExistente, setPedidoExistente] = useState<PedidoExistenteResumen | null>(null);
+  const [verificandoPedidoExistente, setVerificandoPedidoExistente] = useState(false);
 
   // Step 1: School & Student Selection
   const [searchColegio, setSearchColegio] = useState('');
@@ -754,6 +764,10 @@ export default function PortalFamiliasModal({
 
   const seleccionarHijo = (id: string) => {
     if (id === hijoSeleccionadoId) return;
+
+    // El cartel de "ya tenés un pedido" es específico del alumno/a que estaba activo — al
+    // cambiar de hijo/a se limpia, así no queda mostrado por error para otro hermano.
+    setPedidoExistente(null);
 
     setCarritoHijos((prev) => ({
       ...prev,
@@ -1695,10 +1709,10 @@ export default function PortalFamiliasModal({
   // hubiera borrado los datos de este) no encontraba su pedido, aunque estuviera pagado y
   // guardado en Supabase. Ahora se consulta primero al servidor (datos reales); el localStorage
   // queda sólo como respaldo si la consulta al servidor falla (por ejemplo, sin conexión).
-  const handleConsultarSeguimiento = async (e?: FormEvent) => {
+  const handleConsultarSeguimiento = async (e?: FormEvent, queryOverride?: string) => {
     if (e) e.preventDefault();
     setTrackingError('');
-    const query = trackingQuery.trim().toUpperCase();
+    const query = (queryOverride ?? trackingQuery).trim().toUpperCase();
     if (!query) {
       setTrackingError('Por favor ingresá tu número de pedido o teléfono');
       return;
@@ -1794,6 +1808,27 @@ export default function PortalFamiliasModal({
     setTrackingError('No se encontró ningún pedido registrado con ese número o teléfono. Verificá los datos ingresados.');
   };
 
+  // Auditoría 2026-09-22 (pedido de Pablo: "por qué me deja volver a comprar si ya tengo un
+  // pedido hecho? debería mostrarme el pedido que ya realicé y preguntarme si deseo hacer otro").
+  // Antes, este botón pasaba directo a `setStep(2)`. Ahora primero chequea contra el servidor si
+  // el alumno/a activo ya tiene un pedido en este curso — si lo tiene, se muestra el cartel de
+  // confirmación (`pedidoExistente`) en vez de abrir la galería directamente.
+  const handleAbrirGaleria = async () => {
+    setVerificandoPedidoExistente(true);
+    try {
+      const existente = await verificarPedidoExistente(codigoSeccionValidado || '', nombreAlumno);
+      if (existente) {
+        setPedidoExistente(existente);
+        return;
+      }
+    } catch {
+      // Si falla el chequeo, no bloqueamos a la familia — sigue directo a la galería.
+    } finally {
+      setVerificandoPedidoExistente(false);
+    }
+    setStep(2);
+  };
+
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4 md:p-6 animate-in fade-in duration-200">
       {/* Mobile: ficha a pantalla completa (sin bordes redondeados ni margen) para aprovechar
@@ -1807,8 +1842,13 @@ export default function PortalFamiliasModal({
           1280px de ancho; combinado con las 4 columnas de fotos por fila desde ese mismo
           breakpoint (ver el grid de la grilla de fotos, más abajo), entran más tomas por fila y
           hacen falta menos filas para ver la galería completa. Por debajo de "xl" (tablet y
-          celular) el ancho no cambió. */}
-      <div className="relative w-full max-w-5xl xl:max-w-7xl bg-white rounded-none sm:rounded-3xl shadow-2xl border-0 sm:border border-slate-200 overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[95vh]">
+          celular) el ancho no cambió.
+          Auditoría 2026-09-22 (pedido de Pablo, viendo el Paso 1 con la familia ya identificada:
+          esa pantalla es sólo un título chico + una tarjeta angosta, y quedaba flotando con
+          muchísimo espacio vacío a los costados con el ancho pensado para la galería del Paso 2).
+          El Paso 1 (modo "pedido") vuelve a usar el ancho angosto de siempre; los demás pasos
+          conservan el ancho ampliado de arriba. */}
+      <div className={`relative w-full bg-white rounded-none sm:rounded-3xl shadow-2xl border-0 sm:border border-slate-200 overflow-hidden flex flex-col h-full sm:h-auto sm:max-h-[95vh] ${modalMode === 'pedido' && step === 1 ? 'max-w-3xl' : 'max-w-5xl xl:max-w-7xl'}`}>
         {/* Top Modal Bar */}
         <div className="px-3 py-3 sm:px-6 sm:py-4 bg-slate-900 text-white flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between shrink-0">
           <div className="flex items-center justify-between gap-3">
@@ -2088,12 +2128,18 @@ export default function PortalFamiliasModal({
           {modalMode === 'pedido' && step === 1 && (
             <div className="max-w-3xl mx-auto space-y-8 animate-in fade-in duration-200">
               <div className="text-center space-y-2">
+                {/* Auditoría 2026-09-22 (pedido de Pablo): con la familia ya identificada en este
+                    navegador no hace falta buscar colegio ni ingresar ningún código — ese trabajo
+                    ya está hecho. El título y el subtítulo de "buscar/ingresar" quedan sólo para
+                    cuando todavía no hay una familia validada. */}
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit']">
-                  Buscá tu colegio o ingresá tu código
+                  {familiaActiva ? 'Acceso validado' : 'Buscá tu colegio o ingresá tu código'}
                 </h3>
-                <p className="text-xs sm:text-sm text-slate-600">
-                  Ingresá con los datos de tu hijo/a para abrir su galería protegida con marca de agua.
-                </p>
+                {!familiaActiva && (
+                  <p className="text-xs sm:text-sm text-slate-600">
+                    Ingresá con los datos de tu hijo/a para abrir su galería protegida con marca de agua.
+                  </p>
+                )}
               </div>
 
               {/* Auditoría 2026-09-22 (pedido de Pablo, tras repaso completo de la pantalla real:
@@ -2390,6 +2436,7 @@ export default function PortalFamiliasModal({
                             setCodigoValidadoMsg(null);
                             setCodigoErrorMsg(null);
                             setCodigoSeccionValidado(null);
+                            setPedidoExistente(null);
                             setFotosDisponibles([]);
                             setFotoSeleccionadaIndividual('');
                             setFotoSeleccionadaGrupal('');
@@ -2520,23 +2567,80 @@ export default function PortalFamiliasModal({
                     </div>
                   )}
 
-                  <div className="pt-2 flex justify-end">
-                    <button
-                      id="btn-continuar-galeria"
-                      onClick={() => setStep(2)}
-                      className="px-6 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow-md shadow-amber-400/20 flex items-center gap-2 cursor-pointer transition-all active:scale-98"
-                    >
-                      <span>Abrir Galería de Fotos</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {/* Auditoría 2026-09-22 (pedido de Pablo, viendo su propia galería con un
+                      pedido previo ya hecho): mientras `pedidoExistente` esté seteado (ver
+                      `handleAbrirGaleria`), se muestra este cartel en vez del botón normal —
+                      avisa que ya hay un pedido para este alumno/a y deja elegir entre verlo o
+                      confirmar que se quiere hacer otro. */}
+                  {pedidoExistente ? (
+                    <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-xl text-left space-y-3 animate-in fade-in duration-150">
+                      <div className="flex items-start gap-2.5">
+                        <PackageCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-extrabold text-amber-950">
+                            {nombreAlumno} ya tiene un pedido registrado
+                          </p>
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            Pedido <strong>{pedidoExistente.id}</strong> · {pedidoExistente.kit} · ${pedidoExistente.total.toLocaleString('es-AR')} ·{' '}
+                            {pedidoExistente.estado === 'entregado'
+                              ? 'Entregado'
+                              : pedidoExistente.estado === 'pagado'
+                              ? 'Pagado'
+                              : 'Pendiente de pago'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModalMode('seguimiento');
+                            setTrackingQuery(pedidoExistente.id);
+                            handleConsultarSeguimiento(undefined, pedidoExistente.id);
+                            setPedidoExistente(null);
+                          }}
+                          className="flex-1 px-4 py-2.5 bg-white hover:bg-amber-100 text-amber-900 border-2 border-amber-400 font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                        >
+                          <Package className="w-4 h-4" />
+                          <span>Ver mi pedido</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStep(2)}
+                          className="flex-1 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
+                        >
+                          <span>Sí, quiero hacer otro pedido</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        id="btn-continuar-galeria"
+                        onClick={handleAbrirGaleria}
+                        disabled={verificandoPedidoExistente}
+                        className="px-6 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs rounded-xl shadow-md shadow-amber-400/20 flex items-center gap-2 cursor-pointer transition-all active:scale-98 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <span>{verificandoPedidoExistente ? 'Verificando...' : 'Abrir Galería de Fotos'}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
 
-          {/* STEP 2: Interactive Photo Gallery */}
-          {step === 2 && (
+          {/* STEP 2: Interactive Photo Gallery
+              Auditoría 2026-09-22 (bug reportado por Pablo con captura: la barra sticky de este
+              paso se veía solapada, a mitad de camino, debajo de "Consultar Estado de Mi Pedido").
+              Causa: a esta condición le faltaba exigir también `modalMode === 'pedido'` (a
+              diferencia del Paso 1, que sí lo exige). `step` y `modalMode` son dos estados
+              independientes — tocar la pestaña "Consultar Mi Pedido" nunca resetea `step`, así
+              que una familia que hiciera esa consulta estando parada en el Paso 2 (la galería)
+              terminaba viendo los dos pasos renderizados a la vez, uno encima del otro. */}
+          {modalMode === 'pedido' && step === 2 && (
             <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-200">
               {/* Auditoría 2026-09-22 (cuarto pedido de Pablo sobre esta misma pantalla: "en esas
                   filas sobra espacio para poner todo en una sola"): antes esto eran DOS tarjetas
@@ -3057,7 +3161,7 @@ export default function PortalFamiliasModal({
           )}
 
           {/* STEP 3: Kit Selection & Add-ons */}
-          {step === 3 && (
+          {modalMode === 'pedido' && step === 3 && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="text-center max-w-xl mx-auto">
                 <h3 className="text-2xl font-extrabold text-slate-900 font-['Outfit']">
@@ -3302,7 +3406,7 @@ export default function PortalFamiliasModal({
           )}
 
           {/* STEP 4: Checkout & Payment */}
-          {step === 4 && (
+          {modalMode === 'pedido' && step === 4 && (
             <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in duration-200 text-left">
               <div className="text-center space-y-1">
                 <h3 className="text-2xl font-extrabold text-slate-900 font-['Outfit']">
