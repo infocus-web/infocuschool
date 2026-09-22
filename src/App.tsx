@@ -35,7 +35,16 @@ export default function App() {
   const [selectedColegioId, setSelectedColegioId] = useState<string | undefined>(undefined);
   const [selectedKitId, setSelectedKitId] = useState<string | undefined>(undefined);
   const [selectedCodigo, setSelectedCodigo] = useState<string | undefined>(undefined);
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
+  // Auditoría 2026-09-22 (integración Zoho Mail para la campaña de prospección a colegios): el
+  // servidor redirige acá con "?zoho=conectado" o "?zoho=error" después del OAuth con Zoho — se
+  // detecta al cargar para reabrir el panel directo en la pestaña de la campaña, en vez de que
+  // Pablo tenga que loguearse y navegar de nuevo hasta ahí a mano.
+  const [adminModalOpen, setAdminModalOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).has('zoho');
+    }
+    return false;
+  });
 
   const handleOpenFamilias = (colegioId?: string, codigo?: string) => {
     setSelectedColegioId(colegioId);
@@ -137,6 +146,7 @@ export default function App() {
           setAdminModalOpen(false);
           handleOpenFamilias('col-inicial-2026', cod);
         }}
+        tabInicial={typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('zoho') ? 'zoho' : undefined}
       />
 
       {/* Pantalla de un solo pedido para cuando se escanea el QR pegado en el sobre físico del
