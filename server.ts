@@ -2813,6 +2813,14 @@ function normalizarTelefonoServidor(tel: string): string {
   return (tel || '').replace(/\D/g, '');
 }
 
+// Auditoría 2026-09-22 (pedido de Pablo: "que cada vez que vayan a ingresar, lo hagan con
+// nombre y apellido del padre, tutor o encargado, el DNI del padre, tutor o encargado, y el
+// código generado"): igual que el teléfono, el DNI se compara sólo por dígitos (sin puntos ni
+// espacios que la familia pueda haber tipeado).
+function normalizarDniServidor(dni: unknown): string {
+  return String(dni || '').replace(/\D/g, '');
+}
+
 // Auditoría 2026-09-22 (bug real encontrado en auditoría de código, BAJO): los timestamps
 // legibles que se guardan en `fecha_inscripcion`/`fecha_aprobacion` se armaban con
 // `now.getDate()/getMonth()/getHours()`, que usan la hora LOCAL DEL PROCESO NODE, no la de
@@ -3573,7 +3581,7 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
 // (nunca a uno nuevo) y responde sin datos de la familia.
 app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 15, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
-    const { query } = req.body || {};
+    const { query, tutorNombre, dni } = req.body || {};
     const q = String(query || '').trim();
     if (q.length < 3) {
       return res.status(400).json({ success: false, error: 'Ingresá tu código, teléfono o email.' });
@@ -3588,47 +3596,86 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
     const qEmail = q.toLowerCase();
     const qTel = normalizarTelefonoServidor(q);
 
-    // Paso 1: ¿lo que se escribió ES el código real? Coincidencia exacta = prueba de posesión.
+    // Paso 1: ¿lo que se escribió ES el código real? Coincidencia exacta = prueba de posesión
+    // del código, pero ya no alcanza sola.
     // Auditoría 2026-09-16 (hallazgo en vivo, Pablo probando el sitio como un cliente más):
     // este código lo puede compartir MÁS DE UNA familia a propósito — es, en los hechos, el
     // código de la sección (colegio+grado+turno+división) que el colegio reparte por WhatsApp a
-    // todo el curso — pero acá se devolvía la fila completa de la PRIMERA familia que apareciera
-    // con ese código (nombre, apellido del alumno, email, teléfono, DNI) a CUALQUIERA que
-    // escribiera el mismo código, sin importar si era esa familia o una compañera de curso. Se
-    // pide con `limit(2)` (no 1) para poder distinguir "este código lo tiene una sola familia
-    // todavía" (fila completa, como antes) de "ya lo comparten dos o más" (sólo se manda lo
-    // necesario para abrir la galería del curso — nunca el nombre ni el contacto de nadie).
-    let encontrada: any = null;
-    let codigoCompartido = false;
-    const tryEqCodigo = async (column: string, value: string) => {
-      if (encontrada || !value) return;
-      const { data } = await supabase.from('inscripciones').select('*').eq(column, value).limit(2);
-      if (data && data.length > 0) {
-        encontrada = data[0];
-        codigoCompartido = data.length > 1;
-      }
+    // todo el curso.
+    // Auditoría 2026-09-22 (pedido explícito de Pablo: "que cada vez que vayan a ingresar, lo
+    // hagan con nombre y apellido del padre/tutor/encargado, el DNI del padre/tutor/encargado, y
+    // el código generado... con eso solucionamos el problema de que con un solo código por curso
+    // no se crucen los datos de los alumnos al momento de ingresar"): ya no alcanza con acertar
+    // el código — TODAS las familias que comparten sección lo tienen — así que ahora se piden
+    // SIEMPRE, código + nombre del tutor + DNI del tutor juntos, y se buscan TODAS las filas de
+    // ese código (no sólo 2) para poder identificar exactamente cuál es. Como el DNI del tutor es
+    // un campo nuevo (`padre_dni`) que ninguna de las familias ya aprobadas cargó todavía, el
+    // primer ingreso de cada una se resuelve por nombre (comparado sin importar tildes/orden de
+    // palabras) y ese DNI se guarda ahí mismo para que los ingresos siguientes ya lo validen
+    // directo, sin depender más del nombre.
+    let candidatos: any[] = [];
+    const tryEqCodigoTodas = async (column: string, value: string) => {
+      if (candidatos.length || !value) return;
+      const { data } = await supabase.from('inscripciones').select('*').eq(column, value);
+      if (data && data.length > 0) candidatos = data;
     };
-    await tryEqCodigo('codigo_asignado', qUpper);
-    await tryEqCodigo('codigo_familiar', qUpper);
+    await tryEqCodigoTodas('codigo_asignado', qUpper);
+    await tryEqCodigoTodas('codigo_familiar', qUpper);
 
-    if (encontrada) {
-      if (codigoCompartido) {
+    if (candidatos.length > 0) {
+      const soloCurso = (fila: any) => ({
+        estado: fila.estado,
+        codigo_asignado: fila.codigo_asignado,
+        codigo_familiar: fila.codigo_familiar,
+        colegio_id: fila.colegio_id,
+        colegio_nombre: fila.colegio_nombre,
+        grado: fila.grado,
+        division: fila.division,
+        turno: fila.turno,
+      });
+
+      const tutorNombreInput = String(tutorNombre || '').trim();
+      const dniInput = normalizarDniServidor(dni);
+
+      if (!tutorNombreInput || dniInput.length < 6) {
         return res.json({
           success: true,
-          codigoCompartido: true,
-          inscripcion: {
-            estado: encontrada.estado,
-            codigo_asignado: encontrada.codigo_asignado,
-            codigo_familiar: encontrada.codigo_familiar,
-            colegio_id: encontrada.colegio_id,
-            colegio_nombre: encontrada.colegio_nombre,
-            grado: encontrada.grado,
-            division: encontrada.division,
-            turno: encontrada.turno,
-          },
+          requiereDatosTutor: true,
+          inscripcion: soloCurso(candidatos[0]),
         });
       }
-      return res.json({ success: true, inscripcion: encontrada });
+
+      // 1) ¿alguna fila ya tiene guardado justo este DNI? (ingresos posteriores al primero)
+      let match = candidatos.find((c: any) => c.padre_dni && normalizarDniServidor(c.padre_dni) === dniInput) || null;
+
+      // 2) si ninguna lo tenía guardado, se identifica por nombre entre las que todavía no
+      // tienen DNI cargado — y, si hay una sola que coincide, se aprovecha para guardárselo.
+      if (!match) {
+        const nombreNormEntrada = normalizarNombrePorPalabras(tutorNombreInput);
+        const porNombre = candidatos.filter(
+          (c: any) => !c.padre_dni && normalizarNombrePorPalabras(c.padre_nombre) === nombreNormEntrada && nombreNormEntrada.length > 0
+        );
+        if (porNombre.length === 1) {
+          match = porNombre[0];
+          try {
+            await supabase.from('inscripciones').update({ padre_dni: dniInput }).eq('id', match.id);
+            match.padre_dni = dniInput;
+          } catch (e) {
+            console.warn('No se pudo guardar el DNI del tutor en /api/inscripciones/buscar:', e);
+          }
+        }
+      }
+
+      if (!match) {
+        return res.json({
+          success: true,
+          requiereDatosTutor: true,
+          datosNoCoinciden: true,
+          inscripcion: soloCurso(candidatos[0]),
+        });
+      }
+
+      return res.json({ success: true, inscripcion: match });
     }
 
     // Paso 2: no era el código. Buscar por contacto (teléfono o email) — ver auditoría arriba,
@@ -3720,12 +3767,28 @@ app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 30, 10 * 60 * 1
     const supabase = getServerSupabase();
     if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
 
-    const { data: fila } = await supabase
+    // Auditoría 2026-09-22 (mismo código de sección compartido por todo el curso, ver
+    // `/api/inscripciones/buscar` más arriba): este endpoint pedía la fila con `.limit(1)`, así
+    // que si dos o más familias comparten `codigo_asignado` (lo normal, es el código del curso)
+    // siempre devolvía los hijos de la PRIMERA que apareciera en la tabla — no necesariamente la
+    // familia que está mirando la pantalla. Ahora se piden TODAS las filas de ese código y, si
+    // hay más de una, se identifica la correcta por el DNI del tutor (`padre_dni`, ya validado en
+    // `/api/inscripciones/buscar` antes de llegar acá) — si por algún motivo no llega o no
+    // coincide, se cae de nuevo a la primera fila en vez de romper la pantalla.
+    const dniQuery = normalizarDniServidor(req.query.dni);
+    const { data: filas } = await supabase
       .from('inscripciones')
-      .select('id, colegio_id, colegio_nombre, alumno_nombre, alumno_apellido, grado, division, turno, estado, codigo_asignado, hermanos')
-      .eq('codigo_asignado', codigo)
-      .limit(1)
-      .maybeSingle();
+      .select('id, colegio_id, colegio_nombre, alumno_nombre, alumno_apellido, grado, division, turno, estado, codigo_asignado, padre_dni, hermanos')
+      .eq('codigo_asignado', codigo);
+
+    if (!filas || filas.length === 0) {
+      return res.status(404).json({ success: false, error: 'Código familiar no encontrado o todavía no aprobado.' });
+    }
+    let fila = filas[0];
+    if (filas.length > 1 && dniQuery.length >= 6) {
+      const match = filas.find((f: any) => f.padre_dni && normalizarDniServidor(f.padre_dni) === dniQuery);
+      if (match) fila = match;
+    }
 
     if (!fila || fila.estado !== 'aceptado' || !fila.codigo_asignado) {
       return res.status(404).json({ success: false, error: 'Código familiar no encontrado o todavía no aprobado.' });
@@ -5250,10 +5313,16 @@ async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
       </div>
       <p style="font-size: 13px; line-height: 1.6; color: #334155;">Con este único código podrá:</p>
       <ol style="font-size: 13px; color: #334155; padding-left: 20px;">
-        <li>Ingresar a retratoescolar.com.ar</li>
+        <li>Ingresar a retratoescolar.com.ar con su nombre y apellido, su DNI y este código</li>
         <li>Ver las galerías individuales y grupales de todos sus hijos sin usar códigos diferentes</li>
         <li>Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago</li>
       </ol>
+      <!-- Auditoría 2026-09-22 (pedido de Pablo): este código lo comparte todo el curso, así que
+           además de él hace falta escribir el nombre y DNI del tutor para que el sitio identifique
+           a la familia exacta — se lo aclaramos acá para que no se sorprendan al entrar. -->
+      <p style="font-size: 12px; color: #92400e; background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; line-height: 1.5;">
+        <strong>Importante:</strong> este código es el mismo para todo el curso. Al ingresar, además del código va a tener que completar el <strong>nombre y apellido</strong> y el <strong>DNI</strong> de quien se inscribió, para que el sistema reconozca a sus hijos.
+      </p>
       <div style="font-size: 12px; color: #64748b; line-height: 1.6; border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
         Para cualquier consulta, nuestro equipo fotográfico está a su entera disposición.
       </div>
