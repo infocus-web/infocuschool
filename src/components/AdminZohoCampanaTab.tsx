@@ -15,26 +15,26 @@ import {
   parsearCsvDestinatarios,
 } from '../services/zohoCampanaService';
 
-const ASUNTO_INICIAL = 'Propuesta de cobertura fotográfica 2026 para {{institucion}}';
+const ASUNTO_INICIAL = 'Una propuesta pensada especialmente para {{institucion}} — Ciclo 2026';
 const CUERPO_INICIAL = `Hola equipo de {{institucion}}:
 
-Soy Pablo Alderete, de Retrato Escolar, una propuesta de Productora Infocus.
+Mi nombre es Pablo Alderete, de Retrato Escolar (Productora Infocus). Nos dedicamos a la cobertura fotográfica escolar y nos encantaría sumar a {{institucion}} a las instituciones con las que trabajamos en la Zona Norte durante el ciclo lectivo 2026.
 
-Estamos contactando instituciones educativas de Zona Norte de Buenos Aires para presentar nuestra cobertura fotográfica para el ciclo lectivo 2026.
+Sabemos lo que significa para una familia tener esas fotos que después quedan para siempre — el primer día, el acto, la salida — y por eso ponemos mucho cuidado en que todo el proceso sea simple tanto para el colegio como para cada familia.
 
 COBERTURA ESCOLAR 2026
 
-Una propuesta pensada para registrar los momentos más importantes de la comunidad educativa, con una organización clara para el colegio y una experiencia sencilla para las familias.
+• Cobertura fotográfica profesional, con fotógrafos con experiencia en el ámbito escolar.
+• Coordinación flexible, adaptada a los tiempos y actividades de cada institución.
+• Todo el proceso organizado de punta a punta, sin que el colegio tenga que ocuparse de la logística.
+• Un canal directo de atención tanto para el colegio como para las familias.
 
-• Cobertura fotográfica profesional.
-• Coordinación adaptada a cada institución.
-• Organización integral del proceso.
-• Atención directa para el colegio y las familias.
-
-Pueden conocer la propuesta completa, ejemplos y modalidades de trabajo acá:
+Nos encantaría mostrarles con más detalle cómo trabajamos — acá pueden ver ejemplos y la propuesta completa:
 https://www.retratoescolar.com.ar/cobertura-2026.html
 
-Nos gustaría coordinar una breve presentación para mostrarles cómo podemos adaptar la cobertura fotográfica a las necesidades de su institución durante el ciclo lectivo 2026.
+Si les interesa, coordinamos una charla breve, cuando les quede cómodo, para contarles cómo podemos adaptar la cobertura a {{institucion}} y responder cualquier duda.
+
+¡Esperamos poder acompañarlos este ciclo lectivo!
 
 Saludos,
 
