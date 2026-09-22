@@ -151,7 +151,14 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
     }
   };
 
-  const handleAprobar = async (item: InscripcionFamilia, abrirWhatsAppAuto = true) => {
+  // Auditoría 2026-09-22 (pedido de Pablo: "en el momento de inscribirme para probar, me envio
+  // un whatsapp, no deberia"): al aprobar, además de mostrar el modal "Aprobación & Código
+  // Despachado" (que ya tiene su propio botón "Abrir Chat de WhatsApp con la Familia" para
+  // mandarlo a mano), este handler TAMBIÉN abría un `window.open` directo al link de wa.me con
+  // el mensaje ya cargado — una acción de más, sin que nadie la pidiera, apenas se tocaba
+  // "Aceptar y Enviar". El default pasa a `false`: el WhatsApp se prepara y se puede mandar
+  // desde el botón del modal, pero ya no se dispara solo.
+  const handleAprobar = async (item: InscripcionFamilia, abrirWhatsAppAuto = false) => {
     const codigoElegido =
       codigosEditables[item.id] ||
       item.codigoAsignado ||
@@ -598,7 +605,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             </span>
                             <button
                               type="button"
-                              onClick={() => handleAprobar(item, true)}
+                              onClick={() => handleAprobar(item)}
                               disabled={procesando}
                               className="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                               title="Aprobar y despachar código de acceso por Email"
