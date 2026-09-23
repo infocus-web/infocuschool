@@ -1069,6 +1069,46 @@ export default function PortalFamiliasModal({
     }
   }, [preselectedCodigo]);
 
+  // Auditoría 2026-09-22 (pedido de Pablo, tras ver el cartel sólo aparecer al tocar el botón:
+  // "esto es lo primero que se ve cuando ingreso, debería aparecer mi pedido como primera
+  // vista"). El chequeo de si ya existe un pedido para el alumno/a activo ya no espera a que se
+  // toque "Abrir Galería de Fotos" — se dispara solo apenas se resuelve el alumno/a (incluso
+  // antes de que la familia haga nada), para que el cartel de "ya tenés un pedido" sea lo primero
+  // que se ve en esta pantalla de "Acceso validado", no algo que aparece recién después de un
+  // click. Se repite cada vez que cambia el alumno/a activo (`nombreAlumno`) o su código de
+  // sección real, así que también cubre cambiar de hijo/a en una familia con más de uno.
+  // Auditoría 2026-09-23 (bug crítico reportado por Pablo: "queda en blanco la página" — la web
+  // entera, no sólo el modal): este useEffect estaba declarado DESPUÉS del `if (!isOpen) return
+  // null;` de más abajo, violando las Reglas de los Hooks de React (todo hook debe ejecutarse en
+  // el mismo orden en cada render, nunca depender de una condición/return anterior). Mientras el
+  // modal permanece montado y sólo alterna `isOpen`, React ejecuta 0 hooks en el render con
+  // `isOpen=false` (corta en el return de arriba) y este hook de más en el render con
+  // `isOpen=true` — apenas se abre el portal, React detecta el desfasaje y tira "Error #310:
+  // Rendered more hooks than during the previous render", lo cual desmonta TODA la app (no hay
+  // Error Boundary) dejando la pantalla en blanco. Reproducido en forma determinística con un
+  // navegador headless contra producción: alcanza con abrir el modal (botón "Ingresar al
+  // Portal"), sin llegar siquiera a escribir un código. Se soluciona moviendo el hook a ANTES del
+  // `if (!isOpen) return null;`, junto con el resto — así se ejecuta siempre, en cada render, sin
+  // condicionarlo a `isOpen`.
+  useEffect(() => {
+    if (!codigoSeccionValidado || !nombreAlumno) {
+      setPedidoExistente(null);
+      return;
+    }
+    let cancelado = false;
+    setVerificandoPedidoExistente(true);
+    verificarPedidoExistente(codigoSeccionValidado, nombreAlumno)
+      .then((existente) => {
+        if (!cancelado) setPedidoExistente(existente);
+      })
+      .finally(() => {
+        if (!cancelado) setVerificandoPedidoExistente(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [codigoSeccionValidado, nombreAlumno]);
+
   if (!isOpen) return null;
 
   // Filtered schools
@@ -1808,33 +1848,6 @@ export default function PortalFamiliasModal({
     setSearchedOrder(null);
     setTrackingError('No se encontró ningún pedido registrado con ese número o teléfono. Verificá los datos ingresados.');
   };
-
-  // Auditoría 2026-09-22 (pedido de Pablo, tras ver el cartel sólo aparecer al tocar el botón:
-  // "esto es lo primero que se ve cuando ingreso, debería aparecer mi pedido como primera
-  // vista"). El chequeo de si ya existe un pedido para el alumno/a activo ya no espera a que se
-  // toque "Abrir Galería de Fotos" — se dispara solo apenas se resuelve el alumno/a (incluso
-  // antes de que la familia haga nada), para que el cartel de "ya tenés un pedido" sea lo primero
-  // que se ve en esta pantalla de "Acceso validado", no algo que aparece recién después de un
-  // click. Se repite cada vez que cambia el alumno/a activo (`nombreAlumno`) o su código de
-  // sección real, así que también cubre cambiar de hijo/a en una familia con más de uno.
-  useEffect(() => {
-    if (!codigoSeccionValidado || !nombreAlumno) {
-      setPedidoExistente(null);
-      return;
-    }
-    let cancelado = false;
-    setVerificandoPedidoExistente(true);
-    verificarPedidoExistente(codigoSeccionValidado, nombreAlumno)
-      .then((existente) => {
-        if (!cancelado) setPedidoExistente(existente);
-      })
-      .finally(() => {
-        if (!cancelado) setVerificandoPedidoExistente(false);
-      });
-    return () => {
-      cancelado = true;
-    };
-  }, [codigoSeccionValidado, nombreAlumno]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-0 sm:p-4 md:p-6 animate-in fade-in duration-200">
