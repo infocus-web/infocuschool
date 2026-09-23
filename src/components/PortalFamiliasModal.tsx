@@ -246,7 +246,20 @@ export default function PortalFamiliasModal({
     let cancelado = false;
     // Sin un código real y validado no se expone ninguna galería.
     obtenerGaleriaPublica({ codigo: codigoSeccionValidado }).then((resultado) => {
-      if (!cancelado) setFotosDisponibles(resultado.fotos);
+      if (cancelado) return;
+      setFotosDisponibles(resultado.fotos);
+      // Auditoría 2026-09-23: el curso real de esta galería es el que resuelve el servidor a
+      // partir del código (codigos_seccion). Se toma de ahí para que el pedido se registre con el
+      // mismo grado/turno/división de las fotos: si el grado de la inscripción ya no figuraba
+      // textual en la lista del colegio (el fotógrafo la editó), un efecto de más abajo lo
+      // reemplazaba por el primero de la lista, y el pedido quedaba con un curso sin fotos (el
+      // .zip HD nunca se podía armar).
+      if (resultado.seccion) {
+        const { grado: gradoSeccion, turno: turnoSeccion, division: divisionSeccion } = resultado.seccion;
+        if (gradoSeccion) setGrado(gradoSeccion);
+        if (turnoSeccion) setTurno(turnoSeccion);
+        if (divisionSeccion !== undefined && divisionSeccion !== null) setDivision(divisionSeccion);
+      }
     });
     return () => {
       cancelado = true;
@@ -536,6 +549,9 @@ export default function PortalFamiliasModal({
   // manejo para "grupo_pago_id", buscando en localStorage TODOS los pedidos de ese grupo (ahora
   // sí se cachean ahí, ver registrarCarritoMultipleDesdePortal) para armar una confirmación con
   // los nombres y el total reales, igual que hace handleCompletarPagoMultiple antes de pagar.
+  // Marca que este montaje viene de volver de una pasarela de pago (ver el efecto de abajo), para
+  // que el efecto de "sesión familiar" no mande la pantalla de confirmación de vuelta al Paso 1.
+  const retornoDePagoRef = useRef(false);
   useEffect(() => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
@@ -543,6 +559,7 @@ export default function PortalFamiliasModal({
       const naveStatus = searchParams.get('nave_status');
       const pedidoId = searchParams.get('pedido_id');
       const grupoPagoId = searchParams.get('grupo_pago_id');
+      if ((mpStatus || naveStatus) && (pedidoId || grupoPagoId)) retornoDePagoRef.current = true;
 
       const armarConfirmacionGrupo = (metodo: 'mercadopago' | 'nave', estadoInicial: 'aprobado' | 'pendiente') => {
         const pedidosGuardados = obtenerPedidosGuardados();
@@ -908,7 +925,12 @@ export default function PortalFamiliasModal({
         setTutorNombre('');
         setTutorWhatsapp('');
         setTutorEmail('');
-        setStep(1);
+        // Auditoría 2026-09-23 (bug real): al volver de Mercado Pago/Nave en un navegador sin la
+        // sesión familiar guardada (muy común en el celular: la app de pago abre la vuelta en otro
+        // navegador), el efecto de retorno ponía el Paso 5 (confirmación) y este efecto — que corre
+        // después, y de nuevo cuando termina de cargar la lista de colegios — lo pisaba con el
+        // Paso 1: la familia no veía nunca la confirmación de su pago.
+        if (!retornoDePagoRef.current) setStep(1);
       }
     }
   }, [isOpen, colegios]);
@@ -921,7 +943,9 @@ export default function PortalFamiliasModal({
   }, [preselectedColegioId, colegios]);
 
   useEffect(() => {
-    if (selectedColegio) {
+    // Con un código de sección ya validado, el curso lo define el servidor (ver la carga de la
+    // galería más arriba) — no se lo pisa con el primero de la lista del colegio.
+    if (selectedColegio && !codigoSeccionValidado) {
       if (!grado || !selectedColegio.grados.includes(grado)) {
         setGrado(selectedColegio.grados[0] || '');
       }
@@ -3753,11 +3777,20 @@ export default function PortalFamiliasModal({
                   </span>
                 )}
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit'] mt-3">
-                  ¡Gracias por tu pedido, {tutorNombre}!
+                  {/* Al volver del pago en otro navegador (sin sesión ni pedido guardados) estos
+                      datos no existen: se usan los del pedido y, si tampoco están, un texto neutro
+                      en vez de "¡Gracias por tu pedido, !" / "El pedido de  para ". */}
+                  ¡Gracias por tu pedido{(tutorNombre || (pedidoGenerado?.tutorNombre !== 'Familia' ? pedidoGenerado?.tutorNombre : '')) ? `, ${tutorNombre || pedidoGenerado?.tutorNombre}` : ''}!
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-600 mt-2">
-                  El pedido de <strong>{nombreAlumno}</strong> para{' '}
-                  <strong>{selectedColegio?.nombre}</strong> ya está registrado en el sistema.
+                  {(nombreAlumno || selectedColegio?.nombre) ? (
+                    <>
+                      El pedido{nombreAlumno ? <> de <strong>{nombreAlumno}</strong></> : null}
+                      {selectedColegio?.nombre ? <> para <strong>{selectedColegio.nombre}</strong></> : null} ya está registrado en el sistema.
+                    </>
+                  ) : (
+                    'Tu pedido ya está registrado en el sistema.'
+                  )}
                 </p>
               </div>
 
@@ -4068,14 +4101,19 @@ export default function PortalFamiliasModal({
                     archivo ni copias extra repetidas. El detalle de archivos para el
                     laboratorio sigue disponible para el fotógrafo en el panel de admin
                     (pestaña "Laboratorio & Ensobrado"). */}
-                {pedidoGenerado && (
+                {/* Auditoría 2026-09-23 (bug real, encontrado con un navegador headless): al volver
+                    de Mercado Pago/Nave en un navegador que no tiene el pedido guardado (el caso
+                    típico en celular), el pedido de respaldo que arma la pantalla no trae
+                    `archivosParaLaboratorio` — el `.filter` sobre undefined tiraba abajo todo el
+                    portal justo en la pantalla de confirmación del pago. */}
+                {pedidoGenerado && (pedidoGenerado.archivosParaLaboratorio || []).some((archivo) => !archivo.esCopiaExtra) && (
                   <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
                     <div className="flex items-center gap-1.5 text-slate-700 font-bold text-xs mb-2.5">
                       <Images className="w-4 h-4 text-slate-500" />
                       <span>Tus fotos elegidas:</span>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                      {pedidoGenerado.archivosParaLaboratorio
+                      {(pedidoGenerado.archivosParaLaboratorio || [])
                         .filter(archivo => !archivo.esCopiaExtra)
                         .map((archivo, idx) => (
                           <div key={idx} className="space-y-1">
@@ -4110,17 +4148,22 @@ export default function PortalFamiliasModal({
                         pedido ya confirmado (pedidoGenerado), no el estado en vivo de la
                         pantalla — que con 2+ hijos ya dice "2 hijos/as" en vez del kit de uno
                         solo (ver pedidoSintetico más arriba en este archivo). */}
-                    <strong>Kit:</strong> {pedidoGenerado?.kitNombre ?? selectedKit.nombre} (${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} ARS)
+                    <strong>Kit:</strong> {pedidoGenerado?.kitNombre ?? selectedKit.nombre}
+                    {(pedidoGenerado?.total ?? total) > 0 ? ` ($${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} ARS)` : ''}
                   </p>
-                  <p>
-                    <strong>Curso:</strong> {grado} "{division}" · Turno {turno}
-                  </p>
+                  {grado && (
+                    <p>
+                      <strong>Curso:</strong> {grado}{division ? ` "${division}"` : ''}{turno ? ` · Turno ${turno}` : ''}
+                    </p>
+                  )}
                   <p>
                     <strong>Entrega impresa:</strong> Se entrega en sobre cerrado rotulado con el código y nombre del alumno en la institución.
                   </p>
-                  <p>
-                    <strong>WhatsApp de contacto:</strong> {tutorWhatsapp}
-                  </p>
+                  {tutorWhatsapp && (
+                    <p>
+                      <strong>WhatsApp de contacto:</strong> {tutorWhatsapp}
+                    </p>
+                  )}
                 </div>
               </div>
 

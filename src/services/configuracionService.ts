@@ -244,7 +244,13 @@ export async function sincronizarDesdeSupabase(): Promise<ConfiguracionWhatsApp 
     };
 
     if (typeof window !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      // El caché local es opcional: si el almacenamiento falla (modo privado, cuota llena), igual
+      // se avisa a la página del número real — antes el error cortaba acá y quedaba el de defecto.
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+      } catch {
+        // sin caché local
+      }
       window.dispatchEvent(new CustomEvent('whatsapp_config_actualizada', { detail: config }));
     }
 

@@ -168,8 +168,14 @@ export function obtenerPedidosGuardados(): PedidoEscolarCompleto[] {
     if (!raw) {
       return [];
     }
-    const parsed: PedidoEscolarCompleto[] = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
+    const parsedCrudo: PedidoEscolarCompleto[] = JSON.parse(raw);
+    if (!Array.isArray(parsedCrudo)) return [];
+    // Auditoría 2026-09-23: datos guardados por versiones anteriores del sitio pueden venir sin
+    // `archivosParaLaboratorio` — el panel de Laboratorio y el portal hacen .map/.filter sobre ese
+    // campo y la pantalla entera se caía. Se normaliza al leer.
+    const parsed = parsedCrudo
+      .filter((p) => p && typeof p === 'object')
+      .map((p) => (Array.isArray(p.archivosParaLaboratorio) ? p : { ...p, archivosParaLaboratorio: [] }));
 
     // Filter out all sample / mock demo orders
     const cleaned = parsed.filter(
