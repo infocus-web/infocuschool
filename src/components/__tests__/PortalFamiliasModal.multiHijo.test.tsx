@@ -35,13 +35,13 @@ async function abrirGaleriaConDosHijos() {
   await user.click(botonAbrirGaleria);
 
   // Confirma que ya estamos en el Paso 2 con los 2 hermanos listados.
-  await screen.findByText(/tus hijos\/as en este colegio/i);
+  await screen.findByRole('group', { name: /tus hijos\/as en este colegio/i });
   return user;
 }
 
 /** Click en el selector "Tus hijos/as" para pasar al hermano con ese nombre. */
 async function cambiarAHijo(user: ReturnType<typeof userEvent.setup>, nombre: string) {
-  const contenedor = screen.getByText(/tus hijos\/as en este colegio/i).closest('.bg-amber-50') as HTMLElement;
+  const contenedor = screen.getByRole('group', { name: /tus hijos\/as en este colegio/i });
   const boton = within(contenedor).getByRole('button', { name: new RegExp(nombre, 'i') });
   await user.click(boton);
 }
@@ -49,9 +49,9 @@ async function cambiarAHijo(user: ReturnType<typeof userEvent.setup>, nombre: st
 async function elegirFoto(user: ReturnType<typeof userEvent.setup>, categoria: 'grupal' | 'individual' | 'docente', titulo: RegExp) {
   // Las 3 categorías tienen su propio "slot" arriba (Foto 1/2/3 de 3) que cambia la pestaña activa.
   const slotLabels: Record<typeof categoria, RegExp> = {
-    grupal: /foto 1 de 3 \(grupal/i,
-    individual: /foto 2 de 3 \(retrato/i,
-    docente: /foto 3 de 3 \(con seño/i,
+    grupal: /^1\/3 grupal$/i,
+    individual: /^2\/3 retrato$/i,
+    docente: /^3\/3 con seño$/i,
   };
   const slot = screen.getByText(slotLabels[categoria]).closest('div')!.parentElement!;
   await user.click(slot);
@@ -87,9 +87,9 @@ describe('PortalFamiliasModal — carrito multi-hijo (mellizos, misma sección)'
     // Vuelve a Pablo: su individual debe seguir marcada, pero la grupal de Sofia NO debe
     // aparecer como si Pablo también la hubiera elegido.
     await cambiarAHijo(user, 'Pablo');
-    const slotIndividualPablo = screen.getByText(/foto 2 de 3 \(retrato/i).closest('div')!.parentElement!;
-    expect(within(slotIndividualPablo).getByText(/clic para cambiar/i)).toBeInTheDocument();
-    const slotGrupalPablo = screen.getByText(/foto 1 de 3 \(grupal/i).closest('div')!.parentElement!;
+    const slotIndividualPablo = screen.getByText(/^2\/3 retrato$/i).closest('div')!.parentElement!;
+    expect(within(slotIndividualPablo).queryByText(/sin elegir/i)).not.toBeInTheDocument();
+    const slotGrupalPablo = screen.getByText(/^1\/3 grupal$/i).closest('div')!.parentElement!;
     expect(within(slotGrupalPablo).getByText(/sin elegir/i)).toBeInTheDocument();
   });
 

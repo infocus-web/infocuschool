@@ -587,6 +587,14 @@ export async function registrarPedidoDesdePortal(params: {
     const dataSync = await resSync.json().catch(() => null);
     if (resSync.ok && dataSync?.success) {
       sincronizado = true;
+      // Auditoría 2026-09-23: el servidor garantiza que el número de pedido (IFS-2026-XXXX) no se
+      // repita — si el que se propuso acá ya existía, devuelve otro. Se adopta el definitivo en
+      // el pedido y en el localStorage para que la familia vea el mismo número que le llega por
+      // correo y que figura en el panel.
+      if (dataSync.pedidoFriendlyId && dataSync.pedidoFriendlyId !== nuevoPedido.id) {
+        nuevoPedido.id = dataSync.pedidoFriendlyId;
+        guardarPedidosEnStorage([nuevoPedido, ...currentPedidos]);
+      }
       // El email de confirmación y fotos HD se despacha una vez aprobado el pago (vía webhook de Mercado Pago o confirmación admin)
     } else {
       errorSincronizacion = dataSync?.error || `El servidor respondió con un error (HTTP ${resSync.status}).`;
@@ -672,7 +680,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
   // registrarPedidoDesdePortal) — el servidor ya sabe guardarlo (acepta "pedidoFriendlyId" por
   // ítem en /api/pedidos/crear-multiple desde que se agregó ese endpoint), sólo que hasta ahora
   // esta función nunca se lo mandaba.
-  const pedidoFriendlyIds = params.items.map(() => `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`);
+  let pedidoFriendlyIds = params.items.map(() => `IFS-2026-${Math.floor(1000 + Math.random() * 9000)}`);
   try {
     const res = await fetch('/api/pedidos/crear-multiple', {
       method: 'POST',
@@ -704,6 +712,10 @@ export async function registrarCarritoMultipleDesdePortal(params: {
     });
     const data = await res.json().catch(() => null);
     if (res.ok && data?.success) {
+      // Auditoría 2026-09-23: números de pedido definitivos (únicos) según el servidor.
+      if (Array.isArray(data.pedidoFriendlyIds) && data.pedidoFriendlyIds.length === pedidoFriendlyIds.length) {
+        pedidoFriendlyIds = data.pedidoFriendlyIds.map((fid: unknown, idx: number) => (typeof fid === 'string' && fid) || pedidoFriendlyIds[idx]);
+      }
       // Auditoría 2026-09-22 (bug real, ALTA): a diferencia de registrarPedidoDesdePortal (que
       // guarda el pedido en localStorage antes de redirigir a pagar), esta función nunca lo
       // hacía. Mercado Pago y Nave fuerzan una recarga completa de la página (window.location.href
@@ -1023,10 +1035,21 @@ export interface PedidoExistenteResumen {
  * pedido como si falla la consulta — el chequeo nunca debe bloquear a la familia de comprar,
  * sólo avisarle cuando puede hacerlo con conocimiento de causa.
  */
-export async function verificarPedidoExistente(cursoCodigo: string, alumnoNombre: string): Promise<PedidoExistenteResumen | null> {
-  if (!cursoCodigo || !alumnoNombre) return null;
+// Auditoría 2026-09-23: antes recibía el código SECRETO de la sección y el servidor lo comparaba
+// contra `pedidos.curso_codigo` (el código determinístico de curso) — nunca coincidían y el aviso
+// no aparecía jamás. Ahora se mandan colegio/grado/turno/división y el servidor recalcula el
+// código de curso con la misma fórmula con la que guarda los pedidos.
+export async function verificarPedidoExistente(datos: {
+  colegioId?: string;
+  grado?: string;
+  turno?: string;
+  division?: string;
+  alumnoNombre?: string;
+}): Promise<PedidoExistenteResumen | null> {
+  const { colegioId, grado, turno, division, alumnoNombre } = datos;
+  if (!colegioId || !grado || !turno || !alumnoNombre) return null;
   try {
-    const params = new URLSearchParams({ cursoCodigo, alumnoNombre });
+    const params = new URLSearchParams({ colegioId, grado, turno, division: division || '', alumnoNombre });
     const res = await fetch(`/api/pedidos/existente?${params.toString()}`);
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.success || !data.existe || !data.pedido) return null;

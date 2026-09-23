@@ -2496,7 +2496,7 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
 // combo del sitio— y devolvía las fotos reales sin pedir ningún código: cualquiera podía
 // ver las fotos de cualquier curso con sólo elegir las opciones del desplegable. Ahora el
 // grado/turno/división salen del código validado, nunca de lo que mande el navegador.
-app.get('/api/fotos', async (req: Request, res: Response) => {
+app.get('/api/fotos', limitarFrecuencia('fotos-galeria', 120, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { codigo } = req.query as Record<string, string | undefined>;
     if (!codigo || !codigo.trim()) {
@@ -3236,7 +3236,9 @@ app.post('/api/admin/codigos-seccion/actualizar', requireAdminAuth, async (req: 
 // Inscripción pública: valida contra el padrón autorizado del colegio y asigna código al instante si coincide.
 // Todo el acceso a `padres_autorizados` e `inscripciones` pasa exclusivamente por acá, del lado del servidor
 // (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
-app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
+// Auditoría 2026-09-23: este endpoint público no tenía límite de frecuencia (manda correos y
+// escribe en la base), a diferencia del resto de los formularios públicos.
+app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar', 10, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const {
       colegioId,
@@ -3393,16 +3395,10 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
     // nueva real de esta familia nunca llegaba a tener su propio código creado). Ahora, si el
     // curso cambió, se pide (o crea) el código real de la sección nueva en vez de arrastrar el
     // anterior.
-    if (estado === 'aceptado' && inscripcionExistente) {
-      const cursoCambio =
-        String(inscripcionExistente.colegio_id || '') !== String(colegioId || '') ||
-        String(inscripcionExistente.grado || '').trim() !== gradoAprobado ||
-        String(inscripcionExistente.turno || '').trim() !== turnoAprobado ||
-        String(inscripcionExistente.division || '').trim() !== divisionAprobada;
-      if (cursoCambio) {
-        codigoAcceso = await obtenerOCrearCodigoSeccion(supabase, colegioId, gradoAprobado, turnoAprobado, divisionAprobada);
-      }
-    }
+    // Auditoría 2026-09-23 (bug de seguridad, ALTO): acá antes se regeneraba el código si una
+    // familia YA aprobada reenviaba el formulario con otro curso. Se quitó: una inscripción
+    // aprobada ya no se modifica desde el formulario público (ver `congelarInscripcionAprobada`
+    // más abajo) — el cambio de curso de una familia aprobada lo hace el fotógrafo desde el panel.
 
     // Auditoría 2026-09-09 (revisión a fondo, hallazgo reportado por Pablo): hasta acá, con sólo
     // escribir el número de WhatsApp (o el email) de CUALQUIER fila del padrón oficial en este
@@ -3457,19 +3453,20 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       // guardado en la inscripción (el que se validó en su momento contra el padrón) — nunca al
       // que haya tipeado ahora, por la misma razón de seguridad de arriba.
       try {
+        // Se reenvía con los datos YA GUARDADOS (los que aprobó el fotógrafo), no con lo tipeado.
         const resultadoReenvio = await enviarCorreoCodigoAcceso({
           to: String(inscripcionExistente.email).trim().toLowerCase(),
           padreNombre: String(inscripcionExistente.padre_nombre || padreNombre).trim(),
-          colegioNombre: String(colegioNombre || 'Colegio').trim(),
+          colegioNombre: String(inscripcionExistente.colegio_nombre || colegioNombre || 'Colegio').trim(),
           codigo: codigoAcceso,
           alumnos: [{
-            nombre: String(alumnoNombre).trim(),
-            apellido: String(alumnoApellido || '').trim(),
-            grado: gradoAprobado,
-            division: divisionAprobada,
-            turno: turnoAprobado,
+            nombre: String(inscripcionExistente.alumno_nombre || '').trim(),
+            apellido: String(inscripcionExistente.alumno_apellido || '').trim(),
+            grado: inscripcionExistente.grado,
+            division: inscripcionExistente.division,
+            turno: inscripcionExistente.turno,
           }],
-          solicitaFotoHermanos: Boolean(solicitaFotoHermanos || (hermanos && hermanos.length > 0)),
+          solicitaFotoHermanos: Boolean(inscripcionExistente.solicita_foto_hermanos),
         });
         emailEnviado = Boolean(resultadoReenvio.success);
         if (emailEnviado) emailDestinoNotificacion = String(inscripcionExistente.email).trim().toLowerCase();
@@ -3519,13 +3516,28 @@ app.post('/api/inscripciones/validar', async (req: Request, res: Response) => {
       notificacion_email_enviada: emailEnviado || (inscripcionExistente ? Boolean(inscripcionExistente.notificacion_email_enviada) : false),
     };
 
+    // Auditoría 2026-09-23 (bug de seguridad, ALTO): una inscripción YA APROBADA se encuentra
+    // acá sólo por teléfono o email — datos que no son secretos (los tiene cualquiera del grupo
+    // de WhatsApp del curso). Antes, reenviar este formulario público con el teléfono de otra
+    // familia aprobada REESCRIBÍA su fila: nombre y DNI del tutor (el DNI es lo que ahora se usa
+    // para ingresar al portal), alumnos, hermanos y hasta el curso (regenerando el código). Con
+    // eso alguien podía (a) apropiarse del acceso de esa familia poniendo su propio DNI, o (b)
+    // agregarle un "hermano" en cualquier otro curso y obtener el código real de ese curso vía
+    // /api/familia/hijos. Ahora una inscripción aprobada NO se modifica desde el formulario
+    // público: sólo se le reenvía el código a su correo ya validado. Cualquier corrección de
+    // datos de una familia aprobada la hace el fotógrafo desde el panel.
+    const congelarInscripcionAprobada = inscripcionExistente?.estado === 'aceptado';
+    const filaAGuardar: Record<string, any> = congelarInscripcionAprobada
+      ? { notificacion_email_enviada: inscripcionRow.notificacion_email_enviada }
+      : inscripcionRow;
+
     let resultadoFila: any = null;
     let errGuardar: any = null;
 
     if (inscripcionExistente?.id) {
       const { data: actualizada, error } = await supabase
         .from('inscripciones')
-        .update(inscripcionRow)
+        .update(filaAGuardar)
         .eq('id', inscripcionExistente.id)
         .select()
         .single();
@@ -3795,10 +3807,26 @@ app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 30, 10 * 60 * 1
     if (!filas || filas.length === 0) {
       return res.status(404).json({ success: false, error: 'Código familiar no encontrado o todavía no aprobado.' });
     }
-    let fila = filas[0];
-    if (filas.length > 1 && dniQuery.length >= 6) {
-      const match = filas.find((f: any) => f.padre_dni && normalizarDniServidor(f.padre_dni) === dniQuery);
-      if (match) fila = match;
+    // Auditoría 2026-09-23 (bug de privacidad, ALTO): antes, si el DNI no llegaba o no coincidía,
+    // se "caía de nuevo a la primera fila" — o sea, a los hijos de OTRA familia del mismo curso
+    // (el mismo síntoma de "no sé quién es Juan Perez"). Peor: la respuesta incluye el código
+    // real de sección de cada hermano, así que cualquiera con el código del curso podía obtener
+    // los códigos de los cursos de los hermanos de otra familia y ver esas fotos. Ahora:
+    //  - si la fila tiene DNI del tutor cargado, hay que mandar ESE DNI;
+    //  - si hay varias familias con el mismo código, hay que mandar el DNI (sin DNI no se puede
+    //    saber cuál es) — nunca se elige una "por defecto".
+    const coincidenDni = (f: any) => f.padre_dni && dniQuery.length >= 6 && normalizarDniServidor(f.padre_dni) === dniQuery;
+    let fila: any = filas.find(coincidenDni) || null;
+    if (!fila && filas.length === 1 && !filas[0].padre_dni) {
+      // Único caso sin DNI: familia vieja (antes del 22/9) con un código que no comparte nadie.
+      fila = filas[0];
+    }
+    if (!fila) {
+      return res.status(403).json({
+        success: false,
+        requiereDatosTutor: true,
+        error: 'Para ver a tus hijos/as necesitamos identificarte con el nombre y DNI del tutor. Volvé a ingresar.',
+      });
     }
 
     if (!fila || fila.estado !== 'aceptado' || !fila.codigo_asignado) {
@@ -5069,6 +5097,131 @@ async function registrarEnvioCorreoHD(
  * esta auditoría. El fotógrafo puede reintentarlo a mano una vez resuelto lo que haya fallado
  * (botón "Reenviar Email HD" en el panel de Laboratorio, que primero reintenta armar el .zip).
  */
+function nombreZipHDPedido(pedido: { id: string }): string {
+  return `zips-pedidos/${pedido.id}.zip`;
+}
+
+/**
+ * Auditoría 2026-09-23: todo lo que hay que hacer cuando uno o más pedidos RECIÉN pasan a
+ * "pagado" (armar el .zip HD, mandar el correo, grabar el resultado). Antes esto estaba copiado
+ * dentro de cada webhook (Mercado Pago y Nave), y el respaldo de reconciliación de
+ * /api/pedidos/:id/status marcaba el pedido como pagado SIN hacer nada de esto — y como el
+ * webhook que llegaba después ya encontraba el pedido "pagado" (guard .neq), nunca se mandaba el
+ * correo ni se armaba el .zip hasta el cron diario. Ahora los tres caminos usan esta misma
+ * función, y como los tres marcan "pagado" con .neq('estado','pagado'), sólo el que gana la
+ * carrera recibe las filas y las procesa (sin correos duplicados).
+ */
+async function procesarPedidosRecienPagados(supabase: SupabaseClient, filas: any[], emailRespaldo?: string | null, nombreRespaldo?: string | null) {
+  await Promise.all((filas || []).map(async (orderData: any) => {
+    const emailDestino = orderData?.familias?.email || emailRespaldo;
+    if (!emailDestino || !String(emailDestino).includes('@')) return;
+    const linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, orderData);
+    const resultadoEnvio = await enviarCorreoFotosHD({
+      to: emailDestino,
+      tutorNombre: orderData?.familias?.nombre || nombreRespaldo || 'Familia',
+      alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
+      colegioNombre: orderData?.colegio_nombre || 'tu colegio',
+      cursoCodigo: orderData?.curso_codigo || undefined,
+      kitNombre: orderData?.kit_nombre || undefined,
+      pedidoId: orderData?.pedido_friendly_id || orderData?.id,
+      total: Number(orderData?.total) || 0,
+      linkDescargaHD: linkDescargaHD || undefined,
+    });
+    await registrarEnvioCorreoHD(supabase, orderData?.id, linkDescargaHD, resultadoEnvio?.success === true);
+  }));
+}
+
+/**
+ * Auditoría 2026-09-23 (bug CRÍTICO de cobro): trae los pedidos pendientes de pago que
+ * corresponden a una referencia de pago (el UUID de un pedido, o el grupo_pago_id de un carrito
+ * multi-hijo). El monto a cobrar en Mercado Pago / Nave sale SIEMPRE de acá (la columna `total`
+ * que calculó el servidor al registrar el pedido) — antes se volvía a calcular con el kit, las
+ * carpetas y las fotos sueltas que mandara el navegador en ese momento, sin relación con lo que
+ * había quedado guardado en el pedido. Ver /api/mercadopago/crear-preferencia.
+ */
+async function obtenerPedidosPendientesParaCobro(
+  supabase: SupabaseClient,
+  ref: { pedidoId?: unknown; grupoPagoId?: unknown }
+): Promise<{ filas: any[]; error?: string; status?: number }> {
+  const esUuid = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  const columna = ref.grupoPagoId !== undefined ? 'grupo_pago_id' : 'id';
+  const valor = ref.grupoPagoId !== undefined ? ref.grupoPagoId : ref.pedidoId;
+  if (!esUuid(valor)) {
+    return { filas: [], status: 400, error: 'Falta la referencia del pedido a cobrar.' };
+  }
+  const { data, error } = await supabase
+    .from('pedidos')
+    .select('id, estado, total, kit_nombre, alumno_nombre, colegio_nombre, grupo_pago_id')
+    .eq(columna, valor as string);
+  if (error) return { filas: [], status: 500, error: error.message };
+  if (!data || data.length === 0) {
+    return { filas: [], status: 404, error: 'No encontramos el pedido registrado. Volvé a armar el pedido desde el portal.' };
+  }
+  // 'cancelado' se permite a propósito: un intento de pago rechazado (tarjeta sin fondos, etc.)
+  // deja el pedido "cancelado", y la familia tiene que poder reintentar con otro medio.
+  if (data.some((p: any) => p.estado === 'pagado' || p.estado === 'entregado')) {
+    return { filas: [], status: 409, error: 'Este pedido ya está pagado.' };
+  }
+  if (data.some((p: any) => !(Number(p.total) > 0))) {
+    return { filas: [], status: 409, error: 'El pedido no tiene un monto válido para cobrar.' };
+  }
+  return { filas: data };
+}
+
+/**
+ * Auditoría 2026-09-23 (defensa en profundidad): antes de dar por pagados los pedidos de una
+ * referencia, se compara lo que efectivamente cobró la pasarela contra la suma de los `total`
+ * guardados. Si se cobró menos (con $1 de tolerancia por redondeo), NO se marca como pagado y
+ * queda un error en el log para revisarlo a mano.
+ */
+async function montoCubrePedidos(supabase: SupabaseClient, columna: 'id' | 'grupo_pago_id', valor: string, montoPagado: number): Promise<boolean> {
+  if (!Number.isFinite(montoPagado)) {
+    // La pasarela no informó el monto en el formato esperado: no se bloquea el pago (el monto de
+    // la intención/preferencia ya lo fijó el servidor desde la base), pero queda registrado.
+    console.warn(`[Pagos] No se pudo leer el monto cobrado para ${columna}=${valor}; se omite el control de monto.`);
+    return true;
+  }
+  const { data } = await supabase.from('pedidos').select('total').eq(columna, valor).neq('estado', 'pagado');
+  if (!data || data.length === 0) return true; // nada pendiente con esa referencia: el update posterior no toca nada
+  const esperado = data.reduce((acc: number, p: any) => acc + (Number(p.total) || 0), 0);
+  if (montoPagado + 1 < esperado) {
+    console.error(`[Pagos] MONTO INSUFICIENTE para ${columna}=${valor}: se cobró ${montoPagado} y el pedido vale ${esperado}. No se marca como pagado — revisar a mano.`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Marca como pagados los pedidos de una referencia de pago (UUID de un pedido suelto, o
+ * grupo_pago_id de un carrito multi-hijo), sólo si el monto cobrado alcanza, y devuelve SOLO las
+ * filas que pasaron a "pagado" en esta llamada (con los datos de la familia para el correo).
+ * Idempotente: un segundo llamado con la misma referencia devuelve [] y no hace nada.
+ */
+async function marcarReferenciaComoPagada(
+  supabase: SupabaseClient,
+  referencia: string,
+  montoPagado: number,
+  extras: Record<string, any>
+): Promise<any[]> {
+  const { data: individual } = await supabase.from('pedidos').select('id').eq('id', referencia).limit(1);
+  const columna: 'id' | 'grupo_pago_id' = individual && individual.length > 0 ? 'id' : 'grupo_pago_id';
+  if (!(await montoCubrePedidos(supabase, columna, referencia, montoPagado))) return [];
+  const { data, error } = await supabase
+    .from('pedidos')
+    .update({ estado: 'pagado', ...extras, updated_at: new Date().toISOString() })
+    .eq(columna, referencia)
+    .neq('estado', 'pagado')
+    .select('*, familias(nombre, whatsapp, email)');
+  if (error) {
+    console.error(`[Pagos] Error al marcar pagada la referencia ${referencia}:`, error);
+    return [];
+  }
+  if (!data || data.length === 0) {
+    console.log(`[Pagos] Referencia ${referencia}: nada para actualizar (no existe o ya estaba pagada).`);
+  }
+  return data || [];
+}
+
 async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: any): Promise<string | null> {
   try {
     if (!pedido?.colegio_id || !pedido?.curso_codigo) return null;
@@ -5120,7 +5273,14 @@ async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: an
     if (!algunaDescargada) return null;
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-    const nombreZip = `zips-pedidos/${pedido.pedido_friendly_id || pedido.id}.zip`;
+    // Auditoría 2026-09-23 (bug CRÍTICO de privacidad): antes el .zip se nombraba con el número
+    // amigable del pedido (IFS-2026-XXXX, 4 dígitos al azar generados en el navegador) y se subía
+    // con upsert:true. Con ~9.000 combinaciones posibles, dos pedidos distintos terminan tarde o
+    // temprano con el mismo número (con ~110 pedidos ya hay 50% de chance) — y el .zip del
+    // segundo PISABA el del primero: la familia A pasaba a descargar las fotos del hijo de la
+    // familia B con su propio link. Ahora el archivo se nombra siempre con el UUID del pedido,
+    // que es único por definición.
+    const nombreZip = nombreZipHDPedido(pedido);
     const { error: errorSubida } = await supabase.storage
       .from('fotos-hd')
       .upload(nombreZip, zipBuffer, { contentType: 'application/zip', upsert: true });
@@ -5235,10 +5395,18 @@ app.get('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
 async function refirmarLinkDescargaHDSiExiste(supabase: SupabaseClient, pedido: { id: string; pedido_friendly_id?: string | null; link_descarga_hd?: string | null }): Promise<string | undefined> {
   if (!pedido?.link_descarga_hd) return undefined;
   try {
-    const nombreZip = `zips-pedidos/${pedido.pedido_friendly_id || pedido.id}.zip`;
-    const { data: firmado, error } = await supabase.storage
+    // Primero el nombre nuevo (por UUID, ver nombreZipHDPedido). Los .zip generados antes del
+    // 23/9/2026 quedaron con el nombre viejo (número amigable) — se usa sólo como respaldo, y
+    // sólo si el link guardado apunta justamente a ese archivo viejo.
+    let { data: firmado, error } = await supabase.storage
       .from('fotos-hd')
-      .createSignedUrl(nombreZip, 60 * 60 * 24 * 90);
+      .createSignedUrl(nombreZipHDPedido(pedido), 60 * 60 * 24 * 90);
+    const nombreViejo = pedido.pedido_friendly_id ? `zips-pedidos/${pedido.pedido_friendly_id}.zip` : null;
+    if ((error || !firmado?.signedUrl) && nombreViejo && pedido.link_descarga_hd.includes(encodeURI(nombreViejo))) {
+      ({ data: firmado, error } = await supabase.storage
+        .from('fotos-hd')
+        .createSignedUrl(nombreViejo, 60 * 60 * 24 * 90));
+    }
     if (error || !firmado?.signedUrl) {
       return pedido.link_descarga_hd;
     }
@@ -5572,15 +5740,22 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
       tutorTelefono,
     } = req.body;
 
-    // El monto a cobrar SIEMPRE se calcula acá, del lado del servidor — nunca se usa el
-    // "total" que pueda mandar el cliente, aunque venga en el body.
-    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas);
-    if (totalCalculado === null) {
-      return res.status(400).json({
-        success: false,
-        error: 'Kit no reconocido. No se puede calcular el precio a cobrar.',
-      });
+    // Auditoría 2026-09-23 (bug CRÍTICO de cobro): el monto se toma del pedido YA REGISTRADO
+    // en la base (columna `total`, calculada por el servidor en /api/pedidos/crear), nunca de
+    // kitId/carpetasExtras/cantidadFotosSueltas que mande el navegador acá. Antes se recalculaba
+    // con esos datos sueltos: bastaba registrar un Kit Impreso con 3 carpetas extra ($75.000) y
+    // después pedir la preferencia de ESE MISMO pedido diciendo "kit-evento-suelto" ($5.000) —
+    // el webhook marcaba el pedido como pagado igual y la familia recibía todo por $5.000.
+    void kitId; void carpetasExtras; void cantidadFotosSueltas;
+    const supabaseCobro = getServerSupabase();
+    if (!supabaseCobro) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
+    const cobro = await obtenerPedidosPendientesParaCobro(supabaseCobro, { pedidoId });
+    if (cobro.error) {
+      return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
+    }
+    const totalCalculado = Number(cobro.filas[0].total);
 
     const mpConfig = getMercadoPagoConfig();
     if (!mpConfig) {
@@ -5634,6 +5809,13 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
 
     const result = await preference.create(preferenceData);
 
+    // Auditoría 2026-09-23: mp_preference_id nunca se grababa — y el respaldo de reconciliación
+    // de /api/pedidos/:id/status sólo corre si esa columna tiene valor, así que ese respaldo
+    // (pensado para cuando el webhook de Mercado Pago se pierde) no se ejecutaba nunca.
+    if (result.id) {
+      await supabaseCobro.from('pedidos').update({ mp_preference_id: String(result.id) }).eq('id', pedidoId);
+    }
+
     return res.json({
       success: true,
       preferenceId: result.id,
@@ -5665,24 +5847,25 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
       return res.status(400).json({ success: false, error: 'Falta el grupo de pago o los ítems del carrito.' });
     }
 
-    const mpItems: any[] = [];
-    for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, item?.cantidadFotosSueltas);
-      if (totalItem === null) {
-        return res.status(400).json({
-          success: false,
-          error: `Kit no reconocido para ${item?.alumnoNombre || 'uno de los hijos'}.`,
-        });
-      }
-      mpItems.push({
-        id: item?.pedidoId || `PED-${Date.now()}-${mpItems.length}`,
-        title: `Retrato Escolar 2026 - ${item?.kitNombre || 'Kit Fotográfico'} (${item?.alumnoNombre || 'Alumno'})`,
-        description: `Fotos escolares para ${item?.alumnoNombre || 'alumno'} en ${item?.colegioNombre || 'el colegio'}`,
-        quantity: 1,
-        unit_price: totalItem,
-        currency_id: 'ARS',
-      });
+    // Auditoría 2026-09-23: igual que en /api/mercadopago/crear-preferencia, cada línea se cobra
+    // con el `total` de la fila YA REGISTRADA en la base para este grupo_pago_id — nunca con los
+    // datos de kit/carpetas/fotos que mande el navegador en este request.
+    const supabaseCobro = getServerSupabase();
+    if (!supabaseCobro) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
+    const cobro = await obtenerPedidosPendientesParaCobro(supabaseCobro, { grupoPagoId });
+    if (cobro.error) {
+      return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
+    }
+    const mpItems: any[] = cobro.filas.map((fila: any) => ({
+      id: fila.id,
+      title: `Retrato Escolar 2026 - ${fila.kit_nombre || 'Kit Fotográfico'} (${fila.alumno_nombre || 'Alumno'})`,
+      description: `Fotos escolares para ${fila.alumno_nombre || 'alumno'} en ${fila.colegio_nombre || 'el colegio'}`,
+      quantity: 1,
+      unit_price: Number(fila.total),
+      currency_id: 'ARS',
+    }));
 
     const mpConfig = getMercadoPagoConfig();
     if (!mpConfig) {
@@ -5721,6 +5904,10 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
 
     const result = await preference.create(preferenceData);
 
+    if (result.id) {
+      await supabaseCobro.from('pedidos').update({ mp_preference_id: String(result.id) }).eq('grupo_pago_id', grupoPagoId);
+    }
+
     return res.json({
       success: true,
       preferenceId: result.id,
@@ -5735,6 +5922,37 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
     });
   }
 });
+
+// Auditoría 2026-09-23: kits que se pueden COMPRAR desde el portal. "kit-evento-suelto" ($5.000)
+// existe en el catálogo para mostrarse en la landing, pero el portal nunca lo ofrece — y como el
+// .zip HD arma TODAS las fotos elegidas (individual/grupal/docente) sin mirar el kit, un pedido
+// armado a mano con ese kit recibía el pack completo por $5.000 (y además quedaba marcado como
+// "impreso_digital" para el laboratorio). Se rechaza al registrar el pedido.
+const KITS_COMPRABLES_PORTAL = new Set(['kit-clasico', 'kit-digital']);
+
+// Auditoría 2026-09-23: el número amigable (IFS-2026-XXXX) lo genera el navegador con 4 dígitos
+// al azar, sin chequear si ya existe. Se usa para buscar el pedido, en el correo y (antes) como
+// nombre del .zip HD. Acá se garantiza que no se repita: si el propuesto ya existe (o ya se usó
+// dentro del mismo carrito) se genera otro en el servidor, y se le devuelve al navegador el final.
+async function asegurarFriendlyIdUnico(supabase: SupabaseClient, propuesto: unknown, yaUsados: Set<string>): Promise<string> {
+  const formato = /^IFS-\d{4}-\d{4,5}$/; // debe seguir matcheando FORMATO_PEDIDO_FRIENDLY_ID (buscador)
+  let candidato = String(propuesto || '').trim().toUpperCase().slice(0, 40);
+  for (let intento = 0; intento < 8; intento++) {
+    if (formato.test(candidato) && !yaUsados.has(candidato)) {
+      const { data } = await supabase.from('pedidos').select('id').eq('pedido_friendly_id', candidato).limit(1);
+      if (!data || data.length === 0) {
+        yaUsados.add(candidato);
+        return candidato;
+      }
+    }
+    // A partir del 3er intento se agranda a 5 dígitos para salir rápido de zonas ya ocupadas.
+    const digitos = intento < 3 ? 4 : 5;
+    const min = 10 ** (digitos - 1);
+    candidato = `IFS-${new Date().getFullYear()}-${crypto.randomInt(min, 10 ** digitos)}`;
+  }
+  yaUsados.add(candidato);
+  return candidato;
+}
 
 // Registra un pedido nuevo (lo llama el Portal de Familias al iniciar el checkout, antes de
 // pagar). Auditoría 2026-09-09: antes esto lo hacía el NAVEGADOR directo contra Supabase con la
@@ -5774,7 +5992,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
     const cantidadFotosSueltas = Array.isArray((fotosSeleccionadas as any)?.otrasIds)
       ? (fotosSeleccionadas as any).otrasIds.length
       : 0;
-    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas);
+    const totalCalculado = KITS_COMPRABLES_PORTAL.has(String(kitId)) ? calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas) : null;
     if (totalCalculado === null) {
       return res.status(400).json({ success: false, error: 'Kit no reconocido. No se puede registrar el pedido.' });
     }
@@ -5859,7 +6077,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       total: totalCalculado,
       carpetas_impresas: extrasValidados + 1,
       metodo_pago: metodoPagoValido,
-      pedido_friendly_id: acotar(pedidoFriendlyId, 40) || null,
+      pedido_friendly_id: await asegurarFriendlyIdUnico(supabase, pedidoFriendlyId, new Set()),
       colegio_id: acotar(colegioId, 100) || null,
       colegio_nombre: acotar(colegioNombre, 200) || null,
       // Auditoría 2026-09-21 (refuerzo tras el bug de "sigue sin armarse el zip"): NUNCA se
@@ -5879,8 +6097,12 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       kit_nombre: acotar(kitNombre, 120) || null,
       fotos_seleccionadas: acotarJson(fotosSeleccionadas),
       copias_extras: acotarJson(copiasExtras),
-      link_descarga_hd: acotar(linkDescargaHD, 500) || null,
+      // Auditoría 2026-09-23: el link de descarga HD lo genera SIEMPRE el servidor al confirmarse
+      // el pago. Antes se aceptaba el que mandara el navegador: un pedido podía nacer con un link
+      // cualquiera, el panel lo mostraba como "HD enviado" y el cron de reintento lo salteaba.
+      link_descarga_hd: null,
     };
+    void linkDescargaHD;
     // Se respeta el UUID generado en el navegador (para poder correlacionarlo con el tracking
     // local y con Mercado Pago vía external_reference) sólo si tiene forma de UUID válido.
     if (typeof pedidoId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pedidoId)) {
@@ -5894,7 +6116,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       .single();
     if (errorPedido) throw errorPedido;
 
-    return res.json({ success: true, pedidoId: pedidoCreado.id, total: totalCalculado });
+    return res.json({ success: true, pedidoId: pedidoCreado.id, pedidoFriendlyId: filaPedido.pedido_friendly_id, total: totalCalculado });
   } catch (err: any) {
     console.error('Error al registrar pedido:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al registrar el pedido' });
@@ -5963,7 +6185,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
 
     let totalGrupo = 0;
     for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item));
+      const totalItem = KITS_COMPRABLES_PORTAL.has(String(item?.kitId)) ? calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item)) : null;
       if (totalItem === null) {
         return res.status(400).json({
           success: false,
@@ -6007,6 +6229,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
     // sección (el caso real de mellizos) no terminen con el mismo número por consultar la base
     // antes de que el hermano anterior del mismo carrito quedara insertado.
     const numeroListaBasePorCurso: Record<string, number> = {};
+    const friendlyIdsUsados = new Set<string>();
     for (const item of items) {
       const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item)) as number;
       const tipoKit = item?.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
@@ -6027,7 +6250,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         carpetas_impresas: extrasValidados + 1,
         metodo_pago: metodoPagoValida,
         grupo_pago_id: grupoPagoId,
-        pedido_friendly_id: acotar(item?.pedidoFriendlyId, 40) || null,
+        pedido_friendly_id: await asegurarFriendlyIdUnico(supabase, item?.pedidoFriendlyId, friendlyIdsUsados),
         colegio_id: acotar(item?.colegioId, 100) || null,
         colegio_nombre: acotar(item?.colegioNombre, 200) || null,
         // Auditoría 2026-09-21: mismo refuerzo que en /api/pedidos/crear — nunca se confía en el
@@ -6042,7 +6265,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         kit_nombre: acotar(item?.kitNombre, 120) || null,
         fotos_seleccionadas: acotarJson(item?.fotosSeleccionadas),
         copias_extras: acotarJson(item?.copiasExtras),
-        link_descarga_hd: acotar(item?.linkDescargaHD, 500) || null,
+        link_descarga_hd: null, // ver /api/pedidos/crear: el link lo genera sólo el servidor
       };
       if (typeof item?.pedidoId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.pedidoId)) {
         fila.id = item.pedidoId;
@@ -6060,6 +6283,9 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
       success: true,
       grupoPagoId,
       pedidoIds: (pedidosCreados || []).map((p: any) => p.id),
+      // Mismo orden que `items`: el número amigable final de cada hijo (puede diferir del que
+      // propuso el navegador si ese ya estaba usado — ver asegurarFriendlyIdUnico).
+      pedidoFriendlyIds: filasPedido.map((f) => f.pedido_friendly_id),
       total: totalGrupo,
     });
   } catch (err: any) {
@@ -6135,120 +6361,16 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
       const supabase = getServerSupabase();
 
       if (paymentInfo.status === 'approved') {
-        if (pedidoId) {
-          let orderRows: any[] = [];
-
-          if (supabase) {
-            // Actualizar el pedido en Supabase.
-            // OJO: la tabla "pedidos" solo tiene las columnas id, familia_id, evento_id,
-            // alumno_id, tipo_kit, estado, total, mp_preference_id, mp_payment_id,
-            // created_at, updated_at, carpetas_impresas, metodo_pago (más las columnas de
-            // fulfillment agregadas en la auditoría 2026-09-09: colegio_id, colegio_nombre,
-            // curso_codigo, grado, division, turno, alumno_nombre, etc. — ver esa migración).
-            // Antes este update() escribía en "estado_pago" y "mercadopago_payment_id", que NO
-            // existen en la tabla real — Postgres rechazaba el update completo (columna
-            // inexistente) y el pedido JAMÁS se marcaba como pagado en Supabase, aunque Mercado
-            // Pago sí hubiera aprobado el cobro. Se corrige a los nombres reales de columna.
-            // Auditoría 2026-09-18 (encontrado en revisión de código): Mercado Pago puede
-            // reenviar la misma notificación "approved" más de una vez (reintentos si el
-            // servidor tarda en responder, entre otros casos — comportamiento documentado de
-            // Mercado Pago, no un caso raro). Antes este update() no chequeaba el estado
-            // anterior, así que cada reenvío volvía a mandar el mail de "tus fotos están
-            // listas" a la familia de nuevo. Con .neq('estado', 'pagado') el update solo pega
-            // (y solo se manda el mail) la primera vez que el pedido pasa a pagado — un reenvío
-            // que ya encuentra el pedido en 'pagado' no devuelve filas y no reenvía nada.
-            const { data, error } = await supabase
-              .from('pedidos')
-              .update({
-                estado: 'pagado',
-                mp_payment_id: String(paymentId),
-                // Se guarda el monto que realmente cobró Mercado Pago (no el que se haya
-                // calculado o mandado antes), para que "total" en la base siempre refleje la
-                // plata que efectivamente entró — ver auditoría 2026-09-09.
-                total: paymentInfo.transaction_amount ?? undefined,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', pedidoId)
-              .neq('estado', 'pagado')
-              .select('*, familias(nombre, whatsapp, email)');
-
-            if (error) {
-              console.error('[Mercado Pago Webhook] Error al actualizar pedido en Supabase:', error);
-            } else if (data && data.length > 0) {
-              orderRows = data;
-            } else {
-              // 0 filas acá significa una de dos cosas: no existe ningún pedido con ese id, O
-              // ya estaba pagado (reenvío de Mercado Pago) — en ambos casos no hay nada más que
-              // hacer, así que se sigue probando por grupo_pago_id por si es un carrito
-              // multi-hijo, con la misma protección contra reenvíos.
-              //
-              // Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): ningún pedido tiene
-              // ese id — puede ser que "external_reference" no sea el id de UN pedido sino un
-              // grupo_pago_id compartido por varios (ver /api/pedidos/crear-multiple). A
-              // diferencia del caso de arriba, acá NUNCA se sobreescribe "total": cada fila del
-              // grupo ya tiene su propio monto correcto calculado al crear el carrito, y
-              // transaction_amount es la SUMA de todos los hijos, no el de uno solo.
-              const { data: dataGrupo, error: errorGrupo } = await supabase
-                .from('pedidos')
-                .update({
-                  estado: 'pagado',
-                  mp_payment_id: String(paymentId),
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('grupo_pago_id', pedidoId)
-                .neq('estado', 'pagado')
-                .select('*, familias(nombre, whatsapp, email)');
-              if (errorGrupo) {
-                console.error('[Mercado Pago Webhook] Error al actualizar carrito (grupo_pago_id) en Supabase:', errorGrupo);
-              } else if (dataGrupo && dataGrupo.length > 0) {
-                orderRows = dataGrupo;
-              } else {
-                console.warn(`[Mercado Pago Webhook] No se encontró ningún pedido ni carrito para la referencia ${pedidoId}.`);
-              }
-            }
-          }
-
-          // Disparar email automático con el comprobante — uno por cada pedido actualizado (en
-          // un carrito multi-hijo, cada hijo recibe su propia confirmación con sus propios datos,
-          // aunque el pago haya sido uno solo). Desde la auditoría 2026-09-09, el pedido ya
-          // guarda alumno_nombre / colegio_nombre / curso_codigo / kit_nombre (ver migración de
-          // esa fecha), así que el correo puede mostrar los datos reales del pedido en vez de
-          // los genéricos "tu hijo/a" / "tu colegio" de antes.
-          // Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): antes se
-          // omitía siempre el link de descarga porque no existía ningún proceso que generara y
-          // subiera un .zip por pedido a "fotos-hd". Ahora se intenta armar y subir ese .zip acá
-          // mismo (generarYSubirZipHDParaPedido) antes de mandar el correo. Si falla — todavía no
-          // se cargaron las fotos de ese curso, error de red, etc. — no se corta el flujo de
-          // pago: el correo se manda igual, sólo que con el texto de "en breve" en vez del botón
-          // de descarga, como pasaba antes de esta auditoría.
-          // El destinatario preferido es el email que la familia cargó al hacer el pedido (más
-          // confiable: es a quien le corresponde el pedido), y sólo si no lo tenemos se usa el
-          // email de quien pagó en Mercado Pago (puede ser otra persona, ej. un abuelo pagando).
-          // Auditoría 2026-09-18: en un carrito multi-hijo esto ahora hace bastante más trabajo
-          // por pedido (bajar cada foto HD, armar el .zip, subirlo, firmar el link) — se corre en
-          // paralelo por hijo (Promise.all) en vez de uno por uno, para no acumular el tiempo de
-          // cada .zip y arriesgar el límite de duración de la función serverless.
-          await Promise.all(orderRows.map(async (orderData: any) => {
-            const emailDestino = orderData?.familias?.email || paymentInfo.payer?.email;
-            if (emailDestino && emailDestino.includes('@')) {
-              const linkDescargaHD = supabase ? await generarYSubirZipHDParaPedido(supabase, orderData) : null;
-              console.log(`[Mercado Pago Webhook] Enviando comprobante para pedido ${orderData.id} a ${emailDestino}${linkDescargaHD ? ' (con .zip HD)' : ' (sin .zip HD todavía)'}`);
-              const resultadoEnvio = await enviarCorreoFotosHD({
-                to: emailDestino,
-                tutorNombre: orderData?.familias?.nombre || paymentInfo.payer?.first_name || 'Familia',
-                alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
-                colegioNombre: orderData?.colegio_nombre || 'tu colegio',
-                cursoCodigo: orderData?.curso_codigo || undefined,
-                kitNombre: orderData?.kit_nombre || undefined,
-                pedidoId: orderData?.pedido_friendly_id || orderData?.id,
-                total: Number(orderData?.total) || 0,
-                linkDescargaHD: linkDescargaHD || undefined,
-              });
-              // Auditoría 2026-09-20: antes acá se perdía el resultado — ni el link ni si el
-              // correo salió bien quedaban grabados en `pedidos` (ver registrarEnvioCorreoHD).
-              await registrarEnvioCorreoHD(supabase, orderData?.id, linkDescargaHD, resultadoEnvio?.success === true);
-            }
-          }));
+        if (pedidoId && supabase) {
+          // Auditoría 2026-09-23: toda la lógica de "qué pedidos corresponden a esta referencia"
+          // (un pedido suelto por su UUID, o un carrito multi-hijo por grupo_pago_id) + control de
+          // monto + marcado idempotente (.neq('estado','pagado'), así un reenvío de Mercado Pago no
+          // duplica correos) vive en marcarReferenciaComoPagada — la comparten el webhook de Nave y
+          // el respaldo de /api/pedidos/:id/status.
+          const orderRows = await marcarReferenciaComoPagada(supabase, String(pedidoId), Number(paymentInfo.transaction_amount), {
+            mp_payment_id: String(paymentId),
+          });
+          await procesarPedidosRecienPagados(supabase, orderRows, paymentInfo.payer?.email, paymentInfo.payer?.first_name);
         }
       } else if (paymentInfo.status === 'rejected' || paymentInfo.status === 'cancelled') {
         if (pedidoId && supabase) {
@@ -6303,13 +6425,17 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
       tutorNombre, tutorEmail, tutorTelefono,
     } = req.body || {};
 
-    const totalCalculado = calcularTotalPedido(kitId, carpetasExtras, cantidadFotosSueltas);
-    if (totalCalculado === null) {
-      return res.status(400).json({
-        success: false,
-        error: 'Kit no reconocido. No se puede calcular el precio a cobrar.',
-      });
+    // Auditoría 2026-09-23: el monto sale del pedido ya registrado (ver crear-preferencia de MP).
+    void kitId; void carpetasExtras; void cantidadFotosSueltas;
+    const supabaseCobro = getServerSupabase();
+    if (!supabaseCobro) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
+    const cobro = await obtenerPedidosPendientesParaCobro(supabaseCobro, { pedidoId });
+    if (cobro.error) {
+      return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
+    }
+    const totalCalculado = Number(cobro.filas[0].total);
 
     const credenciales = getNaveCredenciales();
     if (!credenciales) {
@@ -6410,24 +6536,26 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
       return res.status(400).json({ success: false, error: 'Falta el grupo de pago o los ítems del carrito.' });
     }
 
+    // Auditoría 2026-09-23: montos tomados de las filas ya registradas del carrito (ver MP).
+    const supabaseCobro = getServerSupabase();
+    if (!supabaseCobro) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const cobro = await obtenerPedidosPendientesParaCobro(supabaseCobro, { grupoPagoId });
+    if (cobro.error) {
+      return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
+    }
     let totalGrupo = 0;
-    const products: any[] = [];
-    for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, item?.cantidadFotosSueltas);
-      if (totalItem === null) {
-        return res.status(400).json({
-          success: false,
-          error: `Kit no reconocido para ${item?.alumnoNombre || 'uno de los hijos'}.`,
-        });
-      }
+    const products: any[] = cobro.filas.map((fila: any) => {
+      const totalItem = Number(fila.total);
       totalGrupo += totalItem;
-      products.push({
-        name: (item?.kitNombre || 'Kit Fotográfico').slice(0, 100),
-        description: `Fotos escolares para ${item?.alumnoNombre || 'alumno'} en ${item?.colegioNombre || 'el colegio'}`.slice(0, 200),
+      return {
+        name: (fila.kit_nombre || 'Kit Fotográfico').slice(0, 100),
+        description: `Fotos escolares para ${fila.alumno_nombre || 'alumno'} en ${fila.colegio_nombre || 'el colegio'}`.slice(0, 200),
         quantity: 1,
         unit_price: { currency: 'ARS', value: totalItem.toFixed(2) },
-      });
-    }
+      };
+    });
 
     const credenciales = getNaveCredenciales();
     if (!credenciales) {
@@ -6556,81 +6684,14 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('
 
     if (estadoNave === 'APPROVED') {
       if (pedidoId && supabase) {
+        // Auditoría 2026-09-23: misma lógica compartida que el webhook de Mercado Pago (ver
+        // marcarReferenciaComoPagada / procesarPedidosRecienPagados) — incluye el control de que
+        // el monto cobrado alcance para lo que vale el pedido y el marcado idempotente.
         const montoPagado = Number(pago?.transactions?.[0]?.amount?.value);
-        let orderRows: any[] = [];
-        // Auditoría 2026-09-18 (encontrado en revisión de código): igual que Mercado Pago, Nave
-        // puede reenviar la misma notificación de pago aprobado más de una vez. Sin chequear el
-        // estado anterior, cada reenvío volvía a marcar "pagado" y a reenviar el mail de "tus
-        // fotos están listas". Con .neq('estado', 'pagado') el update solo pega (y solo se manda
-        // el mail) la primera vez.
-        const { data, error } = await supabase
-          .from('pedidos')
-          .update({
-            estado: 'pagado',
-            nave_payment_id: String(paymentId),
-            // Igual que en el webhook de Mercado Pago: se guarda el monto que realmente informó
-            // Nave, no el que se haya calculado antes.
-            total: Number.isFinite(montoPagado) ? montoPagado : undefined,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', pedidoId)
-          .neq('estado', 'pagado')
-          .select('*, familias(nombre, whatsapp, email)');
-
-        if (error) {
-          console.error('[Nave Webhook] Error al actualizar pedido en Supabase:', error);
-        } else if (data && data.length > 0) {
-          orderRows = data;
-        } else {
-          // Auditoría 2026-09-16 (carrito multi-hijo, "un solo pago"): ningún pedido individual
-          // con ese id — "external_payment_id" puede ser un grupo_pago_id compartido por varios
-          // pedidos (ver /api/pedidos/crear-multiple). No se sobreescribe "total" acá: cada fila
-          // del grupo ya tiene su propio monto correcto, y `montoPagado` es la suma de todos.
-          // Misma protección contra reenvíos que arriba (0 filas acá puede ser "no existe" o "ya
-          // estaba pagado" — en ambos casos no hay nada más que hacer).
-          const { data: dataGrupo, error: errorGrupo } = await supabase
-            .from('pedidos')
-            .update({
-              estado: 'pagado',
-              nave_payment_id: String(paymentId),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('grupo_pago_id', pedidoId)
-            .neq('estado', 'pagado')
-            .select('*, familias(nombre, whatsapp, email)');
-          if (errorGrupo) {
-            console.error('[Nave Webhook] Error al actualizar carrito (grupo_pago_id) en Supabase:', errorGrupo);
-          } else if (dataGrupo) {
-            orderRows = dataGrupo;
-          }
-        }
-
-        // Auditoría 2026-09-18 (pedido de Pablo: automatizar el .zip de descarga HD): mismo
-        // criterio que en el webhook de Mercado Pago — se intenta armar y subir el .zip HD del
-        // pedido antes de mandar el correo; si falla, el correo se manda igual con el texto de
-        // "en breve" en vez del link. En un carrito multi-hijo, cada pedido actualizado recibe su
-        // propio .zip y su propia confirmación por email — en paralelo (Promise.all) para no
-        // acumular el tiempo de cada .zip y arriesgar el límite de duración de la función.
-        await Promise.all(orderRows.map(async (orderData: any) => {
-          const emailDestino = orderData?.familias?.email;
-          if (emailDestino && emailDestino.includes('@')) {
-            const linkDescargaHD = supabase ? await generarYSubirZipHDParaPedido(supabase, orderData) : null;
-            const resultadoEnvio = await enviarCorreoFotosHD({
-              to: emailDestino,
-              tutorNombre: orderData?.familias?.nombre || 'Familia',
-              alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
-              colegioNombre: orderData?.colegio_nombre || 'tu colegio',
-              cursoCodigo: orderData?.curso_codigo || undefined,
-              kitNombre: orderData?.kit_nombre || undefined,
-              pedidoId: orderData?.pedido_friendly_id || orderData?.id,
-              total: Number(orderData?.total) || 0,
-              linkDescargaHD: linkDescargaHD || undefined,
-            });
-            // Auditoría 2026-09-20: mismo fix que en el webhook de Mercado Pago — sin esto, el
-            // panel nunca se enteraba de si el correo (y el link real) habían salido bien.
-            await registrarEnvioCorreoHD(supabase, orderData?.id, linkDescargaHD, resultadoEnvio?.success === true);
-          }
-        }));
+        const orderRows = await marcarReferenciaComoPagada(supabase, String(pedidoId), montoPagado, {
+          nave_payment_id: String(paymentId),
+        });
+        await procesarPedidosRecienPagados(supabase, orderRows);
       }
     } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '')) {
       if (pedidoId && supabase) {
@@ -7009,22 +7070,24 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
           });
           const intencion: any = await resp.json().catch(() => null);
           const estadoIntencion = intencion?.status?.name;
+          // Auditoría 2026-09-23: antes esto actualizaba sólo `.eq('id', id)` — en un carrito
+          // multi-hijo (varias filas con el mismo grupo_pago_id y UNA sola intención de Nave) sólo
+          // el hermano que estaba en pantalla quedaba pagado y los demás seguían "pendiente_pago".
+          // Además, al marcarlo pagado acá no se armaba el .zip ni se mandaba el correo, y el
+          // webhook que llegaba después ya no lo procesaba (lo encontraba "pagado"). Ahora usa la
+          // misma lógica compartida que los webhooks.
+          const referencia = data.grupo_pago_id || data.id;
           if (resp.ok && estadoIntencion === 'SUCCESS_PROCESSED') {
             const pagoAprobadoId = intencion?.payment_attempts?.payments?.find((p: any) => p.status === 'APPROVED')?.payment_id;
-            await supabase
-              .from('pedidos')
-              .update({
-                estado: 'pagado',
-                nave_payment_id: pagoAprobadoId ? String(pagoAprobadoId) : undefined,
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', id);
+            const filasPagadas = await marcarReferenciaComoPagada(supabase, referencia, NaN, pagoAprobadoId ? { nave_payment_id: String(pagoAprobadoId) } : {});
+            await procesarPedidosRecienPagados(supabase, filasPagadas);
             estadoFinal = 'pagado';
           } else if (resp.ok && (estadoIntencion === 'FAILURE_PROCESSED' || estadoIntencion === 'EXPIRED' || estadoIntencion === 'BLOCKED')) {
             await supabase
               .from('pedidos')
               .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
-              .eq('id', id);
+              .eq(data.grupo_pago_id ? 'grupo_pago_id' : 'id', referencia)
+              .neq('estado', 'pagado');
             estadoFinal = 'cancelado';
           }
         }
@@ -7055,19 +7118,18 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
           const pagoAprobado = pagos.find((p) => p.status === 'approved');
           const pagoRechazado = pagos.find((p) => p.status === 'rejected' || p.status === 'cancelled');
           if (pagoAprobado) {
-            const filtroActualizacion = data.grupo_pago_id
-              ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
-              : { columna: 'id' as const, valor: data.id };
-            await supabase
-              .from('pedidos')
-              .update({
-                estado: 'pagado',
-                mp_payment_id: pagoAprobado.id ? String(pagoAprobado.id) : undefined,
-                updated_at: new Date().toISOString(),
-              })
-              .eq(filtroActualizacion.columna, filtroActualizacion.valor)
-              .neq('estado', 'pagado');
-            estadoFinal = 'pagado';
+            // Auditoría 2026-09-23: misma lógica compartida que el webhook (control de monto +
+            // .zip HD + correo). Antes acá sólo se cambiaba el estado y el correo con las fotos no
+            // salía nunca por este camino.
+            const filasPagadas = await marcarReferenciaComoPagada(
+              supabase,
+              data.grupo_pago_id || data.id,
+              Number(pagoAprobado.transaction_amount),
+              pagoAprobado.id ? { mp_payment_id: String(pagoAprobado.id) } : {}
+            );
+            await procesarPedidosRecienPagados(supabase, filasPagadas, pagoAprobado.payer?.email);
+            const { data: releido } = await supabase.from('pedidos').select('estado').eq('id', data.id).maybeSingle();
+            estadoFinal = releido?.estado || estadoFinal;
           } else if (pagoRechazado) {
             const filtroActualizacion = data.grupo_pago_id
               ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
@@ -7202,11 +7264,22 @@ app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-camb
 // como el resto de los endpoints públicos de pedidos.
 app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
-    const cursoCodigo = String(req.query.cursoCodigo || '').trim().toUpperCase().slice(0, 60);
+    // Auditoría 2026-09-23 (bug: el aviso de "ya tenés un pedido" NUNCA aparecía): el portal
+    // mandaba acá el código SECRETO de la sección (ej. "88BU-M8TF") como `cursoCodigo`, pero
+    // `pedidos.curso_codigo` guarda el código DETERMINÍSTICO de curso (ej. "GRADO1-ATM") que
+    // calcula el servidor al crear el pedido — dos valores que nunca coinciden, así que la
+    // respuesta era siempre `existe: false`. Ahora se reciben colegio/grado/turno/división y el
+    // código de curso se recalcula acá con la misma fórmula que usa /api/pedidos/crear. Además se
+    // filtra por colegio (el código de curso se repite entre colegios distintos).
+    const colegioId = String(req.query.colegioId || '').trim().slice(0, 100);
+    const grado = String(req.query.grado || '').trim().slice(0, 60);
+    const turno = String(req.query.turno || '').trim().slice(0, 60);
+    const division = String(req.query.division || '').trim().slice(0, 60);
     const alumnoNombre = String(req.query.alumnoNombre || '').trim().slice(0, 200);
-    if (!cursoCodigo || !alumnoNombre) {
+    if (!colegioId || !grado || !turno || !alumnoNombre) {
       return res.status(400).json({ success: false, error: 'Faltan datos del alumno.' });
     }
+    const cursoCodigo = determinarCodigoCursoServidor(grado, turno, division);
 
     const supabase = getServerSupabase();
     if (!supabase) return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
@@ -7216,6 +7289,7 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 30, 10 
       .from('pedidos')
       .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, created_at')
       .eq('curso_codigo', cursoCodigo)
+      .eq('colegio_id', colegioId)
       .neq('estado', 'cancelado')
       .order('created_at', { ascending: false })
       .limit(50);
@@ -7295,6 +7369,13 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 
       if (data && data.length > 0) fila = data[0];
     }
 
+    // Auditoría 2026-09-23 (privacidad): el teléfono de una familia NO es un secreto (lo tiene
+    // todo el grupo de WhatsApp del curso — mismo criterio que ya se aplica en
+    // /api/inscripciones/buscar). Antes, buscando por teléfono se devolvía el link de descarga de
+    // las fotos HD pagadas y el teléfono completo. Ahora, por teléfono sólo se informa el estado
+    // del pedido; el link HD se devuelve únicamente buscando por el número de pedido exacto (que
+    // sólo tiene la familia, en su correo/comprobante), y el link igual le llega por email.
+    let encontradoPorTelefono = false;
     if (!fila && soloDigitos.length >= 8) {
       const { data, error } = await supabase
         .from('pedidos')
@@ -7303,7 +7384,10 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 
         .order('created_at', { ascending: false })
         .limit(1);
       if (error) console.warn('[pedidos/buscar] búsqueda por teléfono falló:', error.message);
-      if (data && data.length > 0) fila = data[0];
+      if (data && data.length > 0) {
+        fila = data[0];
+        encontradoPorTelefono = true;
+      }
     }
 
     if (!fila) {
@@ -7313,7 +7397,11 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 
     // Auditoría 2026-09-19: ver comentario de refirmarLinkDescargaHDSiExiste en
     // /api/pedidos/:id/status — mismo criterio acá, para que este buscador tampoco devuelva un
     // link de descarga vencido después de 90 días.
-    const linkDescargaHD = await refirmarLinkDescargaHDSiExiste(supabase, fila);
+    const linkDescargaHD = encontradoPorTelefono ? undefined : await refirmarLinkDescargaHDSiExiste(supabase, fila);
+    const telefonoCompleto = String(fila.familias?.whatsapp || '');
+    // El teléfono se muestra siempre enmascarado: la familia ya lo conoce, y el número de pedido
+    // (4 dígitos) no es un secreto lo bastante fuerte como para devolver un dato de contacto.
+    const telefonoMostrado = telefonoCompleto ? `***${telefonoCompleto.replace(/\D/g, '').slice(-4)}` : null;
 
     return res.json({
       success: true,
@@ -7324,7 +7412,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 
         grado: fila.grado,
         division: fila.division,
         tutor: fila.familias?.nombre || null,
-        telefono: fila.familias?.whatsapp || null,
+        telefono: telefonoMostrado,
         kit: fila.kit_nombre,
         total: fila.total,
         fecha: fila.created_at,

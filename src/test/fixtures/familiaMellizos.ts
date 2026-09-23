@@ -30,6 +30,9 @@ export const COLEGIO_ID = 'col-divino-pastor-2026'; // = COLEGIO_POR_DEFECTO, re
 export const familiaActivaMellizos: InscripcionFamilia = {
   id: 'insc-test-1',
   padreNombre: 'Pablo Alder',
+  // Desde el 23/9 una sesión con código pero sin DNI del tutor se descarta al abrir el portal
+  // (ver obtenerFamiliaActiva) — una familia real identificada siempre lo tiene.
+  padreDni: '20111222',
   telefonoWhatsApp: '+5491100000000',
   email: 'pablo.alder.test@example.com',
   alumnoNombre: 'Pablo',

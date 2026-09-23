@@ -542,7 +542,18 @@ export function obtenerFamiliaActiva(): InscripcionFamilia | null {
   if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ACTIVO);
-    return raw ? JSON.parse(raw) : null;
+    const familia: InscripcionFamilia | null = raw ? JSON.parse(raw) : null;
+    // Auditoría 2026-09-23 (origen del "no sé quién es Juan Perez" / "¡Hola, !"): desde el 22/9
+    // el código de acceso es compartido por todo el curso y la familia se identifica con nombre
+    // + DNI del tutor. Una sesión guardada ANTES de ese cambio (con código pero sin DNI) no
+    // alcanza para saber de qué familia se trata — el servidor ya no le devuelve los hijos — y
+    // restaurarla mostraba datos cacheados que podían ser de otra familia. Se descarta para que
+    // la familia vuelva a ingresar con sus datos.
+    if (familia && (familia.codigoAsignado || familia.codigoFamiliar) && !familia.padreDni) {
+      localStorage.removeItem(STORAGE_KEY_ACTIVO);
+      return null;
+    }
+    return familia;
   } catch {
     return null;
   }

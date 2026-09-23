@@ -1091,13 +1091,15 @@ export default function PortalFamiliasModal({
   // `if (!isOpen) return null;`, junto con el resto — así se ejecuta siempre, en cada render, sin
   // condicionarlo a `isOpen`.
   useEffect(() => {
-    if (!codigoSeccionValidado || !nombreAlumno) {
+    // `codigoSeccionValidado` sólo actúa de guardia (hubo una identificación real); la consulta
+    // usa colegio/grado/turno/división — ver verificarPedidoExistente (fix 23/9).
+    if (!codigoSeccionValidado || !nombreAlumno || !selectedColegio?.id || !grado || !turno) {
       setPedidoExistente(null);
       return;
     }
     let cancelado = false;
     setVerificandoPedidoExistente(true);
-    verificarPedidoExistente(codigoSeccionValidado, nombreAlumno)
+    verificarPedidoExistente({ colegioId: selectedColegio.id, grado, turno, division, alumnoNombre: nombreAlumno })
       .then((existente) => {
         if (!cancelado) setPedidoExistente(existente);
       })
@@ -1107,7 +1109,7 @@ export default function PortalFamiliasModal({
     return () => {
       cancelado = true;
     };
-  }, [codigoSeccionValidado, nombreAlumno]);
+  }, [codigoSeccionValidado, nombreAlumno, selectedColegio?.id, grado, turno, division]);
 
   if (!isOpen) return null;
 
@@ -2116,7 +2118,8 @@ export default function PortalFamiliasModal({
                           irAConsultasConDatos(
                             {
                               nombre: searchedOrder.tutor || '',
-                              telefono: searchedOrder.telefono || '',
+                              // El servidor devuelve el teléfono enmascarado (***1234) desde el 23/9.
+                              telefono: searchedOrder.telefono && !searchedOrder.telefono.startsWith('***') ? searchedOrder.telefono : '',
                               colegio: searchedOrder.colegio || '',
                               numeroPedido: searchedOrder.id || '',
                               asunto: 'Consulta sobre las fotos de mi hijo/a',
@@ -2695,7 +2698,7 @@ export default function PortalFamiliasModal({
                       alterná entre tus hijos con un solo toque" que ya está en la web (Hero,
                       /proceso, FAQ). */}
                   {hijosFamilia.length > 1 && (
-                    <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Tus hijos/as en este colegio">
                       {hijosFamilia.map((h) => {
                         // Auditoría 2026-09-16 (pedido de Pablo: "un solo pedido, un solo pago"):
                         // un hijo cuenta como "listo" si ya eligió sus 3 fotos del pack, sea porque
