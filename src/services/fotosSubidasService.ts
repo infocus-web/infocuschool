@@ -60,22 +60,50 @@ export interface ResultadoRegistrarFotos {
   error?: string;
 }
 
+// El servidor acepta hasta 500 fotos por llamada (ver POST /api/admin/fotos en server.ts).
+const FOTOS_POR_LOTE_REGISTRO = 200;
+
 /** Panel admin: registra en Supabase las fotos ya subidas a Storage (queda visible al instante para las familias) */
 export async function registrarFotosAdmin(fotos: DatosFotoParaRegistrar[]): Promise<ResultadoRegistrarFotos> {
-  try {
-    const res = await fetchAdminAutenticado('/api/admin/fotos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fotos }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { success: false, error: data.error || 'No se pudieron registrar las fotos.' };
+  // Auditoría 2026-09-23 (bug real): todo el lote viajaba en UNA sola llamada. Con más de 500
+  // fotos el servidor lo rechazaba entero, y con bastantes menos ya superaba el tamaño máximo del
+  // body — en ambos casos las fotos quedaban subidas a Storage pero sin registrar en el catálogo
+  // (no aparecían en la galería). Ahora se registran en lotes.
+  let registradas = 0;
+  let emailsEnviados = 0;
+  let warning: string | undefined;
+  for (let i = 0; i < fotos.length; i += FOTOS_POR_LOTE_REGISTRO) {
+    const lote = fotos.slice(i, i + FOTOS_POR_LOTE_REGISTRO);
+    try {
+      const res = await fetchAdminAutenticado('/api/admin/fotos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fotos: lote }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const error = data.error || 'No se pudieron registrar las fotos.';
+        return {
+          success: false,
+          registradas,
+          emailsEnviados,
+          error: registradas > 0 ? `Se registraron ${registradas} de ${fotos.length} fotos. El resto falló: ${error}` : error,
+        };
+      }
+      registradas += data.registradas || 0;
+      emailsEnviados += data.emailsEnviados || 0;
+      warning = warning || data.warning;
+    } catch (err: any) {
+      const error = err?.message || 'Error de red al registrar las fotos.';
+      return {
+        success: false,
+        registradas,
+        emailsEnviados,
+        error: registradas > 0 ? `Se registraron ${registradas} de ${fotos.length} fotos. El resto falló: ${error}` : error,
+      };
     }
-    return { success: true, registradas: data.registradas, emailsEnviados: data.emailsEnviados, warning: data.warning };
-  } catch (err: any) {
-    return { success: false, error: err?.message || 'Error de red al registrar las fotos.' };
   }
+  return { success: true, registradas, emailsEnviados, warning };
 }
 
 /**

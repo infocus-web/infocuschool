@@ -70,7 +70,12 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
   }
 });
 
-app.use(express.json());
+// Auditoría 2026-09-23 (bug real): express.json() sin opciones corta el body en 100 KB. El panel
+// registra en UNA sola llamada todas las fotos de un lote (≈500 bytes por foto: 3 rutas/URLs
+// largas + curso), así que un lote de ~200 fotos ya devolvía 413 "request entity too large": las
+// fotos quedaban subidas a Storage pero NUNCA se registraban en el catálogo (no aparecían en la
+// galería). Lo mismo con el padrón (hasta 2000 filas por importación). Vercel acepta hasta 4,5 MB.
+app.use(express.json({ limit: '4mb' }));
 
 // Límite de intentos básico, en memoria, para frenar fuerza bruta / spam en endpoints
 // públicos sensibles (login de admin, búsqueda de inscripción por teléfono/email, creación
@@ -449,8 +454,9 @@ function personalizarPlantillaZoho(texto: string, destinatario: DestinatarioCamp
 // ámbar/roja para el título de sección en mayúsculas — todo generado a partir del texto plano
 // que Pablo escribe en el panel, sin que tenga que tocar HTML él.
 function formatearCuerpoCartaHtml(textoPlano: string): string {
-  const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const linkificar = (s: string) => s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#1d4ed8;">$1</a>');
+  // Comillas incluidas: los links se insertan dentro de href="..." (una URL con " rompía el HTML).
+  const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const linkificar = (s: string) => s.replace(/(https?:\/\/[^\s<"]+)/g, '<a href="$1" style="color:#1d4ed8;">$1</a>');
   const esTituloCorto = (l: string) => l.length > 0 && l.length <= 45 && l === l.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(l);
 
   const bloques = String(textoPlano || '').trim().split(/\n\s*\n/);
@@ -476,7 +482,7 @@ function formatearCuerpoCartaHtml(textoPlano: string): string {
     // Un párrafo compuesto solo por un link (el de "conocé la propuesta completa") → botón de
     // acción naranja, igual que el resto de los correos del sitio, en vez de un texto azul.
     if (lineas.length === 1 && /^https?:\/\//i.test(lineas[0])) {
-      const url = lineas[0];
+      const url = escapeHtml(lineas[0]);
       return `<div style="margin:24px 0;text-align:center;"><a href="${url}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background-color:#d97706;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;padding:13px 28px;border-radius:12px;box-shadow:0 4px 12px rgba(217,119,6,0.35);">Ver la propuesta completa →</a></div>`;
     }
 
@@ -661,7 +667,9 @@ app.post('/api/admin/login', limitarFrecuencia('admin-login', 8, 10 * 60 * 1000)
     });
   }
 
-  const { pin } = req.body;
+  // String(): si llegaba un número (ej. {"pin": 1234}) normalizePin hacía .trim() sobre un
+  // número y el handler explotaba con un 500 en vez de responder "PIN incorrecto".
+  const pin = req.body?.pin === undefined || req.body?.pin === null ? '' : String(req.body.pin);
   if (!pin) {
     return res.status(400).json({ success: false, error: 'PIN requerido' });
   }
@@ -871,6 +879,10 @@ app.get('/api/admin/colegios/:colegioId/estado-pagos', requireAdminAuth, async (
           .from('pedidos')
           .select('id, alumno_nombre, alumno_numero_lista, estado, total, kit_nombre, metodo_pago, created_at')
           .eq('colegio_id', colegioId)
+          // Orden cronológico: más abajo "el más reciente" se toma como el último del array — sin
+          // orden explícito Postgres devuelve las filas en cualquier orden.
+          .order('created_at', { ascending: true })
+          .order('id')
           .range(desde, hasta)
       ),
     ]);
@@ -1050,13 +1062,18 @@ app.get('/api/admin/alumnos/buscar', requireAdminAuth, async (req: Request, res:
     if (colegioIds.length > 0) {
       const resultados = await Promise.all(
         colegioIds.map((cid) =>
-          supabase
-            .from('pedidos')
-            .select('id, pedido_friendly_id, alumno_nombre, estado, total, kit_nombre, metodo_pago, created_at, familias(nombre, whatsapp, email)')
-            .eq('colegio_id', cid)
+          traerTodasLasFilas<any>((desde, hasta) =>
+            supabase
+              .from('pedidos')
+              .select('id, pedido_friendly_id, alumno_nombre, estado, total, kit_nombre, metodo_pago, created_at, familias(nombre, whatsapp, email)')
+              .eq('colegio_id', cid)
+              .order('created_at', { ascending: true })
+              .order('id')
+              .range(desde, hasta)
+          )
         )
       );
-      colegioIds.forEach((cid, idx) => pedidosPorColegio.set(cid, resultados[idx].data || []));
+      colegioIds.forEach((cid, idx) => pedidosPorColegio.set(cid, resultados[idx]));
     }
 
     // El Código de Acceso real de cada sección (no hay uno por alumno individual, es uno por
@@ -1227,9 +1244,11 @@ app.get('/api/admin/familias', requireAdminAuth, async (req, res) => {
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
-    const { data, error } = await supabase.from('familias').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    return res.json({ success: true, familias: data || [] });
+    // Paginado (ver traerTodasLasFilas): sin esto el listado se cortaba en 1000 familias.
+    const data = await traerTodasLasFilas((desde, hasta) =>
+      supabase.from('familias').select('*').order('created_at', { ascending: false }).order('id').range(desde, hasta)
+    );
+    return res.json({ success: true, familias: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener familias' });
   }
@@ -1248,12 +1267,18 @@ app.get('/api/admin/pedidos', requireAdminAuth, async (req, res) => {
     // Auditoría 2026-09-22: se agrega colegio_id al join con familias para que el panel de
     // "Resumen de Kits" (ver server-side fix en resumenKitsService.ts) pueda agrupar por
     // colegio sin necesitar una consulta aparte.
-    const { data, error } = await supabase
-      .from('pedidos')
-      .select('*, pedido_fotos(*), familias(nombre, whatsapp, email, colegio_id)')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return res.json({ success: true, pedidos: data || [] });
+    // Auditoría 2026-09-23 (bug real): sin paginar, PostgREST devuelve como máximo 1000 filas —
+    // a partir del pedido 1001 el panel de Laboratorio dejaba de mostrar los pedidos más viejos
+    // sin ningún aviso. Se pagina igual que "Nómina 2026" (ver traerTodasLasFilas).
+    const data = await traerTodasLasFilas((desde, hasta) =>
+      supabase
+        .from('pedidos')
+        .select('*, pedido_fotos(*), familias(nombre, whatsapp, email, colegio_id)')
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(desde, hasta)
+    );
+    return res.json({ success: true, pedidos: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener pedidos' });
   }
@@ -1690,13 +1715,18 @@ app.post('/api/admin/fotos/regenerar-miniaturas', requireAdminAuth, async (req: 
 
     // .eq()/.or() de PostgREST no permite comparar dos columnas entre sí, así que se trae
     // el universo de fotos y se filtran en el servidor las que todavía no tienen miniatura propia.
-    const { data: todas, error: errorSelect } = await supabase
-      .from('fotos')
-      .select('id, storage_path, thumb_path, preview_path')
-      .order('created_at', { ascending: true });
-    if (errorSelect) throw errorSelect;
+    // Paginado: sin esto sólo se revisaban las primeras 1000 fotos y "restantes" daba 0 aunque
+    // quedaran fotos sin miniatura propia más allá de ese tope.
+    const todas = await traerTodasLasFilas<any>((desde, hasta) =>
+      supabase
+        .from('fotos')
+        .select('id, storage_path, thumb_path, preview_path')
+        .order('created_at', { ascending: true })
+        .order('id')
+        .range(desde, hasta)
+    );
 
-    const candidatas = (todas || []).filter((f: any) => !f.thumb_path || f.thumb_path === f.preview_path);
+    const candidatas = todas.filter((f: any) => !f.thumb_path || f.thumb_path === f.preview_path);
     const lote = candidatas.slice(0, limite);
 
     let procesadas = 0;
@@ -1822,13 +1852,15 @@ app.post('/api/admin/fotos/regenerar-marca-agua', requireAdminAuth, async (req: 
     const limite = Math.min(Math.max(parseInt(String(req.body?.limite || '8'), 10) || 8, 1), 20);
     const offset = Math.max(parseInt(String(req.body?.offset || '0'), 10) || 0, 0);
 
-    const { data: todas, error: errorSelect } = await supabase
-      .from('fotos')
-      .select('id, storage_path')
-      .order('created_at', { ascending: true });
-    if (errorSelect) throw errorSelect;
-
-    const universo = todas || [];
+    // Paginado (mismo motivo que regenerar-miniaturas): el offset nunca pasaba de la foto 1000.
+    const universo = await traerTodasLasFilas<any>((desde, hasta) =>
+      supabase
+        .from('fotos')
+        .select('id, storage_path')
+        .order('created_at', { ascending: true })
+        .order('id')
+        .range(desde, hasta)
+    );
     const lote = universo.slice(offset, offset + limite);
 
     let procesadas = 0;
@@ -1906,17 +1938,21 @@ app.get('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Response
     }
     const { grado, turno, division, colegioId } = req.query as Record<string, string | undefined>;
 
-    let builder = supabase.from('fotos').select('*').order('created_at', { ascending: false });
-    if (grado && turno) {
-      builder = builder.eq('codigo_curso', determinarCodigoCursoServidor(grado, turno, division || ''));
-    }
-    if (colegioId) {
-      builder = builder.eq('colegio_id', colegioId);
-    }
-
-    const { data, error } = await builder;
-    if (error) throw error;
-    return res.json({ success: true, fotos: data || [] });
+    // Auditoría 2026-09-23 (bug real): el panel de Laboratorio llama a esta ruta SIN filtros para
+    // cruzar cada pedido con sus fotos. Sin paginar, PostgREST cortaba en las 1000 fotos más
+    // nuevas: los pedidos de cursos cargados antes quedaban "sin fotos" en el panel (y sin
+    // archivos para el laboratorio) aunque las fotos existieran.
+    const data = await traerTodasLasFilas((desde, hasta) => {
+      let builder = supabase.from('fotos').select('*').order('created_at', { ascending: false }).order('id');
+      if (grado && turno) {
+        builder = builder.eq('codigo_curso', determinarCodigoCursoServidor(grado, turno, division || ''));
+      }
+      if (colegioId) {
+        builder = builder.eq('colegio_id', colegioId);
+      }
+      return builder.range(desde, hasta);
+    });
+    return res.json({ success: true, fotos: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener las fotos' });
   }
@@ -2030,6 +2066,36 @@ app.delete('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respo
 
 const BUCKETS_FOTOS_PERMITIDOS = new Set(['fotos-web', 'fotos-hd']);
 
+// Auditoría 2026-09-23 (bug real): storage.list() sólo devuelve el primer nivel de una carpeta —
+// las subcarpetas vienen como entradas sin `id`. Las fotos se guardan en "2026/<curso>/originales/
+// ...", así que listar la raíz devolvía sólo la carpeta "2026" y el vaciado de bucket terminaba
+// sin borrar ni un archivo (y el borrado de buckets huérfanos fallaba por "bucket no vacío").
+// Esto recorre las subcarpetas y devuelve la ruta completa de cada archivo.
+async function listarArchivosDeBucket(
+  supabase: SupabaseClient,
+  bucket: string,
+  prefijo = '',
+  maxArchivos = 20000
+): Promise<string[]> {
+  const archivos: string[] = [];
+  const pendientes: string[] = [prefijo.replace(/^\/+|\/+$/g, '')];
+  while (pendientes.length > 0 && archivos.length < maxArchivos) {
+    const carpeta = pendientes.shift() as string;
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase.storage.from(bucket).list(carpeta, { limit: 1000, offset });
+      if (error) throw error;
+      const entradas = data || [];
+      for (const entrada of entradas) {
+        const ruta = carpeta ? `${carpeta}/${entrada.name}` : entrada.name;
+        if (entrada.id) archivos.push(ruta);
+        else pendientes.push(ruta);
+      }
+      if (entradas.length < 1000) break;
+    }
+  }
+  return archivos.slice(0, maxArchivos);
+}
+
 // Genera una URL de subida firmada y de un solo uso para un archivo puntual. El navegador la
 // usa para subir el archivo directo a Storage (client.storage.from(bucket).uploadToSignedUrl),
 // sin necesitar ningún permiso público de escritura en el bucket.
@@ -2106,22 +2172,14 @@ app.post('/api/admin/storage/limpiar-bucket', requireAdminAuth, async (req: Requ
     }
     const prefijo = typeof prefix === 'string' ? prefix : '';
 
+    // Recorre también las subcarpetas (ver listarArchivosDeBucket); tope defensivo de 20.000
+    // archivos por llamada.
+    const rutas = await listarArchivosDeBucket(supabase, bucket, prefijo);
     let eliminados = 0;
-    // Se pagina por si hay más de 100 archivos (límite por defecto de list()); tope defensivo
-    // de 200 vueltas (20.000 archivos) para nunca quedar en un loop infinito.
-    for (let vuelta = 0; vuelta < 200; vuelta++) {
-      const { data: archivos, error: errorList } = await supabase.storage.from(bucket).list(prefijo, { limit: 100 });
-      if (errorList) throw errorList;
-      if (!archivos || archivos.length === 0) break;
-
-      const rutas = archivos.filter((f: any) => f.id).map((f: any) => (prefijo ? `${prefijo}/${f.name}` : f.name));
-      if (rutas.length === 0) break;
-
-      const { error: errorRemove } = await supabase.storage.from(bucket).remove(rutas);
+    for (const lote of enLotes(rutas, 500)) {
+      const { error: errorRemove } = await supabase.storage.from(bucket).remove(lote);
       if (errorRemove) throw errorRemove;
-      eliminados += rutas.length;
-
-      if (archivos.length < 100) break;
+      eliminados += lote.length;
     }
 
     return res.json({ success: true, eliminados });
@@ -2149,17 +2207,12 @@ app.post('/api/admin/storage/borrar-bucket-huerfano', requireAdminAuth, async (r
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
 
+    const rutas = await listarArchivosDeBucket(supabase, bucket);
     let eliminados = 0;
-    for (let vuelta = 0; vuelta < 200; vuelta++) {
-      const { data: archivos, error: errorList } = await supabase.storage.from(bucket).list('', { limit: 100 });
-      if (errorList) throw errorList;
-      if (!archivos || archivos.length === 0) break;
-      const rutas = archivos.filter((f: any) => f.id).map((f: any) => f.name);
-      if (rutas.length === 0) break;
-      const { error: errorRemove } = await supabase.storage.from(bucket).remove(rutas);
+    for (const lote of enLotes(rutas, 500)) {
+      const { error: errorRemove } = await supabase.storage.from(bucket).remove(lote);
       if (errorRemove) throw errorRemove;
-      eliminados += rutas.length;
-      if (archivos.length < 100) break;
+      eliminados += lote.length;
     }
 
     const { error: errorDeleteBucket } = await supabase.storage.deleteBucket(bucket);
@@ -2208,43 +2261,50 @@ async function idsDeColegioParaCierre(
   // que el cierre de año promete limpiar los datos de la temporada. Ahora las familias del
   // colegio se derivan de sus alumnos (alumnos.familia_id) y de sus pedidos (pedidos.familia_id),
   // que son las dos relaciones reales que sí se completan siempre.
-  const alumnosQuery = supabase.from('alumnos').select('id, familia_id');
-  const { data: alumnos, error: errA } = todos
-    ? await alumnosQuery
-    : await alumnosQuery.eq('colegio_id', colegioId);
-  if (errA) throw errA;
+  //
+  // Auditoría 2026-09-23 (bug real, ALTO): todas estas consultas iban sin paginar (PostgREST
+  // corta en 1000 filas: un colegio con 1314 alumnos dejaba 314 sin borrar y el "resumen" mostraba
+  // números falsos) y armaban filtros `alumno_id.in.(<todos los ids>)` dentro de la URL — con
+  // cientos de UUIDs la URL supera el límite del servidor y la consulta falla entera. Ahora se
+  // pagina y los filtros por lista de ids se parten en lotes chicos.
+  const alumnos = await traerTodasLasFilas<{ id: string; familia_id: string | null }>((desde, hasta) => {
+    const q = supabase.from('alumnos').select('id, familia_id').order('id');
+    return (todos ? q : q.eq('colegio_id', colegioId)).range(desde, hasta);
+  });
+  const alumnoIds: string[] = alumnos.map((a) => a.id);
 
-  const alumnoIds: string[] = (alumnos || []).map((a: any) => a.id);
+  // Filas de `tabla` del colegio (por colegio_id) + las ligadas a sus alumnos (por alumno_id),
+  // sin repetir.
+  const traerPorColegioOAlumnos = async <T extends { id: string }>(tabla: string, columnas: string): Promise<T[]> => {
+    const porId = new Map<string, T>();
+    const agregar = (filas: T[]) => filas.forEach((f) => porId.set(f.id, f));
+    agregar(await traerTodasLasFilas<T>((desde, hasta) => {
+      const q = supabase.from(tabla).select(columnas).order('id');
+      return (todos ? q : q.eq('colegio_id', colegioId)).range(desde, hasta);
+    }));
+    if (!todos) {
+      for (const lote of enLotes(alumnoIds)) {
+        agregar(await traerTodasLasFilas<T>((desde, hasta) =>
+          supabase.from(tabla).select(columnas).in('alumno_id', lote).order('id').range(desde, hasta)
+        ));
+      }
+    }
+    return Array.from(porId.values());
+  };
 
-  let fotosQuery = supabase.from('fotos').select('id, storage_path, thumb_path, preview_path');
-  if (!todos) {
-    const filtros = [`colegio_id.eq.${colegioId}`];
-    if (alumnoIds.length > 0) filtros.push(`alumno_id.in.(${alumnoIds.join(',')})`);
-    fotosQuery = fotosQuery.or(filtros.join(','));
-  }
-  const { data: fotosData, error: errFo } = await fotosQuery;
-  if (errFo) throw errFo;
-  const fotos = (fotosData || []) as { id: string; storage_path: string | null; thumb_path: string | null; preview_path: string | null }[];
+  const fotos = await traerPorColegioOAlumnos<{ id: string; storage_path: string | null; thumb_path: string | null; preview_path: string | null }>(
+    'fotos',
+    'id, storage_path, thumb_path, preview_path'
+  );
 
-  let pedidosQuery = supabase.from('pedidos').select('id, familia_id');
-  if (!todos) {
-    // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): esto filtraba
-    // sólo por familia_id/alumno_id, pero esas dos columnas del pedido casi nunca se completan
-    // (sólo se llenan cuando la familia deja nombre/whatsapp/email, y alumno_id ni se usa hoy);
-    // en cambio "pedidos.colegio_id" SÍ se guarda siempre desde que se creó el pedido (ver
-    // /api/pedidos/crear). Sin este filtro directo, el cierre de año de un colegio dejaba
-    // huérfanos casi todos sus pedidos: no se borraban del cierre y, peor, "resumen" mostraba un
-    // conteo de pedidos falso (casi siempre 0) aunque el colegio tuviera pedidos reales.
-    const filtros: string[] = [`colegio_id.eq.${colegioId}`];
-    if (alumnoIds.length > 0) filtros.push(`alumno_id.in.(${alumnoIds.join(',')})`);
-    pedidosQuery = pedidosQuery.or(filtros.join(','));
-  }
-  const { data: pedidosData, error: errP } = await pedidosQuery;
-  if (errP) throw errP;
-  const pedidosDelColegio = (pedidosData || []) as { id: string; familia_id: string | null }[];
+  // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): esto filtraba
+  // sólo por familia_id/alumno_id, pero esas dos columnas del pedido casi nunca se completan;
+  // en cambio "pedidos.colegio_id" SÍ se guarda siempre desde que se creó el pedido (ver
+  // /api/pedidos/crear) — por eso se filtra también por colegio_id.
+  const pedidosDelColegio = await traerPorColegioOAlumnos<{ id: string; familia_id: string | null }>('pedidos', 'id, familia_id');
 
   const familiaIdsSet = new Set<string>();
-  for (const a of (alumnos || []) as { id: string; familia_id: string | null }[]) {
+  for (const a of alumnos) {
     if (a.familia_id) familiaIdsSet.add(a.familia_id);
   }
   for (const p of pedidosDelColegio) {
@@ -2255,6 +2315,32 @@ async function idsDeColegioParaCierre(
   return { familiaIds, alumnoIds, fotos, pedidoIds: pedidosDelColegio.map((p) => p.id) };
 }
 
+// Parte una lista de ids en lotes chicos para filtros `.in(...)`: cada id viaja en la URL de la
+// consulta, y con cientos de UUIDs juntos la URL supera el largo máximo que acepta el servidor.
+function enLotes<T>(lista: T[], tamano = 100): T[][] {
+  const lotes: T[][] = [];
+  for (let i = 0; i < lista.length; i += tamano) lotes.push(lista.slice(i, i + tamano));
+  return lotes;
+}
+
+// Ids de pedido_fotos ligados a esos pedidos o fotos (sin repetir), consultando en lotes.
+async function idsPedidoFotosDe(
+  supabase: NonNullable<ReturnType<typeof getServerSupabase>>,
+  pedidoIds: string[],
+  fotoIds: string[]
+): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const [columna, lista] of [['pedido_id', pedidoIds], ['foto_id', fotoIds]] as const) {
+    for (const lote of enLotes(lista)) {
+      const filas = await traerTodasLasFilas<{ id: string }>((desde, hasta) =>
+        supabase.from('pedido_fotos').select('id').in(columna, lote).order('id').range(desde, hasta)
+      );
+      filas.forEach((f) => ids.add(f.id));
+    }
+  }
+  return Array.from(ids);
+}
+
 // Las miniaturas/vistas ampliadas (thumb_path/preview_path) se guardan como URL pública
 // completa (bucket 'fotos-web'); storage_path (HD) se guarda como ruta relativa dentro de
 // 'fotos-hd'. Esto extrae la ruta relativa real dentro del bucket para poder borrar el
@@ -2263,8 +2349,11 @@ function extraerPathStorageParaCierre(valor: string | null, bucket: string): str
   if (!valor) return null;
   const marcador = `/object/public/${bucket}/`;
   const idx = valor.indexOf(marcador);
-  if (idx >= 0) return valor.substring(idx + marcador.length);
-  return valor.startsWith('http') ? null : valor;
+  // Las URLs guardadas llevan "?v=<timestamp>" al final (anti-caché, ver subida de fotos): hay que
+  // sacarlo, si no Storage busca un archivo con ese nombre literal y el borrado no hace nada.
+  const sinQuery = (ruta: string) => ruta.split('?')[0];
+  if (idx >= 0) return sinQuery(valor.substring(idx + marcador.length));
+  return valor.startsWith('http') ? null : sinQuery(valor);
 }
 
 app.get('/api/admin/cerrar-anio/resumen', requireAdminAuth, async (req: Request, res: Response) => {
@@ -2308,18 +2397,7 @@ app.get('/api/admin/cerrar-anio/resumen', requireAdminAuth, async (req: Request,
       contarPorColegio('solicitudes_codigo'),
     ]);
 
-    let pedidoFotos = 0;
-    if (pedidoIds.length > 0 || fotos.length > 0) {
-      const filtros: string[] = [];
-      if (pedidoIds.length > 0) filtros.push(`pedido_id.in.(${pedidoIds.join(',')})`);
-      if (fotos.length > 0) filtros.push(`foto_id.in.(${fotos.map((f) => f.id).join(',')})`);
-      const { count, error } = await supabase
-        .from('pedido_fotos')
-        .select('id', { count: 'exact', head: true })
-        .or(filtros.join(','));
-      if (error) throw error;
-      pedidoFotos = count || 0;
-    }
+    const pedidoFotos = (await idsPedidoFotosDe(supabase, pedidoIds, fotos.map((f) => f.id))).length;
 
     return res.json({
       success: true,
@@ -2395,21 +2473,21 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
     // borrar y qué no si algo se corta a mitad de camino.
     pasoActual = 'pedido_fotos';
 
+    // Borra por lista de ids en lotes (ver enLotes: la lista viaja en la URL).
+    const borrarPorIds = async (tabla: string, columna: string, ids: string[]) => {
+      for (const lote of enLotes(ids)) {
+        const { error } = await supabase.from(tabla).delete().in(columna, lote);
+        if (error) throw error;
+      }
+    };
+
     // 1) pedido_fotos (depende de pedidos y fotos)
-    if (pedidoIds.length > 0 || fotoIds.length > 0) {
-      const filtros: string[] = [];
-      if (pedidoIds.length > 0) filtros.push(`pedido_id.in.(${pedidoIds.join(',')})`);
-      if (fotoIds.length > 0) filtros.push(`foto_id.in.(${fotoIds.join(',')})`);
-      const { error } = await supabase.from('pedido_fotos').delete().or(filtros.join(','));
-      if (error) throw error;
-    }
+    await borrarPorIds('pedido_fotos', 'pedido_id', pedidoIds);
+    await borrarPorIds('pedido_fotos', 'foto_id', fotoIds);
 
     // 2) pedidos
     pasoActual = 'pedidos';
-    if (pedidoIds.length > 0) {
-      const { error } = await supabase.from('pedidos').delete().in('id', pedidoIds);
-      if (error) throw error;
-    }
+    await borrarPorIds('pedidos', 'id', pedidoIds);
 
     // 3) archivos físicos en storage de las fotos que se van a borrar. Best-effort: si el
     // borrado físico falla no frenamos el cierre de año (los registros igual se limpian);
@@ -2436,24 +2514,15 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
 
     // 4) fotos
     pasoActual = 'fotos';
-    if (fotoIds.length > 0) {
-      const { error } = await supabase.from('fotos').delete().in('id', fotoIds);
-      if (error) throw error;
-    }
+    await borrarPorIds('fotos', 'id', fotoIds);
 
     // 5) alumnos
     pasoActual = 'alumnos';
-    if (alumnoIds.length > 0) {
-      const { error } = await supabase.from('alumnos').delete().in('id', alumnoIds);
-      if (error) throw error;
-    }
+    await borrarPorIds('alumnos', 'id', alumnoIds);
 
     // 6) familias
     pasoActual = 'familias';
-    if (familiaIds.length > 0) {
-      const { error } = await supabase.from('familias').delete().in('id', familiaIds);
-      if (error) throw error;
-    }
+    await borrarPorIds('familias', 'id', familiaIds);
 
     // 7-11) el resto de las tablas de temporada, scopeadas por colegio (o todas si es "todos").
     // Igual que en /api/admin/fotos (DELETE), .not('id','is',null) es el filtro "matchea todo"
@@ -2952,6 +3021,30 @@ function normalizarCodigoSeccion(codigo: string): string {
   return String(codigo || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+// Todas las filas de codigos_seccion (paginado: PostgREST corta en 1000 filas por consulta).
+async function traerTodosLosCodigosSeccion(supabase: any): Promise<any[]> {
+  return traerTodasLasFilas<any>((desde, hasta) =>
+    supabase
+      .from('codigos_seccion')
+      .select('id, colegio_id, grado, turno, division, codigo_secreto')
+      .order('id')
+      .range(desde, hasta)
+  );
+}
+
+// Auditoría 2026-09-23 (bug real): la validación del portal compara los códigos NORMALIZADOS (sin
+// guiones ni espacios: "AB12-CD34" == "AB12CD34"), pero los chequeos de "¿este código ya lo usa
+// otra sección?" comparaban el texto exacto. Los códigos generados se guardan con guion
+// ("AB12-CD34") y los fijados a mano desde el panel sin él ("AB12CD34"), así que dos secciones
+// distintas podían quedar con el "mismo" código — y el portal le mostraba a una familia la
+// galería de OTRO curso (la primera que apareciera). Este chequeo compara igual que el portal.
+async function codigoSeccionEnUso(supabase: any, codigo: string, excluirId?: string | null): Promise<boolean> {
+  const buscado = normalizarCodigoSeccion(codigo);
+  if (!buscado) return false;
+  const filas = await traerTodosLosCodigosSeccion(supabase);
+  return filas.some((fila) => fila.id !== excluirId && normalizarCodigoSeccion(fila.codigo_secreto) === buscado);
+}
+
 /**
  * Devuelve el código secreto ya asignado a esta sección (colegio+grado+turno+división)
  * si ya existe, o crea uno nuevo si es la primera vez. Todas las familias de la misma
@@ -2988,12 +3081,7 @@ async function obtenerOCrearCodigoSeccion(
 
   let candidato = String(candidatoPreferido || '').trim().toUpperCase();
   if (candidato) {
-    const { data: enUso } = await supabase
-      .from('codigos_seccion')
-      .select('id')
-      .eq('codigo_secreto', candidato)
-      .maybeSingle();
-    if (enUso) {
+    if (await codigoSeccionEnUso(supabase, candidato)) {
       // Ese código ya pertenece a otra sección distinta: se descarta y se genera uno nuevo,
       // en vez de dejar que dos secciones distintas terminen compartiendo el mismo código.
       candidato = '';
@@ -3005,12 +3093,7 @@ async function obtenerOCrearCodigoSeccion(
     // arriba) — con pocos intentos de reintento acá alcanza para blindarlo también en este caso.
     for (let intento = 0; intento < 5; intento++) {
       const propuesto = generarCodigoSecretoSeccion();
-      const { data: enUso } = await supabase
-        .from('codigos_seccion')
-        .select('id')
-        .eq('codigo_secreto', propuesto)
-        .maybeSingle();
-      if (!enUso) {
+      if (!(await codigoSeccionEnUso(supabase, propuesto))) {
         candidato = propuesto;
         break;
       }
@@ -3050,8 +3133,9 @@ async function buscarSeccionPorCodigoSecreto(
   const limpio = normalizarCodigoSeccion(codigoIngresado);
   if (!limpio) return null;
 
-  const { data } = await supabase.from('codigos_seccion').select('colegio_id, grado, turno, division, codigo_secreto');
-  if (!Array.isArray(data)) return null;
+  // Paginado y con error propagado: antes, con más de 1000 secciones, los códigos más nuevos
+  // "no existían", y un error puntual de la base se informaba como "código incorrecto".
+  const data = await traerTodosLosCodigosSeccion(supabase);
 
   const match = data.find((row: any) => normalizarCodigoSeccion(row.codigo_secreto) === limpio);
   if (!match) return null;
@@ -3136,12 +3220,7 @@ app.post('/api/admin/codigos-seccion/regenerar', requireAdminAuth, async (req: R
     let nuevoCodigo = '';
     for (let intento = 0; intento < 5; intento++) {
       const candidato = generarCodigoSecretoSeccion();
-      const { data: enUso } = await supabase
-        .from('codigos_seccion')
-        .select('id')
-        .eq('codigo_secreto', candidato)
-        .maybeSingle();
-      if (!enUso) {
+      if (!(await codigoSeccionEnUso(supabase, candidato))) {
         nuevoCodigo = candidato;
         break;
       }
@@ -3207,12 +3286,7 @@ app.post('/api/admin/codigos-seccion/actualizar', requireAdminAuth, async (req: 
       .eq('division', d)
       .maybeSingle();
 
-    const { data: enUsoPorOtra } = await supabase
-      .from('codigos_seccion')
-      .select('id')
-      .eq('codigo_secreto', codigoNormalizado)
-      .maybeSingle();
-    if (enUsoPorOtra?.id && enUsoPorOtra.id !== existente?.id) {
+    if (await codigoSeccionEnUso(supabase, codigoNormalizado, existente?.id || null)) {
       return res.status(409).json({ success: false, error: 'Ese código ya lo está usando otra sección. Elegí uno distinto.' });
     }
 
@@ -3254,8 +3328,10 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
       division,
       turno,
       solicitaFotoHermanos,
-      hermanos
+      hermanos: hermanosRecibidos
     } = req.body || {};
+    // Tope defensivo: un array enorme de "hermanos" se guardaba entero en la fila (jsonb).
+    const hermanos = Array.isArray(hermanosRecibidos) ? hermanosRecibidos.slice(0, 10) : [];
 
     if (!padreNombre || !alumnoNombre || !colegioId || !telefonoWhatsApp || !email) {
       return res.status(400).json({ success: false, error: 'Faltan datos obligatorios para la inscripción' });
@@ -3286,13 +3362,18 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     let matchPadre: any = null;
     let candidatosPadron: any[] = [];
     try {
-      const { data: candidatos, error: errAuth } = await supabase
-        .from('padres_autorizados')
-        .select('*')
-        .eq('colegio_id', colegioId)
-        .eq('usado', false);
+      // Paginado: un colegio grande supera las 1000 filas de padrón y la coincidencia se perdía.
+      const candidatos = await traerTodasLasFilas<any>((desde, hasta) =>
+        supabase
+          .from('padres_autorizados')
+          .select('*')
+          .eq('colegio_id', colegioId)
+          .eq('usado', false)
+          .order('id')
+          .range(desde, hasta)
+      );
 
-      if (!errAuth && Array.isArray(candidatos)) {
+      if (Array.isArray(candidatos)) {
         candidatosPadron = candidatos;
         matchPadre = candidatos.find((p: any) => {
           if (cleanEmail && p.email && String(p.email).trim().toLowerCase() === cleanEmail) return true;
@@ -3340,13 +3421,19 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     // la familia usa "Modificar datos de inscripción" y vuelve a enviar el formulario).
     let inscripcionExistente: any = null;
     try {
-      const { data: existentes, error: errExistentes } = await supabase
-        .from('inscripciones')
-        .select('*')
-        .eq('colegio_id', colegioId)
-        .neq('estado', 'rechazado');
+      // Paginado: con más de 1000 inscripciones en el colegio, la existente podía no aparecer y
+      // se creaba un duplicado.
+      const existentes = await traerTodasLasFilas<any>((desde, hasta) =>
+        supabase
+          .from('inscripciones')
+          .select('*')
+          .eq('colegio_id', colegioId)
+          .neq('estado', 'rechazado')
+          .order('id')
+          .range(desde, hasta)
+      );
 
-      if (!errExistentes && Array.isArray(existentes)) {
+      if (Array.isArray(existentes)) {
         inscripcionExistente = existentes.find((i: any) => {
           if (cleanEmail && i.email && String(i.email).trim().toLowerCase() === cleanEmail) return true;
           if (telDigits) {
@@ -3571,12 +3658,43 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     // que sacarlas explícitamente antes de devolverla, si no el mismo código se sigue filtrando
     // por esta otra puerta.
     const { codigo_asignado: _codigoAsignadoOculto, codigo_familiar: _codigoFamiliarOculto, ...inscripcionSinCodigo } = resultadoFila || {};
+    // Auditoría 2026-09-23 (bug de privacidad, ALTO): cuando el formulario coincide (por teléfono o
+    // email, datos NO secretos) con una inscripción YA APROBADA, `resultadoFila` es la fila de ESA
+    // familia — que puede no ser quien completó el formulario. Se devolvía completa: DNI del tutor
+    // (la llave que hoy se usa junto al código del curso para entrar al portal), DNI del alumno,
+    // email, teléfono y hermanos. Ahora, en ese caso, sólo viaja lo mínimo para mostrar la pantalla
+    // de "revisá tu correo", con los nombres que escribió quien envió el formulario.
+    // Lo mismo aplica a una aprobación automática recién hecha: el email/teléfono guardados son
+    // los del padrón oficial, no necesariamente los que escribió quien completó el formulario.
+    const inscripcionRespuesta = estado === 'aceptado'
+      ? {
+          id: inscripcionSinCodigo.id,
+          estado: inscripcionSinCodigo.estado,
+          colegio_id: inscripcionSinCodigo.colegio_id,
+          colegio_nombre: inscripcionSinCodigo.colegio_nombre,
+          padre_nombre: String(padreNombre).trim(),
+          alumno_nombre: String(alumnoNombre).trim(),
+          alumno_apellido: String(alumnoApellido || '').trim(),
+          grado: congelarInscripcionAprobada ? String(grado || '') : inscripcionSinCodigo.grado,
+          division: congelarInscripcionAprobada ? String(division || '') : inscripcionSinCodigo.division,
+          turno: congelarInscripcionAprobada ? String(turno || '') : inscripcionSinCodigo.turno,
+          // Sólo los nombres que escribió quien envió el formulario (para el "y N hermanos más").
+          hermanos: (Array.isArray(hermanos) ? hermanos : []).map((h: any, idx: number) => ({
+            id: String(h?.id || `hermano-${idx}`),
+            alumnoNombre: String(h?.alumnoNombre || ''),
+            alumnoApellido: String(h?.alumnoApellido || ''),
+          })),
+        }
+      : inscripcionSinCodigo;
     return res.json({
       success: true,
       estado,
       emailEnviado,
-      emailDestino: emailEnviado ? emailDestinoNotificacion : null,
-      inscripcion: inscripcionSinCodigo,
+      // El correo destino de una familia ya aprobada tampoco se muestra completo (ver arriba).
+      emailDestino: emailEnviado && emailDestinoNotificacion
+        ? (emailDestinoNotificacion === cleanEmail ? emailDestinoNotificacion : enmascararEmailServidor(emailDestinoNotificacion))
+        : null,
+      inscripcion: inscripcionRespuesta,
     });
   } catch (err: any) {
     console.error('Error al validar inscripción:', err);
@@ -3644,6 +3762,20 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
     };
     await tryEqCodigoTodas('codigo_asignado', qUpper);
     await tryEqCodigoTodas('codigo_familiar', qUpper);
+    // Auditoría 2026-09-23: la galería (/api/fotos) acepta el código con o sin guion/espacios, pero
+    // acá se exigía el texto exacto — una familia que tipeaba "AB12CD34" en vez de "AB12-CD34" (o
+    // al revés, para códigos fijados a mano) recibía "código no encontrado". Se prueban también
+    // las variantes normalizadas.
+    const qNormalizado = normalizarCodigoSeccion(q);
+    if (qNormalizado.length >= 4) {
+      const variantes = [qNormalizado];
+      if (qNormalizado.length === 8) variantes.push(`${qNormalizado.slice(0, 4)}-${qNormalizado.slice(4)}`);
+      for (const variante of variantes) {
+        if (variante === qUpper) continue;
+        await tryEqCodigoTodas('codigo_asignado', variante);
+        await tryEqCodigoTodas('codigo_familiar', variante);
+      }
+    }
 
     if (candidatos.length > 0) {
       const soloCurso = (fila: any) => ({
@@ -3726,8 +3858,15 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
     }
 
     if (porContacto.estado !== 'aceptado' || !porContacto.codigo_asignado) {
-      // Todavía no tiene código asignado: no hay nada que proteger, se informa el estado tal cual.
-      return res.json({ success: true, inscripcion: porContacto });
+      // Todavía no tiene código asignado: se informa el estado. Auditoría 2026-09-23 (privacidad):
+      // antes se devolvía la fila completa a quien escribiera un teléfono/email ajeno — incluidos
+      // el DNI del tutor (que después, junto al código del curso, es la llave para entrar al
+      // portal) y los DNI de los chicos. La pantalla sólo necesita nombres, curso y estado.
+      const { padre_dni: _dniTutorOculto, alumno_dni: _dniAlumnoOculto, hermanos: hermanosFila, ...pendienteSinDni } = porContacto;
+      const hermanosSinDni = Array.isArray(hermanosFila)
+        ? hermanosFila.map(({ alumnoDni: _dniHermanoOculto, ...h }: any) => h)
+        : [];
+      return res.json({ success: true, inscripcion: { ...pendienteSinDni, hermanos: hermanosSinDni } });
     }
 
     // Ya tiene código asignado: por acá nunca se devuelve. Se reenvía al correo de confianza que
@@ -3884,9 +4023,10 @@ app.get('/api/admin/inscripciones', requireAdminAuth, async (req: Request, res: 
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
-    const { data, error } = await supabase.from('inscripciones').select('*').order('created_at', { ascending: false });
-    if (error) throw error;
-    return res.json({ success: true, inscripciones: data || [] });
+    const data = await traerTodasLasFilas((desde, hasta) =>
+      supabase.from('inscripciones').select('*').order('created_at', { ascending: false }).order('id').range(desde, hasta)
+    );
+    return res.json({ success: true, inscripciones: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener inscripciones' });
   }
@@ -4048,13 +4188,14 @@ app.get('/api/admin/padron', requireAdminAuth, async (req: Request, res: Respons
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
     const colegioId = req.query.colegioId as string | undefined;
-    let builder = supabase.from('padres_autorizados').select('*').order('created_at', { ascending: false });
-    if (colegioId) {
-      builder = builder.eq('colegio_id', colegioId);
-    }
-    const { data, error } = await builder;
-    if (error) throw error;
-    return res.json({ success: true, padron: data || [] });
+    const data = await traerTodasLasFilas((desde, hasta) => {
+      let builder = supabase.from('padres_autorizados').select('*').order('created_at', { ascending: false }).order('id');
+      if (colegioId) {
+        builder = builder.eq('colegio_id', colegioId);
+      }
+      return builder.range(desde, hasta);
+    });
+    return res.json({ success: true, padron: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener el padrón' });
   }
@@ -4217,10 +4358,14 @@ async function procesarCargaPadron(
   }
 
   // Evitar duplicados contra lo que ya está cargado para este colegio
-  const { data: existentes } = await supabase
-    .from('padres_autorizados')
-    .select('email, telefono')
-    .eq('colegio_id', colegioId);
+  const existentes = await traerTodasLasFilas<any>((desde, hasta) =>
+    supabase
+      .from('padres_autorizados')
+      .select('email, telefono')
+      .eq('colegio_id', colegioId)
+      .order('id')
+      .range(desde, hasta)
+  );
 
   const emailsExistentes = new Set((existentes || []).map((r: any) => (r.email || '').toLowerCase()).filter(Boolean));
   const telefonosExistentes = new Set((existentes || []).map((r: any) => normalizarTelefonoServidor(r.telefono || '')).filter(Boolean));
@@ -4645,13 +4790,14 @@ app.get('/api/admin/solicitudes-codigo', requireAdminAuth, async (req: Request, 
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
     }
     const estado = req.query.estado as string | undefined;
-    let builder = supabase.from('solicitudes_codigo').select('*').order('created_at', { ascending: false });
-    if (estado && estado !== 'todas') {
-      builder = builder.eq('estado', estado);
-    }
-    const { data, error } = await builder;
-    if (error) throw error;
-    return res.json({ success: true, solicitudes: data || [] });
+    const data = await traerTodasLasFilas((desde, hasta) => {
+      let builder = supabase.from('solicitudes_codigo').select('*').order('created_at', { ascending: false }).order('id');
+      if (estado && estado !== 'todas') {
+        builder = builder.eq('estado', estado);
+      }
+      return builder.range(desde, hasta);
+    });
+    return res.json({ success: true, solicitudes: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al obtener las solicitudes' });
   }
@@ -4794,12 +4940,17 @@ async function avisarFotosDisponiblesASeccion(supabase: SupabaseClient, seccion:
   const resend = getResendClient();
   if (!resend) throw new Error('RESEND_API_KEY no está configurada; no se enviaron los avisos de galería.');
 
-  const { data: inscripciones, error } = await supabase
-    .from('inscripciones')
-    .select('id,email,padre_nombre,alumno_nombre,colegio_nombre,grado,turno,division,hermanos')
-    .eq('colegio_id', seccion.colegioId)
-    .eq('estado', 'aceptado');
-  if (error) throw error;
+  // Paginado: en un colegio con más de 1000 familias aprobadas, las que quedaban fuera del tope
+  // nunca recibían el aviso de "tus fotos ya están online".
+  const inscripciones = await traerTodasLasFilas<any>((desde, hasta) =>
+    supabase
+      .from('inscripciones')
+      .select('id,email,padre_nombre,alumno_nombre,colegio_nombre,grado,turno,division,hermanos')
+      .eq('colegio_id', seccion.colegioId)
+      .eq('estado', 'aceptado')
+      .order('id')
+      .range(desde, hasta)
+  );
 
   const destinatarios = new Map<string, { id: string; email: string; tutor: string; alumno: string; colegio: string }>();
   for (const inscripcion of inscripciones || []) {
@@ -4828,19 +4979,43 @@ async function avisarFotosDisponiblesASeccion(supabase: SupabaseClient, seccion:
     });
   }
 
-  const resultados = await Promise.allSettled(Array.from(destinatarios.values()).map((destinatario) =>
-    resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
-      replyTo: resendReplyTo,
-      to: [destinatario.email],
-      subject: `Las fotos de ${destinatario.alumno} ya están online`,
-      html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">¡Las fotos ya están online!</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(destinatario.tutor)}</strong>,</p><p style="line-height:1.6">Las fotografías de <strong>${escapeHtml(destinatario.alumno)}</strong>, de ${escapeHtml(seccion.grado)} "${escapeHtml(seccion.division)}" · Turno ${escapeHtml(seccion.turno)}, ya están disponibles para ver y elegir.</p><div style="margin:24px 0;text-align:center"><a href="https://retratoescolar.com.ar" style="display:inline-block;background:#fbbf24;color:#0f172a;text-decoration:none;font-weight:800;padding:13px 22px;border-radius:10px">Ver mis fotos</a></div><p style="font-size:12px;color:#64748b">Ingresá con el mismo código de acceso que recibiste al aprobarse tu inscripción en ${escapeHtml(destinatario.colegio)}.</p></div></div></body></html>`,
-    }, { headers: { 'Idempotency-Key': `fotos-online-${seccion.codigoCurso}-${destinatario.id}` } })
-  ));
+  // Auditoría 2026-09-23 (bug real): antes se mandaban TODOS los avisos a la vez con
+  // Promise.allSettled + emails.send — Resend limita a ~2 pedidos por segundo, así que en un curso
+  // con más de un par de familias casi todos los avisos volvían con error 429 (rate limit) y esas
+  // familias nunca se enteraban de que sus fotos estaban online. Ahora se usa la API de lotes de
+  // Resend (hasta 100 correos por pedido), de a un lote por vez.
+  const lista = Array.from(destinatarios.values());
+  const armarCorreo = (destinatario: { email: string; tutor: string; alumno: string; colegio: string }) => ({
+    from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+    replyTo: resendReplyTo,
+    to: [destinatario.email],
+    subject: `Las fotos de ${destinatario.alumno} ya están online`,
+    html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">¡Las fotos ya están online!</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(destinatario.tutor)}</strong>,</p><p style="line-height:1.6">Las fotografías de <strong>${escapeHtml(destinatario.alumno)}</strong>, de ${escapeHtml(seccion.grado)} "${escapeHtml(seccion.division)}" · Turno ${escapeHtml(seccion.turno)}, ya están disponibles para ver y elegir.</p><div style="margin:24px 0;text-align:center"><a href="https://retratoescolar.com.ar" style="display:inline-block;background:#fbbf24;color:#0f172a;text-decoration:none;font-weight:800;padding:13px 22px;border-radius:10px">Ver mis fotos</a></div><p style="font-size:12px;color:#64748b">Ingresá con el mismo código de acceso que recibiste al aprobarse tu inscripción en ${escapeHtml(destinatario.colegio)}.</p></div></div></body></html>`,
+  });
 
-  const fallidos = resultados.filter((resultado) => resultado.status === 'rejected' || (resultado.status === 'fulfilled' && resultado.value.error));
-  if (fallidos.length > 0) console.error(`[fotos] Fallaron ${fallidos.length} de ${resultados.length} avisos automáticos.`);
-  return resultados.length - fallidos.length;
+  let enviados = 0;
+  const TAMANO_LOTE = 100;
+  for (let i = 0; i < lista.length; i += TAMANO_LOTE) {
+    const lote = lista.slice(i, i + TAMANO_LOTE);
+    try {
+      const resultado = await resend.batch.send(lote.map(armarCorreo), {
+        idempotencyKey: `fotos-online-${crypto.createHash('sha256').update(`${seccion.colegioId}|${seccion.codigoCurso}|${lote.map((d) => d.id).join(',')}`).digest('hex')}`,
+        batchValidation: 'permissive',
+      });
+      if (resultado.error) {
+        console.error(`[fotos] Falló un lote de ${lote.length} avisos automáticos:`, resultado.error);
+        continue;
+      }
+      const erroresLote = (resultado.data as any)?.errors?.length || 0;
+      if (erroresLote > 0) console.error(`[fotos] ${erroresLote} aviso(s) del lote rechazados por Resend:`, (resultado.data as any).errors);
+      enviados += lote.length - erroresLote;
+    } catch (errLote) {
+      console.error(`[fotos] Error de red enviando un lote de ${lote.length} avisos:`, errLote);
+    }
+    if (i + TAMANO_LOTE < lista.length) await new Promise((resolve) => setTimeout(resolve, 600));
+  }
+  if (enviados < lista.length) console.error(`[fotos] Fallaron ${lista.length - enviados} de ${lista.length} avisos automáticos.`);
+  return enviados;
 }
 
 interface DatosCorreoFotosHD {
@@ -4958,7 +5133,7 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
 
       ${enlaceHD ? `
       <div style="margin: 28px 0; text-align: center;">
-        <a href="${enlaceHD}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #d97706; color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.35);">
+        <a href="${escapeHtml(enlaceHD)}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #d97706; color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 12px; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.35);">
           ⬇️ Descargar Fotos en Alta Resolución (HD)
         </a>
         <div style="font-size: 11px; color: #64748b; margin-top: 8px;">
@@ -5024,13 +5199,22 @@ async function enviarCorreoFotosHD(datos: DatosCorreoFotosHD) {
 </html>
   `;
 
+  // Auditoría 2026-09-23 (bug real): el SDK de Resend NO tira excepción cuando el envío falla
+  // (dominio sin verificar, rate limit, email rechazado): devuelve { data: null, error }. Antes se
+  // devolvía success:true igual, así que el pedido quedaba marcado email_enviado=true y el cron de
+  // reintento lo salteaba aunque el correo nunca hubiera salido. Además el asunto usaba los textos
+  // ya escapados para HTML (un "&" llegaba como "&amp;" en el asunto).
   const data = await resend.emails.send({
     from: fromEmail,
     replyTo: resendReplyTo,
     to: [to],
-    subject: `📸 Tus fotos en Alta Resolución - ${nombreAlumnoStr} (${colegioStr})`,
+    subject: `📸 Tus fotos en Alta Resolución - ${alumnoNombre?.trim() || 'el alumno/a'} (${colegioNombre?.trim() || 'la institución'})`,
     html: htmlContent,
   });
+  if (data.error) {
+    console.error('[Resend] No se pudo enviar el correo de fotos HD:', data.error);
+    return { success: false, error: data.error.message || 'Resend rechazó el envío del correo.' };
+  }
 
   return {
     success: true,
@@ -5319,18 +5503,27 @@ async function reintentarPedidosConHDPendiente(
   const graciaMinutos = opciones.graciaMinutos ?? 10;
   const cortaFecha = new Date(Date.now() - graciaMinutos * 60 * 1000).toISOString();
 
-  const { data: pendientes, error } = await supabase
+  // Auditoría 2026-09-23 (bug real): antes se pedían sólo `limite` filas, sin orden. Los pedidos
+  // que nunca se pueden resolver (sin email de la familia, o de un curso sin fotos cargadas)
+  // seguían saliendo primero todos los días y ocupaban los 20 lugares: los demás pedidos pendientes
+  // no se reintentaban nunca. Ahora se trae un margen más amplio, se descartan los que no tienen
+  // email y se priorizan los más nuevos.
+  const { data: candidatos, error } = await supabase
     .from('pedidos')
     .select('*, familias(nombre, whatsapp, email)')
     .eq('estado', 'pagado')
     .or('link_descarga_hd.is.null,link_descarga_hd.eq.')
     .lt('created_at', cortaFecha)
-    .limit(limite);
+    .order('created_at', { ascending: false })
+    .limit(500);
   if (error) {
     console.error('[cron reintentar-hd] Error buscando pedidos pendientes:', error.message);
     return { revisados: 0, resueltos: 0, fallidos: 0 };
   }
-  if (!pendientes || pendientes.length === 0) return { revisados: 0, resueltos: 0, fallidos: 0 };
+  const pendientes = (candidatos || [])
+    .filter((p: any) => String(p?.familias?.email || '').includes('@'))
+    .slice(0, limite);
+  if (pendientes.length === 0) return { revisados: 0, resueltos: 0, fallidos: 0 };
 
   let resueltos = 0;
   let fallidos = 0;
@@ -5338,8 +5531,7 @@ async function reintentarPedidosConHDPendiente(
   // pago), acá puede haber varios pedidos de distintos pagos juntos, y no tiene sentido armar
   // todos los .zip al mismo tiempo dentro de una función serverless con tiempo límite.
   for (const pedido of pendientes) {
-    const emailDestino = pedido?.familias?.email;
-    if (!emailDestino || !emailDestino.includes('@')) continue;
+    const emailDestino = pedido.familias.email;
     try {
       const linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, pedido);
       if (!linkDescargaHD) { fallidos += 1; continue; }
@@ -5372,8 +5564,8 @@ async function reintentarPedidosConHDPendiente(
 // configurada, el endpoint sigue existiendo pero rechaza todo (falla cerrado, no abierto).
 app.get('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
   const secretoEsperado = process.env.CRON_SECRET;
-  const autorizacion = req.headers.authorization;
-  if (!secretoEsperado || autorizacion !== `Bearer ${secretoEsperado}`) {
+  const autorizacion = req.headers.authorization || '';
+  if (!secretoEsperado || !compararTimingSafe(autorizacion, `Bearer ${secretoEsperado}`)) {
     return res.status(401).json({ success: false, error: 'No autorizado.' });
   }
   const supabase = getServerSupabase();
@@ -5487,7 +5679,7 @@ async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
           Su Código de Acceso
         </div>
         <div style="font-size: 26px; font-weight: 800; color: #0f172a; font-family: monospace; letter-spacing: 2px;">
-          ${codigo}
+          ${escapeHtml(codigo)}
         </div>
       </div>
       <p style="font-size: 13px; line-height: 1.6; color: #334155;">Con este único código podrá:</p>
@@ -5515,13 +5707,19 @@ async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
 </html>
   `;
 
+  // Mismo bug que enviarCorreoFotosHD: sin mirar `error`, un envío rechazado por Resend se
+  // informaba como exitoso (al panel, y a la familia como "te enviamos el código por email").
   const data = await resend.emails.send({
     from: fromEmail,
     replyTo: resendReplyTo,
     to: [to],
-    subject: `Retrato Escolar: Tu Código de Acceso (${codigo}) - ${colegioStr}`,
+    subject: `Retrato Escolar: Tu Código de Acceso (${codigo}) - ${colegioNombre?.trim() || 'la institución'}`,
     html: htmlContent,
   });
+  if (data.error) {
+    console.error('[Resend] No se pudo enviar el correo con el código de acceso:', data.error);
+    return { success: false, error: data.error.message || 'Resend rechazó el envío del correo.' };
+  }
 
   return { success: true, messageId: data.data?.id, from: fromEmail, to };
 }
@@ -5627,7 +5825,7 @@ app.post('/api/admin/pedidos/:id/generar-zip-hd', requireAdminAuth, async (req: 
 // Resend funciona), no algo que deba poder disparar cualquier visitante sin sesión.
 app.post(['/api/resend/test', '/resend/test'], requireAdminAuth, async (req, res) => {
   try {
-    const { to } = req.body;
+    const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
     if (!to || !to.includes('@')) {
       return res.status(400).json({ success: false, error: 'Email de destino inválido' });
     }
@@ -5654,8 +5852,8 @@ app.post(['/api/resend/test', '/resend/test'], requireAdminAuth, async (req, res
             Este es un correo de prueba enviado desde tu dominio <strong>retratoescolar.com.ar</strong> utilizando la API de Resend.
           </p>
           <div style="background-color: #ecfdf5; border: 1px solid #a7f3d0; padding: 12px; border-radius: 8px; color: #065f46; font-size: 13px; margin: 16px 0;">
-            ✓ Remitente: <strong>${fromEmail}</strong><br>
-            ✓ Destino: <strong>${to}</strong><br>
+            ✓ Remitente: <strong>${escapeHtml(fromEmail)}</strong><br>
+            ✓ Destino: <strong>${escapeHtml(to)}</strong><br>
             ✓ Sistema: Retrato Escolar 2026
           </div>
           <p style="font-size: 12px; color: #64748b;">
@@ -5664,6 +5862,9 @@ app.post(['/api/resend/test', '/resend/test'], requireAdminAuth, async (req, res
         </div>
       `,
     });
+    if (data.error) {
+      return res.status(502).json({ success: false, error: data.error.message || 'Resend rechazó el envío de prueba.' });
+    }
 
     return res.json({
       success: true,
@@ -6345,7 +6546,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
       // reconsulta el pago directo contra la API de Mercado Pago con el access token
       // propio, así que no se puede "inventar" un pago aprobado), pero no hay motivo para
       // aceptar una notificación que dice no venir de Mercado Pago: se rechaza.
-      if (hash !== expectedHash) {
+      if (!compararTimingSafe(hash, expectedHash)) {
         console.warn('[Mercado Pago Webhook] Firma x-signature inválida — notificación rechazada.');
         return res.status(401).send('Invalid signature');
       }
@@ -7038,11 +7239,30 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
     // aprobado" apenas vuelven de Mercado Pago) fallaba siempre con 400 — ninguna familia veía
     // la confirmación automática, aunque el pago sí se hubiera acreditado bien. Ver auditoría
     // 2026-09-09.
-    const { data, error } = await supabase
+    // Un id que no tiene forma de UUID nunca puede existir (y Postgres respondería con un error de
+    // sintaxis en vez de "no encontrado").
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id))) {
+      return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+    }
+    const columnasStatus = 'id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd';
+    let { data, error } = await supabase
       .from('pedidos')
-      .select('id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd')
+      .select(columnasStatus)
       .eq('id', id)
       .maybeSingle();
+    // Auditoría 2026-09-23 (bug real): al volver de Mercado Pago/Nave con un carrito multi-hijo en
+    // otro dispositivo (sin los pedidos en localStorage), el portal sólo conoce el grupo_pago_id y
+    // consulta con ese valor — antes eso daba 404 para siempre (y el portal seguía consultando
+    // cada 4 s hasta chocar con el límite de frecuencia). Ahora se resuelve por el grupo.
+    if (!error && !data) {
+      ({ data, error } = await supabase
+        .from('pedidos')
+        .select(columnasStatus)
+        .eq('grupo_pago_id', id)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle());
+    }
 
     if (error) {
       return res.status(400).json({ success: false, error: error.message });
@@ -7116,7 +7336,13 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
           });
           const pagos = resultadoBusqueda?.results || [];
           const pagoAprobado = pagos.find((p) => p.status === 'approved');
-          const pagoRechazado = pagos.find((p) => p.status === 'rejected' || p.status === 'cancelled');
+          // Auditoría 2026-09-23 (bug real): antes alcanzaba con que CUALQUIER intento viejo
+          // estuviera rechazado para cancelar el pedido — ej. la tarjeta rebotó y la familia pagó
+          // después en efectivo (Rapipago/Pago Fácil, queda "pending" hasta acreditarse): el portal
+          // le mostraba "pago rechazado" aunque tuviera un pago en curso. Sólo cuenta el intento
+          // MÁS RECIENTE (la búsqueda viene ordenada por fecha, descendente).
+          const ultimoPago = pagos[0];
+          const pagoRechazado = ultimoPago && (ultimoPago.status === 'rejected' || ultimoPago.status === 'cancelled') ? ultimoPago : undefined;
           if (pagoAprobado) {
             // Auditoría 2026-09-23: misma lógica compartida que el webhook (control de monto +
             // .zip HD + correo). Antes acá sólo se cambiaba el estado y el correo con las fotos no

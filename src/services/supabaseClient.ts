@@ -31,14 +31,25 @@ export function getSupabaseConfig() {
   const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env;
   const envUrl = metaEnv?.VITE_SUPABASE_URL;
   const envKey = metaEnv?.VITE_SUPABASE_ANON_KEY;
-  let storedKey = typeof window !== 'undefined' ? localStorage.getItem('infocus_supabase_anon_key') : null;
-  const storedUrl = typeof window !== 'undefined' ? localStorage.getItem('infocus_supabase_url') : null;
+  // localStorage puede tirar excepción (Safari en modo privado estricto, cookies/almacenamiento
+  // bloqueados): sin esto, leer la configuración rompía la carga del número de WhatsApp.
+  const leerStorage = (clave: string): string | null => {
+    try {
+      return typeof window !== 'undefined' ? localStorage.getItem(clave) : null;
+    } catch {
+      return null;
+    }
+  };
+  let storedKey = leerStorage('infocus_supabase_anon_key');
+  const storedUrl = leerStorage('infocus_supabase_url');
 
   // Sanitize: never allow a stored service_role key in client localStorage
   if (storedKey && isServiceRoleKey(storedKey)) {
     console.warn('[Seguridad] Se eliminó una Service Role Key detectada en el almacenamiento local del cliente.');
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('infocus_supabase_anon_key');
+    try {
+      if (typeof window !== 'undefined') localStorage.removeItem('infocus_supabase_anon_key');
+    } catch {
+      // sin almacenamiento disponible no hay nada que limpiar
     }
     storedKey = null;
   }

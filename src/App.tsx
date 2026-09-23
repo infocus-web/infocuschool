@@ -10,13 +10,18 @@ import PortalFamiliasModal from './components/PortalFamiliasModal';
 import ModalInscripcionFamilia from './components/ModalInscripcionFamilia';
 import AdminModal from './components/AdminModal';
 import EscaneoPedidoModal from './components/EscaneoPedidoModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import { InscripcionFamilia } from './services/inscripcionesService';
 
 export default function App() {
   const [familiasModalOpen, setFamiliasModalOpen] = useState(() => {
     if (typeof window !== 'undefined') {
+      // Auditoría 2026-09-23 (bug real): sólo se abría el portal al volver de Mercado Pago con UN
+      // pedido (`pedido_id`). Al volver de Nave (`nave_status`) o de un carrito de varios hijos
+      // (`grupo_pago_id`), el portal procesaba la vuelta pero quedaba cerrado: la familia volvía a
+      // la home sin ver ninguna confirmación de su pago.
       const search = new URLSearchParams(window.location.search);
-      return Boolean(search.get('mp_status') && search.get('pedido_id'));
+      return Boolean((search.get('mp_status') || search.get('nave_status')) && (search.get('pedido_id') || search.get('grupo_pago_id')));
     }
     return false;
   });
@@ -127,38 +132,48 @@ export default function App() {
 
 
       {/* Interactive Family Portal Modal ("InFocus Schools") */}
-      <PortalFamiliasModal
-        isOpen={familiasModalOpen}
-        onClose={() => setFamiliasModalOpen(false)}
-        preselectedColegioId={selectedColegioId}
-        preselectedKitId={selectedKitId}
-        preselectedCodigo={selectedCodigo}
-        onOpenInscripcion={handleOpenInscripcion}
-      />
+      {/* Cada modal va dentro de su propio ErrorBoundary: si uno falla, se muestra un aviso con
+          salida en vez de dejar toda la página en blanco. */}
+      <ErrorBoundary variante="modal" onCerrar={() => setFamiliasModalOpen(false)}>
+        <PortalFamiliasModal
+          isOpen={familiasModalOpen}
+          onClose={() => setFamiliasModalOpen(false)}
+          preselectedColegioId={selectedColegioId}
+          preselectedKitId={selectedKitId}
+          preselectedCodigo={selectedCodigo}
+          onOpenInscripcion={handleOpenInscripcion}
+        />
+      </ErrorBoundary>
 
       {/* Registration Modal for Families */}
-      <ModalInscripcionFamilia
-        isOpen={inscripcionModalOpen}
-        onClose={() => setInscripcionModalOpen(false)}
-        onInscripcionExitosa={handleInscripcionExitosa}
-        initialTab={inscripcionModalTab}
-      />
+      <ErrorBoundary variante="modal" onCerrar={() => setInscripcionModalOpen(false)}>
+        <ModalInscripcionFamilia
+          isOpen={inscripcionModalOpen}
+          onClose={() => setInscripcionModalOpen(false)}
+          onInscripcionExitosa={handleInscripcionExitosa}
+          initialTab={inscripcionModalTab}
+        />
+      </ErrorBoundary>
 
       {/* Photographer Admin Panel Modal */}
-      <AdminModal
-        isOpen={adminModalOpen}
-        onClose={() => setAdminModalOpen(false)}
-        onProbarCodigo={(cod) => {
-          setAdminModalOpen(false);
-          handleOpenFamilias('col-inicial-2026', cod);
-        }}
-        tabInicial={typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('zoho') ? 'zoho' : undefined}
-      />
+      <ErrorBoundary variante="modal" onCerrar={() => setAdminModalOpen(false)}>
+        <AdminModal
+          isOpen={adminModalOpen}
+          onClose={() => setAdminModalOpen(false)}
+          onProbarCodigo={(cod) => {
+            setAdminModalOpen(false);
+            handleOpenFamilias('col-inicial-2026', cod);
+          }}
+          tabInicial={typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('zoho') ? 'zoho' : undefined}
+        />
+      </ErrorBoundary>
 
       {/* Pantalla de un solo pedido para cuando se escanea el QR pegado en el sobre físico del
           laboratorio (ver AdminLaboratorioTab.tsx, botón QR) — no reemplaza al panel completo. */}
       {escaneoModalOpen && escaneoPedidoId && (
-        <EscaneoPedidoModal pedidoId={escaneoPedidoId} onClose={() => setEscaneoModalOpen(false)} />
+        <ErrorBoundary variante="modal" onCerrar={() => setEscaneoModalOpen(false)}>
+          <EscaneoPedidoModal pedidoId={escaneoPedidoId} onClose={() => setEscaneoModalOpen(false)} />
+        </ErrorBoundary>
       )}
     </div>
   );
