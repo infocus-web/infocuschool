@@ -358,7 +358,8 @@ export default function AdminLaboratorioTab({
   };
 
   const pedidosAprobados = useMemo(() => {
-    return pedidos.filter(p => p.estadoPago === 'aprobado');
+    // Los kits pagados por adelantado entran recién cuando la familia elige sus fotos.
+    return pedidos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente);
   }, [pedidos]);
 
   // Auditoría 2026-09-22 (pedido de Pablo): recaudación total, para la fila de métricas de acá

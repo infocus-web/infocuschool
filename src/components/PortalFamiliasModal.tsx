@@ -39,6 +39,7 @@ import {
   Send,
   Images,
   ShoppingCart,
+  Loader2,
 } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
@@ -70,6 +71,8 @@ import {
 } from '../services/inscripcionesService';
 import { enviarSolicitudCodigo } from '../services/solicitudesCodigoService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
+import { elegirFotosDeReserva, obtenerReservaPendiente, type ReservaPendiente } from '../services/reservasService';
+import ReservaKitAnticipada from './ReservaKitAnticipada';
 import { irAConsultasConDatos } from '../utils/consultaPrefill';
 import { Colegio, KitProducto, Foto } from '../types';
 
@@ -651,6 +654,8 @@ export default function PortalFamiliasModal({
   useEffect(() => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
+      // La vuelta de un pago anticipado la muestra ReservaRetorno (App.tsx), no el portal.
+      if (searchParams.get('reserva') === '1') return;
       const mpStatus = searchParams.get('mp_status');
       const naveStatus = searchParams.get('nave_status');
       const pedidoId = searchParams.get('pedido_id');
@@ -764,6 +769,48 @@ export default function PortalFamiliasModal({
       cancelado = true;
     };
   }, [familiaActiva?.codigoAsignado, familiaActiva?.codigoFamiliar, familiaActiva?.padreDni]);
+
+  // Pago anticipado: si el hijo/a activo ya tiene un kit pagado por adelantado, en la galería se
+  // eligen las fotos y se confirman sin pasar de nuevo por el pago (ver ReservaKitAnticipada).
+  const [reservaActiva, setReservaActiva] = useState<ReservaPendiente | null>(null);
+  const [confirmandoReserva, setConfirmandoReserva] = useState(false);
+  const [resultadoReserva, setResultadoReserva] = useState<{ ok: boolean; texto: string } | null>(null);
+  useEffect(() => {
+    let cancelado = false;
+    setReservaActiva(null);
+    setResultadoReserva(null);
+    if (!codigoSeccionValidado || !nombreAlumno.trim()) return;
+    obtenerReservaPendiente(codigoSeccionValidado, nombreAlumno.trim()).then((reserva) => {
+      if (!cancelado) setReservaActiva(reserva);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, [codigoSeccionValidado, nombreAlumno]);
+
+  const confirmarFotosDeReserva = async () => {
+    if (!reservaActiva || !codigoSeccionValidado) return;
+    if (!fotoGrupalSeleccionadaValida || !fotoIndividualSeleccionadaValida || !fotoDocenteSeleccionadaValida) {
+      setResultadoReserva({ ok: false, texto: 'Elegí una foto grupal, una individual y una con la seño antes de confirmar.' });
+      return;
+    }
+    setConfirmandoReserva(true);
+    const resultado = await elegirFotosDeReserva(reservaActiva.id, codigoSeccionValidado, {
+      grupalId: fotoSeleccionadaGrupal,
+      individualId: fotoSeleccionadaIndividual,
+      docenteId: fotoSeleccionadaDocente,
+    });
+    setConfirmandoReserva(false);
+    if (resultado.success) {
+      setReservaActiva(null);
+      setResultadoReserva({
+        ok: true,
+        texto: `¡Listo! Guardamos tus fotos del pedido ${resultado.pedidoFriendlyId || reservaActiva.pedidoFriendlyId}. En unos minutos te llega por email la descarga en alta resolución.`,
+      });
+    } else {
+      setResultadoReserva({ ok: false, texto: resultado.error || 'No se pudo guardar tu elección.' });
+    }
+  };
 
   // Carrito multi-hijo (ver interfaz SeleccionCarritoHijo más arriba, fuera del componente).
   const [carritoHijos, setCarritoHijos] = useState<Record<string, SeleccionCarritoHijo>>({});
@@ -2850,9 +2897,36 @@ export default function PortalFamiliasModal({
                     <ArrowLeft className="h-4 w-4" />
                     Volver
                   </button>
+                  <ReservaKitAnticipada
+                    hijos={
+                      hijosFamilia.length > 0
+                        ? hijosFamilia.map((h) => ({ id: h.id, nombreCompleto: h.nombreCompleto, codigoSeccion: h.codigoSeccion }))
+                        : [{ id: 'principal', nombreCompleto: nombreAlumno, codigoSeccion: codigoSeccionValidado || '' }]
+                    }
+                    tutorNombre={tutorNombre || familiaActiva?.padreNombre || ''}
+                    tutorEmail={tutorEmail || familiaActiva?.email || ''}
+                    tutorTelefono={tutorWhatsapp || familiaActiva?.telefonoWhatsApp || ''}
+                  />
                 </div>
               ) : (
                 <>
+              {(reservaActiva?.pagada || resultadoReserva) && (
+                <div className={`mb-3 rounded-2xl border p-4 text-left ${resultadoReserva?.ok ? 'border-emerald-300 bg-emerald-50' : 'border-violet-300 bg-violet-50'}`}>
+                  {reservaActiva?.pagada ? (
+                    <>
+                      <p className="text-sm font-extrabold text-slate-900">
+                        ✅ Ya pagaste el {reservaActiva.kitNombre} de {nombreAlumno} ({reservaActiva.pedidoFriendlyId})
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-700">
+                        Elegí las 3 fotos (1 grupal, 1 individual y 1 con la seño) y tocá <strong>Confirmar mis fotos</strong>. No tenés que volver a pagar.
+                      </p>
+                    </>
+                  ) : null}
+                  {resultadoReserva && (
+                    <p className={`mt-1 text-xs font-semibold ${resultadoReserva.ok ? 'text-emerald-800' : 'text-red-700'}`}>{resultadoReserva.texto}</p>
+                  )}
+                </div>
+              )}
 
               {/* 3 Fotos Incluidas Top Panel — padding y margen inferior reducidos el 22/9 (antes
                   p-4 sm:p-5 / mb-3, y de nuevo achicado ese mismo día — antes p-3 sm:p-4 / mb-2 —
@@ -3255,6 +3329,17 @@ export default function PortalFamiliasModal({
                   >
                     Atrás
                   </button>
+                  {reservaActiva?.pagada ? (
+                  <button
+                    id="btn-confirmar-reserva"
+                    onClick={() => void confirmarFotosDeReserva()}
+                    disabled={confirmandoReserva}
+                    className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 cursor-pointer"
+                  >
+                    {confirmandoReserva ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    <span>{cantidadFotosPackSeleccionadas === 3 ? 'Confirmar mis fotos' : `Elegí las 3 fotos (${cantidadFotosPackSeleccionadas}/3)`}</span>
+                  </button>
+                  ) : (
                   <button
                     id="btn-continuar-kit"
                     onClick={handleContinuarAlKit}
@@ -3268,6 +3353,7 @@ export default function PortalFamiliasModal({
                     )}
                     <ArrowRight className="w-4 h-4" />
                   </button>
+                  )}
                 </div>
               </div>
                 </>
