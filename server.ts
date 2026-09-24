@@ -65,7 +65,8 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
     // y asunto: con eso se registra igual la respuesta en la consulta, con un aviso para leer el
     // texto en el panel de Resend.
     const datosEvento: any = evento.data || {};
-    const { data: email, error: emailError } = await resend.emails.receiving.get(datosEvento.email_id);
+    const lectorInbound = getResendInboundClient() || resend;
+    const { data: email, error: emailError } = await lectorInbound.emails.receiving.get(datosEvento.email_id);
     if (emailError || !email) {
       console.warn('[Resend Inbound] No se pudo descargar el texto del correo recibido:', emailError);
     }
@@ -167,6 +168,15 @@ function getResendClient(): Resend | null {
     return null;
   }
   return new Resend(apiKey.trim());
+}
+
+// Las respuestas de las familias pueden llegar a una cuenta de Resend distinta de la que envía
+// (el dominio de envío está verificado en una cuenta y el de recepción en otra). Si está
+// configurada RESEND_INBOUND_API_KEY (clave con permiso "Full access" de la cuenta que recibe),
+// se usa sólo para leer los correos recibidos; si no, se usa la misma clave de envío.
+function getResendInboundClient(): Resend | null {
+  const apiKey = process.env.RESEND_INBOUND_API_KEY?.trim();
+  return apiKey ? new Resend(apiKey) : getResendClient();
 }
 
 // Lazy client para Gemini (borrador de respuestas a consultas de familias — ver
