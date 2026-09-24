@@ -125,7 +125,7 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
     if (!contenido) return res.json({ success: true, ignored: true });
     const supabase = getServerSupabase();
     if (!supabase) throw new Error('Supabase no configurado.');
-    const { error: insertError } = await supabase.from('consultas_familias_mensajes').upsert({
+    const { data: insertados, error: insertError } = await supabase.from('consultas_familias_mensajes').upsert({
       consulta_id: consultaId,
       direccion: 'entrante',
       remitente: email?.from || datosEvento.from || 'desconocido',
@@ -134,9 +134,25 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
       contenido: contenido.slice(0, 10000),
       resend_email_id: email?.id || datosEvento.email_id,
       created_at: email?.created_at || datosEvento.created_at || new Date().toISOString(),
-    }, { onConflict: 'resend_email_id', ignoreDuplicates: true });
+    }, { onConflict: 'resend_email_id', ignoreDuplicates: true }).select('id');
     if (insertError) throw insertError;
     await supabase.from('consultas_familias').update({ estado: 'nueva', updated_at: new Date().toISOString() }).eq('id', consultaId);
+    // Sólo si es un mensaje nuevo (no un reintento o "Replay" de uno ya guardado) se revisa y,
+    // si corresponde, se contesta solo. Las respuestas automáticas del correo de la familia
+    // ("fuera de la oficina") nunca se contestan, para no entrar en un ida y vuelta infinito.
+    if (insertados && insertados.length > 0) {
+      const encabezados: Record<string, string> = Object.fromEntries(
+        Object.entries((email as any)?.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)])
+      );
+      const esAutoRespuesta =
+        (encabezados['auto-submitted'] && encabezados['auto-submitted'].toLowerCase() !== 'no') ||
+        Boolean(encabezados['x-autoreply'] || encabezados['x-autorespond']) ||
+        /(respuesta autom|automatic reply|auto.?reply|fuera de la oficina|out of office|ausente)/i.test(String(email?.subject || datosEvento.subject || ''));
+      await conLimiteDeTiempo(
+        procesarConsultaConIA(supabase, consultaId, { permitirEnvio: true, esRespuestaAutomaticaDeLaFamilia: esAutoRespuesta }),
+        12000 // Resend espera ~15 s la respuesta del webhook; si la IA tarda más, queda para el panel.
+      );
+    }
     return res.json({ success: true });
   } catch (err: any) {
     console.error('[Resend Inbound] Webhook rechazado o no procesado:', err);
@@ -255,14 +271,18 @@ Catálogo (precios en pesos argentinos):
   kits de arriba.
 
 Cómo funciona:
-- Cada familia recibe un Código Familiar único por email al aprobarse su inscripción, que le
-  permite ver y elegir las fotos de su/s hijo/a/s (si tiene más de uno, un solo código alcanza
-  para todos, aunque estén en cursos distintos).
+- La familia se inscribe en la web (sección "Inscribirme") con los datos del tutor y de su/s
+  hijo/a/s. Puede anotar a los hermanos en la misma inscripción, aunque estén en otros cursos.
+  Da igual si la inscripción queda a nombre de la mamá, el papá u otro tutor.
+- Al aprobarse la inscripción recibe por email el código de acceso de su curso. Para entrar a
+  ver las fotos ("Acceder a las Fotos") se usa ese código junto con el nombre y el DNI del
+  tutor con el que se inscribió. Con ese mismo acceso ve las fotos de todos sus hijos.
 - Las fotos de un curso se cargan al sistema después de que se toman las fotografías en el
   colegio. Hasta que eso pasa, la familia no puede elegir fotos ni pagar todavía, y se le avisa
   por email automáticamente en cuanto estén disponibles — no hace falta que vuelva a registrarse.
-- El pago se hace online (Mercado Pago o Nave) dentro del mismo portal, una vez elegidas las 3
-  fotos del kit.
+- Recién cuando están las fotos, la familia elige las que quiere y paga: no se paga nada por
+  adelantado. El pago se hace dentro del mismo portal con Mercado Pago, Nave o transferencia
+  bancaria (en ese caso se manda el comprobante por email a fotos@retratoescolar.com.ar).
 
 Tu tarea: redactar una respuesta breve, cálida y clara en español rioplatense (tratamiento
 "vos"), para la consulta de una familia que llegó por el formulario web. Contestá solo lo que
@@ -4708,6 +4728,10 @@ app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 10, 
       if (aviso.error) console.error('[Consultas] No se pudo enviar el aviso por email:', aviso.error);
     }
 
+    // Revisión automática con los datos de la familia y, si todo está OK, respuesta al instante.
+    // Se espera acá (con tope de tiempo) porque en Vercel la función se congela al responder.
+    await conLimiteDeTiempo(procesarConsultaConIA(supabase, consulta.id), 25000);
+
     return res.status(201).json({ success: true });
   } catch (err: any) {
     console.error('[Consultas] Error al guardar consulta:', err);
@@ -4762,6 +4786,304 @@ app.delete('/api/admin/consultas-familias/:id', requireAdminAuth, async (req: Re
   }
 });
 
+// ==============================================================================
+// RESPUESTAS AUTOMÁTICAS A CONSULTAS (pedido de Pablo, 24/9: "respuestas automáticas ante
+// cualquier consulta sobre el funcionamiento de la página, donde se revise que está ok y se le
+// responda correctamente"). Por cada consulta (o respuesta de la familia) se arma una "ficha"
+// con los datos REALES de esa familia — inscripción, curso de cada hijo contra la nómina
+// oficial, código de acceso, fotos cargadas y pedidos — y la IA redacta la respuesta con esos
+// datos. Se envía sola SÓLO si: la ficha no marca ningún problema, la IA clasifica la pregunta
+// como del funcionamiento de la página y dice que puede responderla completa. En cualquier otro
+// caso queda como borrador en el panel, con la verificación a la vista, para que la mande Pablo.
+// Se puede apagar el envío automático con la variable RESPUESTAS_AUTOMATICAS=off.
+// ==============================================================================
+type ChequeoFicha = { ok: boolean; texto: string };
+interface FichaFamilia {
+  encontrada: boolean;
+  todoOk: boolean;
+  chequeos: ChequeoFicha[];
+  datos: string[];
+}
+
+function escaparIlike(valor: string): string {
+  return valor.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+async function armarFichaFamilia(
+  supabase: SupabaseClient,
+  consulta: { email: string; numero_pedido?: string | null }
+): Promise<FichaFamilia> {
+  const chequeos: ChequeoFicha[] = [];
+  const datos: string[] = [];
+  const email = String(consulta.email || '').trim().toLowerCase();
+
+  const { data: inscripciones, error } = await supabase
+    .from('inscripciones')
+    .select('id, colegio_id, colegio_nombre, padre_nombre, padre_dni, alumno_nombre, alumno_apellido, grado, turno, division, estado, codigo_asignado, hermanos, notificacion_email_enviada')
+    .ilike('email', escaparIlike(email));
+  if (error) throw error;
+
+  if (!inscripciones || inscripciones.length === 0) {
+    chequeos.push({ ok: false, texto: `No hay ninguna inscripción con el email ${email}.` });
+  }
+
+  for (const insc of inscripciones || []) {
+    const tutor = insc.padre_nombre || 'sin nombre';
+    datos.push(`Inscripción a nombre de ${tutor} en ${insc.colegio_nombre || 'colegio sin nombre'} — estado: ${insc.estado}${insc.padre_dni ? ', DNI del tutor cargado' : ', DNI del tutor todavía no cargado (se registra en su primer ingreso)'}.`);
+    if (insc.estado !== 'aceptado') {
+      chequeos.push({ ok: false, texto: `La inscripción de ${tutor} está "${insc.estado}" (todavía no aprobada).` });
+      continue;
+    }
+    if (!insc.notificacion_email_enviada) {
+      chequeos.push({ ok: false, texto: `A ${tutor} todavía no se le envió el email con el código.` });
+    }
+
+    const { data: secciones } = await supabase
+      .from('codigos_seccion')
+      .select('grado, turno, division, codigo_secreto')
+      .eq('colegio_id', insc.colegio_id);
+    const codigoDe = (g: string, t: string, d: string) =>
+      (secciones || []).find((sec: any) => sec.grado === g && sec.turno === t && sec.division === d)?.codigo_secreto || null;
+    const codigoSeccion = codigoDe(insc.grado, insc.turno, insc.division);
+    if (!insc.codigo_asignado || codigoSeccion !== insc.codigo_asignado) {
+      chequeos.push({ ok: false, texto: `El código asignado (${insc.codigo_asignado || 'ninguno'}) no coincide con el de su curso ${insc.grado} "${insc.division}" ${insc.turno}.` });
+    }
+
+    const buscarEnNomina = await crearBuscadorEnNomina(supabase, insc.colegio_id);
+    const chicos = [
+      { nombre: `${insc.alumno_nombre || ''} ${insc.alumno_apellido || ''}`.trim(), grado: insc.grado, turno: insc.turno, division: insc.division },
+      ...(Array.isArray(insc.hermanos) ? insc.hermanos : []).map((h: any) => ({
+        nombre: `${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`.trim(), grado: h?.grado, turno: h?.turno, division: h?.division,
+      })),
+    ];
+    for (const chico of chicos) {
+      const curso = `${chico.grado} "${chico.division}" turno ${chico.turno}`;
+      const enNomina = await buscarEnNomina(chico.nombre, chico.grado);
+      if (!enNomina) {
+        chequeos.push({ ok: false, texto: `${chico.nombre} (${curso}) no figura en la nómina del colegio — revisar a mano.` });
+      } else if (
+        enNomina.grado !== chico.grado ||
+        enNomina.division !== chico.division ||
+        (enNomina.turno && enNomina.turno !== chico.turno)
+      ) {
+        chequeos.push({ ok: false, texto: `${chico.nombre} está inscripto en ${curso}, pero en la nómina figura en ${enNomina.grado} "${enNomina.division}"${enNomina.turno ? ` turno ${enNomina.turno}` : ''}.` });
+      } else {
+        chequeos.push({ ok: true, texto: `${chico.nombre}: ${curso}, coincide con la nómina.` });
+      }
+      const { count } = await supabase
+        .from('fotos')
+        .select('id', { count: 'exact', head: true })
+        .eq('colegio_id', insc.colegio_id)
+        .eq('grado', chico.grado)
+        .eq('division', chico.division)
+        .eq('turno', chico.turno);
+      datos.push(`Fotos cargadas del curso de ${chico.nombre}: ${count ? `${count} (ya puede elegirlas)` : 'todavía ninguna (aún no se sacaron o no se subieron)'}.`);
+    }
+  }
+
+  const { data: familias } = await supabase.from('familias').select('id').ilike('email', escaparIlike(email));
+  const idsFamilia = (familias || []).map((f: any) => f.id);
+  let pedidos: any[] = [];
+  if (idsFamilia.length > 0) {
+    const { data } = await supabase
+      .from('pedidos')
+      .select('pedido_friendly_id, alumno_nombre, kit_nombre, estado, estado_lab, total, metodo_pago, created_at')
+      .in('familia_id', idsFamilia)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    pedidos = data || [];
+  }
+  const numeroPedido = String(consulta.numero_pedido || '').trim();
+  if (numeroPedido && !pedidos.some((p) => String(p.pedido_friendly_id || '').toUpperCase() === numeroPedido.toUpperCase())) {
+    const { data } = await supabase
+      .from('pedidos')
+      .select('pedido_friendly_id, alumno_nombre, kit_nombre, estado, estado_lab, total, metodo_pago, created_at')
+      .ilike('pedido_friendly_id', escaparIlike(numeroPedido))
+      .limit(1);
+    if (data && data.length > 0) pedidos.push(...data);
+    else datos.push(`El número de pedido mencionado (${numeroPedido}) no existe en el sistema.`);
+  }
+  if (pedidos.length === 0) {
+    datos.push('No tiene pedidos hechos todavía.');
+  }
+  for (const p of pedidos) {
+    datos.push(`Pedido ${p.pedido_friendly_id || '(sin número)'} de ${p.alumno_nombre || 'alumno'}: ${p.kit_nombre || 'kit'}, total $${Number(p.total) || 0}, pago "${p.estado}" (${p.metodo_pago || 'sin método'}), laboratorio "${p.estado_lab || 'sin estado'}".`);
+  }
+
+  const encontrada = Boolean(inscripciones && inscripciones.length > 0);
+  return { encontrada, todoOk: encontrada && chequeos.every((c) => c.ok), chequeos, datos };
+}
+
+type DecisionIA = { tema: string; respondible: boolean; respuesta: string; motivo: string };
+
+async function redactarRespuestaConsulta(consulta: any, ficha: FichaFamilia): Promise<DecisionIA> {
+  const gemini = getGeminiClient();
+  if (!gemini) throw new Error('La IA no está configurada (falta GEMINI_API_KEY en el servidor).');
+  const historial = (consulta.consultas_familias_mensajes || [])
+    .sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)))
+    .map((m: any) => `${m.direccion === 'entrante' ? 'Familia' : 'Retrato Escolar'}: ${m.contenido}`)
+    .join('\n');
+  const prompt = `
+Consulta de una familia:
+- Nombre: ${consulta.nombre}
+- Email: ${consulta.email}
+- Colegio mencionado: ${consulta.colegio || 'no especificado'}
+- Número de pedido mencionado: ${consulta.numero_pedido || 'ninguno'}
+- Asunto: ${consulta.asunto}
+- Mensaje: ${consulta.mensaje}
+${historial ? `\nConversación hasta ahora (lo último es lo más reciente y es lo que hay que contestar):\n${historial}` : ''}
+
+Datos REALES de esta familia en el sistema (revisados recién, son la única fuente válida):
+${ficha.chequeos.map((c) => `${c.ok ? '[OK]' : '[PROBLEMA]'} ${c.texto}`).join('\n') || '(sin chequeos)'}
+${ficha.datos.map((d) => `- ${d}`).join('\n')}
+
+Respondé SOLO con un JSON con esta forma exacta:
+{"tema": "funcionamiento" | "pedido_pago" | "reclamo" | "agradecimiento" | "otro",
+ "respondible": true | false,
+ "respuesta": "cuerpo del mensaje para la familia",
+ "motivo": "una línea para el fotógrafo explicando la decisión"}
+
+Reglas:
+- "funcionamiento": dudas sobre cómo usar la web (inscripción, hermanos, código de acceso, cómo ver o elegir fotos, kits, precios, cómo y cuándo se paga) que se contestan con la información del negocio y los datos de arriba.
+- "respondible" es true SÓLO si la respuesta completa y correcta sale de la información del negocio y de los datos de arriba, sin inventar nada y sin prometer fechas, reintegros ni excepciones.
+- Si la familia pregunta si su inscripción está bien, usá los datos de arriba: confirmale el curso de cada hijo si está [OK], o explicale con tacto lo que haya que corregir.
+- Nunca des códigos de acceso, DNIs ni datos de otras familias en la respuesta.
+- "agradecimiento": la familia solo agradece o cierra la conversación; respuesta "" y respondible false.
+- "respuesta": español rioplatense ("vos"), breve y cálido, sin saludo inicial ni firma (el sistema los agrega).
+`.trim();
+
+  const resultado = await gemini.models.generateContent({
+    model: 'gemini-3.6-flash',
+    contents: prompt,
+    config: { systemInstruction: CONTEXTO_NEGOCIO_CONSULTAS, responseMimeType: 'application/json' },
+  });
+  const texto = String(resultado.text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  let json: any;
+  try {
+    json = JSON.parse(texto);
+  } catch {
+    // Si la IA no devolvió JSON válido, se usa su texto como borrador y nunca se envía solo.
+    return { tema: 'otro', respondible: false, respuesta: texto, motivo: 'La IA no devolvió el formato esperado.' };
+  }
+  return {
+    tema: String(json.tema || 'otro'),
+    respondible: json.respondible === true,
+    respuesta: String(json.respuesta || '').trim(),
+    motivo: String(json.motivo || '').trim(),
+  };
+}
+
+// Envía la respuesta por email a la familia, la guarda en la conversación y pasa la consulta a
+// "en proceso". La usan el botón "Responder" del panel y el envío automático.
+async function enviarRespuestaConsulta(
+  supabase: SupabaseClient,
+  consulta: { id: string; nombre: string; email: string; asunto: string; estado: string },
+  mensaje: string,
+  automatica: boolean
+): Promise<void> {
+  const resend = getResendClient();
+  if (!resend) throw new Error('El servicio de email no está configurado.');
+  const resultado = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+    replyTo: `consulta-${consulta.id}@${process.env.RESEND_INBOUND_DOMAIN || 'respuestas.retratoescolar.com.ar'}`,
+    to: [consulta.email],
+    subject: `Re: ${consulta.asunto}`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(consulta.nombre)},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás continuar la conversación.</p></div>`,
+  });
+  if (resultado.error) throw resultado.error;
+
+  const { error: messageError } = await supabase.from('consultas_familias_mensajes').insert({
+    consulta_id: consulta.id,
+    direccion: 'saliente',
+    remitente: process.env.RESEND_FROM_EMAIL || 'fotos@retratoescolar.com.ar',
+    destinatario: consulta.email,
+    asunto: `Re: ${consulta.asunto}`,
+    contenido: mensaje,
+    resend_email_id: resultado.data?.id || null,
+    automatica,
+  });
+  if (messageError) console.error('[Consultas] El correo se envió, pero no se guardó en el historial:', messageError);
+
+  const cambios: Record<string, unknown> = { borrador_ia: null, updated_at: new Date().toISOString() };
+  if (consulta.estado === 'nueva') cambios.estado = 'en_proceso';
+  const { error: updateError } = await supabase.from('consultas_familias').update(cambios).eq('id', consulta.id);
+  if (updateError) console.error('[Consultas] La respuesta se envió, pero no se actualizó la consulta:', updateError);
+}
+
+const MAX_RESPUESTAS_AUTOMATICAS_POR_CONSULTA = 3;
+
+// Revisa la consulta, redacta la respuesta y la envía sola si corresponde; si no, la deja como
+// borrador. Nunca tira error hacia afuera: si algo falla, la consulta queda para responder a mano.
+async function procesarConsultaConIA(
+  supabase: SupabaseClient,
+  consultaId: string,
+  opciones: { permitirEnvio: boolean; esRespuestaAutomaticaDeLaFamilia?: boolean } = { permitirEnvio: true }
+): Promise<{ ficha: FichaFamilia; decision: DecisionIA; enviada: boolean } | null> {
+  try {
+    const { data: consulta, error } = await supabase
+      .from('consultas_familias')
+      .select('id,nombre,email,colegio,numero_pedido,asunto,mensaje,estado,consultas_familias_mensajes(direccion,contenido,created_at,automatica)')
+      .eq('id', consultaId)
+      .single();
+    if (error || !consulta) return null;
+
+    const ficha = await armarFichaFamilia(supabase, consulta);
+    const decision = await redactarRespuestaConsulta(consulta, ficha);
+    const automaticasPrevias = (consulta.consultas_familias_mensajes || []).filter((m: any) => m.automatica).length;
+    const envioActivado = String(process.env.RESPUESTAS_AUTOMATICAS || 'on').trim().toLowerCase() !== 'off';
+    const enviar =
+      opciones.permitirEnvio &&
+      envioActivado &&
+      !opciones.esRespuestaAutomaticaDeLaFamilia &&
+      ficha.todoOk &&
+      decision.tema === 'funcionamiento' &&
+      decision.respondible &&
+      decision.respuesta.length >= 20 &&
+      automaticasPrevias < MAX_RESPUESTAS_AUTOMATICAS_POR_CONSULTA &&
+      consulta.estado !== 'archivada';
+
+    const motivoNoEnvio = !enviar
+      ? !ficha.todoOk
+        ? 'Hay datos de la familia para revisar.'
+        : decision.tema !== 'funcionamiento'
+          ? `La consulta es de tipo "${decision.tema}", no del funcionamiento de la página.`
+          : !decision.respondible
+            ? 'La IA no puede responderla completa con los datos disponibles.'
+            : automaticasPrevias >= MAX_RESPUESTAS_AUTOMATICAS_POR_CONSULTA
+              ? 'Ya se enviaron varias respuestas automáticas en esta conversación.'
+              : null
+      : null;
+
+    await supabase.from('consultas_familias').update({
+      verificacion_ia: {
+        encontrada: ficha.encontrada,
+        todoOk: ficha.todoOk,
+        chequeos: ficha.chequeos,
+        datos: ficha.datos,
+        tema: decision.tema,
+        motivo: decision.motivo,
+        motivoNoEnvio,
+        enviadaAutomaticamente: enviar,
+      },
+      borrador_ia: enviar ? null : decision.respuesta || null,
+      procesada_ia_at: new Date().toISOString(),
+    }).eq('id', consulta.id);
+
+    if (enviar) {
+      await enviarRespuestaConsulta(supabase, consulta, decision.respuesta, true);
+    }
+    return { ficha, decision, enviada: enviar };
+  } catch (err) {
+    console.error('[Consultas] No se pudo procesar la consulta con IA:', err);
+    return null;
+  }
+}
+
+// Corta la espera si la IA tarda demasiado: la consulta igual queda guardada y se responde a mano.
+function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([promesa, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
 app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const mensaje = String(req.body?.mensaje || '').trim();
@@ -4778,35 +5100,8 @@ app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async 
       .single();
     if (error || !consulta) return res.status(404).json({ success: false, error: 'No encontramos la consulta.' });
 
-    const resend = getResendClient();
-    if (!resend) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
-    const resultado = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
-      replyTo: `consulta-${consulta.id}@${process.env.RESEND_INBOUND_DOMAIN || 'respuestas.retratoescolar.com.ar'}`,
-      to: [consulta.email],
-      subject: `Re: ${consulta.asunto}`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(consulta.nombre)},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás continuar la conversación.</p></div>`,
-    });
-    if (resultado.error) throw resultado.error;
-
-    const { error: messageError } = await supabase.from('consultas_familias_mensajes').insert({
-      consulta_id: consulta.id,
-      direccion: 'saliente',
-      remitente: process.env.RESEND_FROM_EMAIL || 'fotos@retratoescolar.com.ar',
-      destinatario: consulta.email,
-      asunto: `Re: ${consulta.asunto}`,
-      contenido: mensaje,
-      resend_email_id: resultado.data?.id || null,
-    });
-    if (messageError) console.error('[Consultas] El correo se envió, pero no se guardó en el historial:', messageError);
-
-    if (consulta.estado === 'nueva') {
-      const { error: updateError } = await supabase
-        .from('consultas_familias')
-        .update({ estado: 'en_proceso', updated_at: new Date().toISOString() })
-        .eq('id', consulta.id);
-      if (updateError) console.error('[Consultas] La respuesta se envió, pero no se actualizó el estado:', updateError);
-    }
+    if (!getResendClient()) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
+    await enviarRespuestaConsulta(supabase, consulta, mensaje, false);
     return res.json({ success: true });
   } catch (err: any) {
     console.error('[Consultas] Error al responder:', err);
@@ -4830,38 +5125,14 @@ app.post(
 
       const supabase = getServerSupabase();
       if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
-      const { data: consulta, error } = await supabase
-        .from('consultas_familias')
-        .select('id,nombre,colegio,numero_pedido,asunto,mensaje,consultas_familias_mensajes(direccion,contenido,created_at)')
-        .eq('id', req.params.id)
-        .single();
-      if (error || !consulta) return res.status(404).json({ success: false, error: 'No encontramos la consulta.' });
-
-      const historial = (consulta.consultas_familias_mensajes || [])
-        .sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)))
-        .map((m: any) => `${m.direccion === 'entrante' ? 'Familia' : 'Retrato Escolar'}: ${m.contenido}`)
-        .join('\n');
-
-      const promptConsulta = `
-Datos de la consulta:
-- Nombre: ${consulta.nombre}
-- Colegio mencionado: ${consulta.colegio || 'no especificado'}
-- Número de pedido mencionado: ${consulta.numero_pedido || 'ninguno'}
-- Asunto: ${consulta.asunto}
-- Mensaje: ${consulta.mensaje}
-${historial ? `\nConversación previa:\n${historial}` : ''}
-
-Redactá la respuesta ahora.
-      `.trim();
-
-      const resultadoIA = await gemini.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: promptConsulta,
-        config: { systemInstruction: CONTEXTO_NEGOCIO_CONSULTAS },
-      });
-      const sugerencia = resultadoIA.text?.trim();
-      if (!sugerencia) throw new Error('La IA no devolvió texto.');
-
+      // Mismo proceso que el automático (revisa los datos reales de la familia), pero sin enviar:
+      // el texto queda en el cuadro de respuesta para que el fotógrafo lo revise.
+      const resultado = await procesarConsultaConIA(supabase, String(req.params.id), { permitirEnvio: false });
+      if (!resultado) throw new Error('No se pudo procesar la consulta.');
+      const sugerencia = resultado.decision.respuesta;
+      if (!sugerencia) {
+        return res.json({ success: true, sugerencia: '', aviso: resultado.decision.motivo || 'La IA considera que no hace falta responder.' });
+      }
       return res.json({ success: true, sugerencia });
     } catch (err: any) {
       console.error('[Consultas] Error al sugerir respuesta con IA:', err);
