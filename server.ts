@@ -3383,7 +3383,7 @@ async function crearBuscadorEnNomina(supabase: SupabaseClient, colegioId: string
   const unico = (cursos: CursoNomina[]): CursoNomina | null =>
     cursos.length > 0 && cursos.every((c) => mismaSeccion(c, cursos[0])) ? cursos[0] : null;
 
-  return async (nombreCompleto: string): Promise<CursoNomina | null> => {
+  return async (nombreCompleto: string, gradoEscrito?: unknown): Promise<CursoNomina | null> => {
     const clave = normalizarNombrePorPalabras(nombreCompleto);
     const palabras = clave.split(' ').filter(Boolean);
     if (palabras.length < 2) return null;
@@ -3392,8 +3392,14 @@ async function crearBuscadorEnNomina(supabase: SupabaseClient, colegioId: string
       const exactos = lista.filter((a) => a.claves[0] === clave).map((a) => a.curso);
       if (exactos.length > 0) return unico(exactos);
       // La familia pudo escribir sólo uno de los nombres ("Juan Pérez" por "Juan Martín Pérez"):
-      // se acepta si todas sus palabras están en un único alumno de la nómina.
-      const parciales = lista.filter((a) => palabras.every((w) => a.palabras.has(w))).map((a) => a.curso);
+      // se acepta si todas sus palabras están en un único alumno de la nómina. Como una
+      // coincidencia parcial es más débil ("Juan Perez" también está contenido en "Alvarez
+      // Perez, Juan Martin", de otro año), sólo se usa si además coincide el grado elegido.
+      const grado = String(gradoEscrito || '').trim();
+      if (!grado) return null;
+      const parciales = lista
+        .filter((a) => a.curso.grado === grado && palabras.every((w) => a.palabras.has(w)))
+        .map((a) => a.curso);
       return unico(parciales);
     } catch (e) {
       console.warn('[inscripciones] No se pudo consultar la nómina para corregir el curso:', e);
@@ -3508,7 +3514,7 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
       const matchHermano = nombreCompletoHermano
         ? candidatosPadron.find((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreCompletoHermano)
         : null;
-      const nominaHermano = await cursoEnNomina(`${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`);
+      const nominaHermano = await cursoEnNomina(`${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`, h?.grado);
       return {
         ...h,
         colegioId, // nunca el que venga en el hermano: siempre el colegio de esta inscripción
@@ -3572,7 +3578,7 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     // viejos, sin esos datos), se sigue aceptando lo que mande el formulario como antes.
     // Orden de prioridad del curso: padrón (si trae curso) > nómina oficial (ver
     // crearBuscadorEnNomina) > lo que eligió la familia en el formulario.
-    const cursoNominaPrincipal = await cursoEnNomina(`${alumnoNombre || ''} ${alumnoApellido || ''}`);
+    const cursoNominaPrincipal = await cursoEnNomina(`${alumnoNombre || ''} ${alumnoApellido || ''}`, grado);
     const gradoAprobado = (matchPadre?.grado && String(matchPadre.grado).trim()) || cursoNominaPrincipal?.grado || grado;
     const turnoAprobado = (matchPadre?.turno && String(matchPadre.turno).trim()) || cursoNominaPrincipal?.turno || turno;
     const divisionAprobada = (matchPadre?.division && String(matchPadre.division).trim()) || cursoNominaPrincipal?.division || division;
