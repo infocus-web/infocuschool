@@ -1,7 +1,10 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { MapPin, Mail, Clock, Send, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { MapPin, Mail, Clock, Send, CheckCircle2, Loader2, AlertCircle, Copy, Check } from 'lucide-react';
 import { enviarConsultaFamilia } from '../services/consultasFamiliasService';
 import { leerYLimpiarConsultaPrefill } from '../utils/consultaPrefill';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
+
+const EMAIL_CONTACTO = 'contacto@retratoescolar.com.ar';
 
 export default function ContactoSection() {
   const [nombre, setNombre] = useState('');
@@ -15,6 +18,16 @@ export default function ContactoSection() {
   const [enviado, setEnviado] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
+  const [emailCopiado, setEmailCopiado] = useState(false);
+
+  // El enlace mailto: no hace nada en computadoras sin un programa de correo configurado (el
+  // caso de quien usa Gmail en el navegador), así que también se ofrece copiar la dirección.
+  const copiarEmail = async () => {
+    if (await copiarAlPortapapeles(EMAIL_CONTACTO)) {
+      setEmailCopiado(true);
+      setTimeout(() => setEmailCopiado(false), 2500);
+    }
+  };
 
   // Auditoría 2026-09-18: cuando la familia llega acá desde uno de los botones "Escribinos"
   // del Portal (en vez de un mailto: roto), se precargan los datos que ya conocíamos (pedido,
@@ -68,12 +81,22 @@ export default function ContactoSection() {
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-900">Correo Electrónico</p>
-                  <a
-                    href="mailto:contacto@retratoescolar.com.ar"
-                    className="text-xs text-slate-600 mt-0.5 font-medium hover:text-amber-700 hover:underline block"
-                  >
-                    contacto@retratoescolar.com.ar
-                  </a>
+                  <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                    <a
+                      href={`mailto:${EMAIL_CONTACTO}`}
+                      className="text-xs text-slate-600 font-medium hover:text-amber-700 hover:underline"
+                    >
+                      {EMAIL_CONTACTO}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => void copiarEmail()}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 text-[11px] font-semibold text-slate-600 cursor-pointer"
+                    >
+                      {emailCopiado ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      {emailCopiado ? '¡Copiado!' : 'Copiar'}
+                    </button>
+                  </div>
                   <p className="text-[11px] text-slate-400">Respuesta promedio en menos de 2 hs</p>
                 </div>
               </div>
