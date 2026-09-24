@@ -40,6 +40,39 @@ function quitarMensajeCitado(texto: string): string {
   return recortado || texto;
 }
 
+const CASILLA_REENVIO_ENTRANTE = process.env.CASILLA_REENVIO_ENTRANTE?.trim() || 'colegios@contacto.retratoescolar.com.ar';
+
+// Reenvía a la casilla de Zoho un correo recibido en el dominio principal, con sus adjuntos
+// (los links de descarga de Resend) y con "Responder" apuntando a quien lo mandó. La clave de
+// idempotencia evita duplicados si Resend reintenta o se hace "Replay" del mismo evento.
+async function reenviarCorreoEntrante(resend: Resend, lector: Resend, email: any): Promise<void> {
+  const remitente = String(email.from || '');
+  if (remitente.toLowerCase().includes(CASILLA_REENVIO_ENTRANTE.toLowerCase())) return;
+  let adjuntos: { filename?: string; path: string }[] = [];
+  if (Array.isArray(email.attachments) && email.attachments.length > 0) {
+    const { data, error } = await lector.emails.receiving.attachments.list({ emailId: email.id });
+    if (error) throw error;
+    adjuntos = (data?.data || []).map((a: any) => ({ filename: a.filename || undefined, path: a.download_url }));
+  }
+  const destinos = (Array.isArray(email.to) ? email.to : []).join(', ');
+  const encabezado = `<div style="font-family:Arial,sans-serif;font-size:12px;color:#475569;border:1px solid #e2e8f0;background:#f8fafc;border-radius:8px;padding:10px 12px;margin-bottom:16px">Reenviado automáticamente por la web.<br><strong>De:</strong> ${escapeHtml(remitente)}<br><strong>Para:</strong> ${escapeHtml(destinos)}<br>Tocá "Responder" para contestarle directo a quien lo mandó.</div>`;
+  const cuerpo = email.html
+    ? String(email.html)
+    : `<pre style="font-family:Arial,sans-serif;white-space:pre-wrap">${escapeHtml(email.text || '(sin texto)')}</pre>`;
+  const { error } = await resend.emails.send(
+    {
+      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+      to: [CASILLA_REENVIO_ENTRANTE],
+      replyTo: remitente || undefined,
+      subject: `Fwd: ${email.subject || '(sin asunto)'}`.slice(0, 250),
+      html: encabezado + cuerpo,
+      attachments: adjuntos.length > 0 ? adjuntos : undefined,
+    },
+    { idempotencyKey: `reenvio-${email.id}` }
+  );
+  if (error) throw error;
+}
+
 // Resend firma el cuerpo exacto del webhook. Esta ruta debe procesarse como texto
 // antes del parser JSON global para poder verificar que el evento sea auténtico.
 app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json' }), async (req: Request, res: Response) => {
@@ -74,7 +107,17 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
     const destinatarios: string[] = Array.isArray(email?.to) ? email.to : Array.isArray(datosEvento.to) ? datosEvento.to : [];
     const direccionDestino = destinatarios.find((destino) => String(destino).toLowerCase().includes(`@${inboundDomain}`));
     const consultaId = direccionDestino?.match(/consulta-([0-9a-f-]{36})@/i)?.[1];
-    if (!consultaId) return res.json({ success: true, ignored: true });
+    if (!consultaId) {
+      // Correos a direcciones del dominio principal (fotos@, colegios@, contacto@...): el MX de
+      // retratoescolar.com.ar apunta a Resend, que no es una casilla que alguien lea. Se reenvían
+      // a la casilla real de Zoho para que no se pierdan (p. ej. comprobantes de transferencia).
+      const aDominioPrincipal = destinatarios.some((destino) => /@retratoescolar\.com\.ar>?\s*$/i.test(String(destino).trim()));
+      if (aDominioPrincipal && email) {
+        await reenviarCorreoEntrante(resend, lectorInbound, email);
+        return res.json({ success: true, reenviado: true });
+      }
+      return res.json({ success: true, ignored: true });
+    }
 
     const contenido = email
       ? quitarMensajeCitado(String(email.text || '').trim()) || String(email.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
