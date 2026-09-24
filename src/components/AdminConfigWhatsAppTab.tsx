@@ -14,6 +14,7 @@ import {
 } from '../services/configuracionService';
 import { useColegiosLista, actualizarWhatsappColegio } from '../services/colegiosService';
 import { getSupabaseConfig } from '../services/supabaseClient';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 export default function AdminConfigWhatsAppTab() {
   const { config, actualizarConfig, recargar, cargando, estadoGuardado, limpiarEstadoGuardado } = useWhatsAppConfig();
@@ -148,7 +149,7 @@ export default function AdminConfigWhatsAppTab() {
   };
 
   const handleCopiarSql = () => {
-    navigator.clipboard.writeText(getScriptSqlSupabase());
+    void copiarAlPortapapeles(getScriptSqlSupabase());
     setCopiadoSql(true);
     setTimeout(() => setCopiadoSql(false), 3000);
   };

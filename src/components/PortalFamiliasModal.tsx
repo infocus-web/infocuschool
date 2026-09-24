@@ -51,6 +51,7 @@ import {
   cambiarMetodoPagoPedido,
   PedidoEscolarCompleto,
   buscarPedidoPorSeguimiento,
+  ErrorLimiteBusqueda,
   verificarPedidoExistente,
   PedidoExistenteResumen,
   ItemCarritoHijo,
@@ -156,6 +157,72 @@ function MiniaturaAmpliable({
       </span>
     </button>
   );
+}
+
+/**
+ * Pedido "de respaldo" para la pantalla de confirmación cuando la familia vuelve de Mercado Pago /
+ * Nave en un navegador que no tiene el pedido guardado (típico en el celular). Antes se armaba a
+ * mano, incompleto (sin `archivosParaLaboratorio`, `tutorEmail`, etc.), y la pantalla explotaba al
+ * leer esos campos. El estado real se consulta después al servidor.
+ */
+function pedidoDeRespaldo(datos: {
+  referencia: string;
+  esGrupo: boolean;
+  metodoPago: PedidoEscolarCompleto['metodoPago'];
+  estadoPago: PedidoEscolarCompleto['estadoPago'];
+}): PedidoEscolarCompleto {
+  return {
+    id: datos.referencia,
+    supabaseId: datos.referencia,
+    grupoPagoId: datos.esGrupo ? datos.referencia : undefined,
+    fecha: new Date().toLocaleDateString('es-AR'),
+    colegioId: '',
+    colegioNombre: '',
+    cursoCodigo: '',
+    grado: '',
+    division: '',
+    turno: '',
+    alumnoNumeroLista: 0,
+    alumnoNombre: datos.esGrupo ? 'tus hijos/as' : '',
+    codigoAlumno: '',
+    tutorNombre: '',
+    tutorTelefono: '',
+    tutorEmail: '',
+    kitId: 'kit-clasico',
+    kitNombre: datos.esGrupo ? 'Varios kits' : 'Kit Retrato Escolar',
+    total: 0,
+    metodoPago: datos.metodoPago,
+    estadoPago: datos.estadoPago,
+    estadoEntrega: 'laboratorio_listo',
+    fotosSeleccionadas: { individualId: '', grupalId: '' },
+    archivosParaLaboratorio: [],
+    linkDescargaHD: '',
+    emailEnviado: false,
+  };
+}
+
+/**
+ * Colegio de la familia: el de la lista pública si está; si no (colegio no marcado como público,
+ * o la lista todavía no cargó / falló), uno armado con los datos de la propia inscripción. Antes se
+ * caía a `colegios[0]` — el pedido quedaba registrado en OTRO colegio (y el .zip HD nunca se podía
+ * armar) — o directamente no se mostraba nada en el Paso 1.
+ */
+function colegioDeLaFamilia(colegios: Colegio[], familia: InscripcionFamilia): Colegio | null {
+  const enLista = colegios.find((c) => c.id === familia.colegioId);
+  if (enLista) return enLista;
+  if (!familia.colegioId) return null;
+  return {
+    id: familia.colegioId,
+    slug: familia.colegioId,
+    nombre: familia.colegioNombre || 'Colegio',
+    localidad: '',
+    zona: 'CABA',
+    eventoActual: '',
+    grados: familia.grado ? [familia.grado] : [],
+    divisiones: familia.division ? [familia.division] : [],
+    turnos: familia.turno ? [familia.turno] : [],
+    codigoAcceso: '',
+  };
 }
 
 export default function PortalFamiliasModal({
@@ -316,7 +383,18 @@ export default function PortalFamiliasModal({
     setGenerandoLinkPago(true);
     setPagoError(null);
     try {
-      const res = await crearPreferenciaMercadoPago({
+      // Auditoría 2026-09-23 (bug real): para un carrito de varios hijos esto regeneraba el link con
+      // el id del PRIMER pedido del grupo — el reintento cobraba sólo a ese hijo, y los hermanos
+      // quedaban sin pagar. Un pedido con grupo de pago se regenera como pago combinado.
+      const res = pedido.grupoPagoId
+        ? await crearPreferenciaMercadoPagoMultiple({
+            grupoPagoId: pedido.grupoPagoId,
+            items: [],
+            tutorNombre: pedido.tutorNombre || 'Tutor',
+            tutorEmail: pedido.tutorEmail,
+            tutorTelefono: pedido.tutorTelefono || undefined,
+          })
+        : await crearPreferenciaMercadoPago({
         pedidoId: pedido.supabaseId || pedido.id,
         kitId: pedido.kitId,
         kitNombre: pedido.kitNombre,
@@ -358,7 +436,16 @@ export default function PortalFamiliasModal({
     setGenerandoLinkNave(true);
     setPagoError(null);
     try {
-      const res = await crearIntencionPagoNave({
+      // Mismo caso que generarLinkDePago: un carrito de varios hijos se cobra combinado.
+      const res = pedido.grupoPagoId
+        ? await crearIntencionPagoNaveMultiple({
+            grupoPagoId: pedido.grupoPagoId,
+            items: [],
+            tutorNombre: pedido.tutorNombre || 'Tutor',
+            tutorEmail: pedido.tutorEmail,
+            tutorTelefono: pedido.tutorTelefono || undefined,
+          })
+        : await crearIntencionPagoNave({
         pedidoId: pedido.supabaseId || pedido.id,
         kitId: pedido.kitId,
         kitNombre: pedido.kitNombre,
@@ -397,6 +484,10 @@ export default function PortalFamiliasModal({
       const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/status`);
       const data = await res.json();
       if (data.success) {
+        // Pantalla de respaldo (volvió del pago sin el pedido guardado): se completa el monto real.
+        if (Number(data.total) > 0) {
+          setPedidoGenerado((prev) => (prev && !(prev.total > 0) ? { ...prev, total: Number(data.total) } : prev));
+        }
         if (data.estadoPago === 'aprobado') {
           // Auditoría 2026-09-18 (reporte de Pablo): "el botón de descarga inmediata no se
           // activa" — el .zip HD se termina de generar unos segundos después de que el pago
@@ -489,8 +580,13 @@ export default function PortalFamiliasModal({
     const aprobadoSinLink = pedidoGenerado.estadoPago === 'aprobado' && !pedidoGenerado.linkDescargaHD;
     if (!pagoPendiente && !aprobadoSinLink) return;
 
-    const intervaloMs = aprobadoSinLink ? 8000 : 4000;
-    const maxIntentos = aprobadoSinLink ? 45 : Infinity; // ~6 minutos esperando el .zip antes de dejar de insistir
+    // Auditoría 2026-09-23: antes se consultaba cada 4 s sin tope — una pantalla abierta agotaba
+    // el límite de consultas de la IP (compartida con otras familias en celulares/WiFi del colegio).
+    // Transferencia/efectivo no se acreditan solos (los aprueba el fotógrafo): se consulta más
+    // espaciado. Siempre con tope; el botón "Verificar estado" sigue disponible.
+    const esPagoManual = pedidoGenerado.metodoPago === 'transferencia' || pedidoGenerado.metodoPago === 'efectivo';
+    const intervaloMs = aprobadoSinLink ? 8000 : esPagoManual ? 60000 : 10000;
+    const maxIntentos = aprobadoSinLink ? 45 : esPagoManual ? 30 : 180; // ~6 min esperando el .zip; ~30 min esperando el pago
     let intentos = 0;
     const interval = setInterval(() => {
       intentos += 1;
@@ -586,26 +682,9 @@ export default function PortalFamiliasModal({
           // — acá no hay ningún id de pedido individual para consultar el estado real, sólo el
           // grupoPagoId, que /api/pedidos/:id/status no sabe buscar.
           setNumeroPedido(grupoPagoId || '');
-          setPedidoGenerado({
-            id: grupoPagoId || '',
-            supabaseId: undefined,
-            grupoPagoId: grupoPagoId || undefined,
-            fecha: new Date().toLocaleDateString(),
-            colegioId: '',
-            colegioNombre: 'Colegio',
-            cursoCodigo: '',
-            grado: '',
-            division: '',
-            alumnoNombre: 'tus hijos/as',
-            tutorNombre: 'Familia',
-            kitId: 'kit-clasico',
-            kitNombre: 'Varios kits',
-            total: 0,
-            metodoPago: metodo,
-            estadoPago: estadoInicial,
-            estadoEntrega: 'laboratorio_listo',
-            fotosSeleccionadas: {},
-          });
+          setPedidoGenerado(pedidoDeRespaldo({ referencia: grupoPagoId || '', esGrupo: true, metodoPago: metodo, estadoPago: estadoInicial }));
+          // /api/pedidos/:id/status ahora también resuelve por grupo_pago_id.
+          if (grupoPagoId) verificarEstadoRealPedido(grupoPagoId);
           setStep(5);
         }
       };
@@ -631,26 +710,7 @@ export default function PortalFamiliasModal({
           setStep(5);
         } else {
           setNumeroPedido(pedidoId);
-          setPedidoGenerado({
-            id: pedidoId,
-            supabaseId: pedidoId,
-            fecha: new Date().toLocaleDateString(),
-            colegioId: '',
-            colegioNombre: 'Colegio',
-            cursoCodigo: '',
-            grado: '',
-            division: '',
-            alumnoNombre: 'Alumno',
-            tutorNombre: 'Familia',
-            kitId: 'kit-clasico',
-            kitNombre: 'Kit Retrato Escolar',
-            total: 0,
-            metodoPago: 'nave',
-            estadoPago: 'pendiente',
-            estadoEntrega: 'laboratorio_listo',
-            fotosSeleccionadas: {},
-            codigoSeguimiento: pedidoId,
-          });
+          setPedidoGenerado(pedidoDeRespaldo({ referencia: pedidoId, esGrupo: false, metodoPago: 'nave', estadoPago: 'pendiente' }));
           setStep(5);
         }
         verificarEstadoRealPedido(pedidoId);
@@ -668,26 +728,7 @@ export default function PortalFamiliasModal({
           setStep(5);
         } else {
           setNumeroPedido(pedidoId);
-          setPedidoGenerado({
-            id: pedidoId,
-            supabaseId: pedidoId,
-            fecha: new Date().toLocaleDateString(),
-            colegioId: '',
-            colegioNombre: 'Colegio',
-            cursoCodigo: '',
-            grado: '',
-            division: '',
-            alumnoNombre: 'Alumno',
-            tutorNombre: 'Familia',
-            kitId: 'kit-clasico',
-            kitNombre: 'Kit Retrato Escolar',
-            total: 0,
-            metodoPago: 'mercadopago',
-            estadoPago: mpStatus === 'approved' ? 'aprobado' : 'pendiente',
-            estadoEntrega: 'laboratorio_listo',
-            fotosSeleccionadas: {},
-            codigoSeguimiento: pedidoId,
-          });
+          setPedidoGenerado(pedidoDeRespaldo({ referencia: pedidoId, esGrupo: false, metodoPago: 'mercadopago', estadoPago: mpStatus === 'approved' ? 'aprobado' : 'pendiente' }));
           setStep(5);
         }
         verificarEstadoRealPedido(pedidoId);
@@ -902,10 +943,10 @@ export default function PortalFamiliasModal({
           // falsamente en "Esperando fotos" aunque el curso ya tuviera imágenes.
           setCodigoSeccionValidado(fam.codigoAsignado || fam.codigoFamiliar);
         }
-        if (fam.colegioId) {
-          const col = colegios.find((c) => c.id === fam.colegioId);
-          if (col) setSelectedColegio(col);
-        }
+        // Se vuelve a correr cuando carga la lista de colegios (dependencia `colegios`), así que
+        // el colegio "de respaldo" se reemplaza por el real apenas llega.
+        const col = colegioDeLaFamilia(colegios, fam);
+        if (col) setSelectedColegio(col);
       } else {
         // El modal permanece montado cuando se cierra. Si ya no existe una sesión familiar,
         // eliminar todo dato sensible retenido por la instancia anterior antes de mostrarlo.
@@ -959,7 +1000,11 @@ export default function PortalFamiliasModal({
   }, [selectedColegio]);
 
   useEffect(() => {
-    if (preselectedKitId) {
+    // Auditoría 2026-09-23 (bug real): la tarjeta "Fotos Sueltas de Eventos" de la home también
+    // llama acá, pero ese kit no se vende suelto desde el portal (las fotos de eventos se suman
+    // como "Otras Fotos" a cualquiera de los dos kits): quedaba preseleccionado un kit que el
+    // servidor rechaza, y la familia recién se enteraba al querer pagar ("Kit no reconocido").
+    if (preselectedKitId && preselectedKitId !== 'kit-evento-suelto') {
       const k = KITS_DISPONIBLES.find((item) => item.id === preselectedKitId);
       if (k) setSelectedKit(k);
     }
@@ -1033,7 +1078,7 @@ export default function PortalFamiliasModal({
       if (famFound.grado) setGrado(famFound.grado);
       if (famFound.division) setDivision(famFound.division);
 
-      const colMatch = colegios.find((c) => c.id === famFound.colegioId) || colegios[0];
+      const colMatch = colegioDeLaFamilia(colegios, famFound);
       if (colMatch) setSelectedColegio(colMatch);
 
       const totalHijos = 1 + (famFound.hermanos?.length || 0);
@@ -1148,6 +1193,10 @@ export default function PortalFamiliasModal({
   // Calculate Total
   const PRECIO_CARPETA_EXTRA = 15000;
   const PRECIO_FOTO_EVENTO = 5000;
+  // Mismos topes que aplica el servidor al cobrar (MAX_CARPETAS_EXTRA / MAX_FOTOS_SUELTAS en
+  // server.ts): sin esto, pasando el tope la pantalla mostraba un total y se cobraba otro.
+  const MAX_CARPETAS_EXTRA = 20;
+  const MAX_FOTOS_SUELTAS = 50;
   const precioBase = selectedKit.precio;
   const totalCopiasExtrasCantidad = extraCarpetas;
   const precioCopiasExtras = extraCarpetas * PRECIO_CARPETA_EXTRA;
@@ -1197,13 +1246,13 @@ export default function PortalFamiliasModal({
 
   const ajustarExtraCarpetasDeHijo = (id: string, delta: number) => {
     if (id === hijoSeleccionadoId) {
-      setExtraCarpetas((prev) => Math.max(0, prev + delta));
+      setExtraCarpetas((prev) => Math.min(MAX_CARPETAS_EXTRA, Math.max(0, prev + delta)));
       return;
     }
     setCarritoHijos((prev) => {
       const entry = prev[id];
       if (!entry) return prev;
-      const nuevaCantidad = Math.max(0, (entry.extraCarpetas || 0) + delta);
+      const nuevaCantidad = Math.min(MAX_CARPETAS_EXTRA, Math.max(0, (entry.extraCarpetas || 0) + delta));
       const kitPrecio = KITS_DISPONIBLES.find((k) => k.id === entry.kitId)?.precio || 0;
       const nuevoTotal = kitPrecio + nuevaCantidad * PRECIO_CARPETA_EXTRA + entry.fotosSueltasSeleccionadas.length * PRECIO_FOTO_EVENTO;
       return { ...prev, [id]: { ...entry, extraCarpetas: nuevaCantidad, total: nuevoTotal } };
@@ -1829,6 +1878,12 @@ export default function PortalFamiliasModal({
         return;
       }
     } catch (err) {
+      if (err instanceof ErrorLimiteBusqueda) {
+        setSearchedOrder(null);
+        setTrackingError(err.message);
+        setBuscandoSeguimiento(false);
+        return;
+      }
       console.warn('Error al consultar el pedido en el servidor, se intenta con datos locales:', err);
     } finally {
       setBuscandoSeguimiento(false);
@@ -1837,34 +1892,42 @@ export default function PortalFamiliasModal({
     // Respaldo: búsqueda en los pedidos guardados en este navegador (por ejemplo, sin conexión)
     const pedidosRegistrados = obtenerPedidosGuardados();
     const cleanNumber = query.replace(/\D/g, '');
+    // String(...): pedidos guardados por versiones viejas del sitio pueden no traer estos campos.
     const encontradoEnDb = pedidosRegistrados.find(
-      (p) => p.id.toUpperCase().includes(query) || (cleanNumber.length >= 6 && p.tutorTelefono.includes(cleanNumber))
+      (p) => String(p.id || '').toUpperCase().includes(query) || (cleanNumber.length >= 6 && String(p.tutorTelefono || '').includes(cleanNumber))
     );
 
     if (encontradoEnDb) {
+      // Auditoría 2026-09-23 (bug real): este respaldo mostraba SIEMPRE "En laboratorio" y la
+      // descarga como lista, aunque el pedido guardado en el navegador no estuviera pagado. Ahora
+      // refleja el estado de pago que se conoce localmente.
+      const pagado = encontradoEnDb.estadoPago === 'aprobado';
+      const rechazado = encontradoEnDb.estadoPago === 'rechazado';
       setSearchedOrder({
         id: encontradoEnDb.id,
         colegio: encontradoEnDb.colegioNombre,
-        alumno: `${encontradoEnDb.alumnoNombre} (${encontradoEnDb.grado} ${encontradoEnDb.division})`,
+        alumno: `${encontradoEnDb.alumnoNombre || ''} (${encontradoEnDb.grado || ''} ${encontradoEnDb.division || ''})`,
         tutor: encontradoEnDb.tutorNombre,
         telefono: encontradoEnDb.tutorTelefono,
         kit: encontradoEnDb.kitNombre,
-        total: encontradoEnDb.total,
-        fecha: encontradoEnDb.fecha.split(' ')[0],
-        estado: encontradoEnDb.estadoEntrega,
-        estadoTexto:
-          encontradoEnDb.estadoEntrega === 'entregado'
-            ? 'Entregado en la Institución'
-            : encontradoEnDb.estadoEntrega === 'listo_descarga'
-            ? 'Descarga Digital HD Disponible'
-            : encontradoEnDb.estadoEntrega === 'en_espera'
-            ? 'En Espera de Procesamiento'
-            : 'En Laboratorio Fotográfico',
-        descripcionEstado:
-          'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.',
-        pasoActual: 3,
+        total: Number(encontradoEnDb.total) || 0,
+        fecha: String(encontradoEnDb.fecha || '').split(' ')[0],
+        estado: rechazado ? 'cancelado' : pagado ? encontradoEnDb.estadoEntrega : 'pendiente_pago',
+        estadoTexto: rechazado
+          ? 'Pago rechazado'
+          : !pagado
+          ? 'Pendiente de Acreditación del Pago'
+          : encontradoEnDb.estadoEntrega === 'entregado'
+          ? 'Entregado en la Institución'
+          : encontradoEnDb.estadoEntrega === 'listo_descarga'
+          ? 'Descarga Digital HD Disponible'
+          : 'En Laboratorio Fotográfico',
+        descripcionEstado: pagado
+          ? 'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.'
+          : 'No pudimos confirmar el estado con el servidor. Estos son los datos guardados en este dispositivo; si ya pagaste, volvé a consultar en unos minutos.',
+        pasoActual: pagado ? 3 : rechazado ? 0 : 1,
         entregaEstimada: 'Entrega en el colegio coordinada con la dirección',
-        descargaLista: true,
+        descargaLista: pagado && Boolean(encontradoEnDb.linkDescargaHD),
         linkDescargaHD: encontradoEnDb.linkDescargaHD,
       });
       return;
@@ -2055,7 +2118,7 @@ export default function PortalFamiliasModal({
                       </span>
                       <span className="text-xs font-bold text-slate-900">{searchedOrder.kit}</span>
                       <span className="text-xs font-black text-amber-600 block mt-0.5">
-                        ${searchedOrder.total.toLocaleString('es-AR')} ARS
+                        ${(Number(searchedOrder.total) || 0).toLocaleString('es-AR')} ARS
                       </span>
                     </div>
                   </div>
@@ -2257,7 +2320,7 @@ export default function PortalFamiliasModal({
                           handleIngresarCodigo();
                         }
                       }}
-                      placeholder="Código del curso (Ej: SALA-3TM)"
+                      placeholder="Código del curso (Ej: 88BU-M8TF)"
                       className="px-3.5 py-2.5 text-xs sm:text-sm uppercase font-mono font-bold tracking-wider bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full sm:w-48 shadow-xs"
                     />
                     <button
@@ -2465,7 +2528,7 @@ export default function PortalFamiliasModal({
                         {onOpenInscripcion && (
                           <button
                             type="button"
-                            onClick={onOpenInscripcion}
+                            onClick={() => onOpenInscripcion()}
                             className="text-[11px] text-amber-700 hover:text-amber-800 underline font-semibold cursor-pointer"
                           >
                             Cambiar datos
@@ -2628,7 +2691,7 @@ export default function PortalFamiliasModal({
                             {nombreAlumno} ya tiene un pedido registrado
                           </p>
                           <p className="text-[11px] text-amber-800 mt-0.5">
-                            Pedido <strong>{pedidoExistente.id}</strong> · {pedidoExistente.kit} · ${pedidoExistente.total.toLocaleString('es-AR')} ·{' '}
+                            Pedido <strong>{pedidoExistente.id}</strong> · {pedidoExistente.kit} · ${(Number(pedidoExistente.total) || 0).toLocaleString('es-AR')} ·{' '}
                             {pedidoExistente.estado === 'entregado'
                               ? 'Entregado'
                               : pedidoExistente.estado === 'pagado'
@@ -2966,7 +3029,11 @@ export default function PortalFamiliasModal({
                     if (foto.categoria === 'docente') setFotoSeleccionadaDocente(foto.id);
                     if (foto.categoria === 'patio') {
                       setFotosSueltasSeleccionadas((actuales) =>
-                        actuales.includes(foto.id) ? actuales.filter((id) => id !== foto.id) : [...actuales, foto.id]
+                        actuales.includes(foto.id)
+                          ? actuales.filter((id) => id !== foto.id)
+                          : actuales.length >= MAX_FOTOS_SUELTAS
+                          ? actuales
+                          : [...actuales, foto.id]
                       );
                     }
                     setErrorSeleccionFotos('');
@@ -3125,7 +3192,8 @@ export default function PortalFamiliasModal({
                       <button
                         type="button"
                         id="btn-mas-carpeta-extra"
-                        onClick={() => setExtraCarpetas((prev) => prev + 1)}
+                        onClick={() => setExtraCarpetas((prev) => Math.min(MAX_CARPETAS_EXTRA, prev + 1))}
+                        disabled={extraCarpetas >= MAX_CARPETAS_EXTRA}
                         className="w-9 h-9 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
                         title="Agregar carpeta extra"
                       >
@@ -3374,7 +3442,8 @@ export default function PortalFamiliasModal({
                       <button
                         type="button"
                         id="btn-mas-carpeta-extra-step3"
-                        onClick={() => setExtraCarpetas((prev) => prev + 1)}
+                        onClick={() => setExtraCarpetas((prev) => Math.min(MAX_CARPETAS_EXTRA, prev + 1))}
+                        disabled={extraCarpetas >= MAX_CARPETAS_EXTRA}
                         className="w-9 h-9 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold flex items-center justify-center transition-colors cursor-pointer shadow-xs"
                         title="Agregar carpeta extra"
                       >

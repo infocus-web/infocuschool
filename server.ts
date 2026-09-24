@@ -87,6 +87,15 @@ app.use(express.json({ limit: '4mb' }));
 // sí frena intentos manuales y scripts simples desde una misma conexión, que es el 90% del
 // riesgo real hoy. Si en el futuro esto pasa a preocupar más, lo correcto es un store
 // compartido (Redis/Upstash) en vez de memoria del proceso.
+//
+// Auditoría 2026-09-23 (riesgo real para el lanzamiento): los límites son POR IP, y en Argentina
+// los celulares suelen salir a internet por una IP compartida del operador (CGNAT) — igual que
+// todas las familias conectadas al WiFi de un colegio. Varios topes eran tan bajos que un grupo de
+// familias en la misma red se bloqueaba entre sí (ej. 10 inscripciones cada 15 min, o 60 consultas
+// de estado cada 10 min, que una sola pantalla de "pago pendiente" agotaba sola en 4 minutos), y el
+// webhook de Nave (siempre desde las mismas IPs de Nave) podía quedar rechazado en un día de mucha
+// venta. Se subieron para uso legítimo en grupo; los secretos (códigos de 8 caracteres, tokens)
+// siguen siendo inviables de adivinar con estos topes.
 const intentosPorClave = new Map<string, { count: number; desde: number }>();
 function limitarFrecuencia(nombre: string, maxIntentos: number, ventanaMs: number) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -1332,17 +1341,24 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   // producción. Un pedido que YA está en 'listo_retiro' puede seguir recibiendo ese mismo aviso
   // de nuevo (reenvío) sin problema.
   const estadosActuales = new Map<string, string | null>();
+  // Auditoría 2026-09-24: estado de PAGO de cada pedido — no se manda a producción ni se avisa
+  // "listo para retirar" un pedido que todavía no se cobró (antes nada lo impedía, y el panel
+  // pasaba a mostrarlo como "Aprobado").
+  const estadosPago = new Map<string, string>();
   if (supabase) {
     const idsValidos = destinatarios.map((d: any) => d?.pedidoId).filter(Boolean);
     if (idsValidos.length > 0) {
       const { data: filasActuales, error: errorEstados } = await supabase
         .from('pedidos')
-        .select('id, estado_lab')
+        .select('id, estado, estado_lab')
         .in('id', idsValidos);
       if (errorEstados) {
         console.warn('[notificar-estado] No se pudo verificar el estado_lab actual antes de enviar:', errorEstados.message);
       } else {
-        (filasActuales || []).forEach((fila: any) => estadosActuales.set(fila.id, fila.estado_lab));
+        (filasActuales || []).forEach((fila: any) => {
+          estadosActuales.set(fila.id, fila.estado_lab);
+          estadosPago.set(fila.id, fila.estado);
+        });
       }
     }
   }
@@ -1353,6 +1369,10 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
     // retirar" pisaba estado_lab de vuelta a 'en_produccion' en la base (el UPDATE de más abajo
     // no distinguía "avanzar" de "retroceder"). puedeAvanzarEtapaLab bloquea ambos casos: saltear
     // una etapa hacia adelante, y retroceder una ya alcanzada.
+    if (supabase && estadosPago.has(destinatario.pedidoId) && !['pagado', 'entregado'].includes(estadosPago.get(destinatario.pedidoId) as string)) {
+      errores.push(`${destinatario.alumnoNombre || destinatario.to}: el pedido todavía no está pagado — aprobá el pago antes de avisar la etapa de laboratorio.`);
+      continue;
+    }
     if (supabase && !puedeAvanzarEtapaLab(estadosActuales.get(destinatario.pedidoId) as EtapaLab | null, tipo)) {
       const etapaLegible = tipo === 'en_produccion' ? 'En producción' : 'Listo para retirar';
       errores.push(`${destinatario.alumnoNombre || destinatario.to}: no se puede pasar a "${etapaLegible}" desde el estado actual de ese pedido (evita saltos y retrocesos de etapa).`);
@@ -1418,11 +1438,14 @@ app.post('/api/admin/pedidos/:id/marcar-retirado', requireAdminAuth, async (req:
 
     const { data: pedido, error: errorLectura } = await supabase
       .from('pedidos')
-      .select('id, estado_lab')
+      .select('id, estado, estado_lab')
       .eq('id', id)
       .maybeSingle();
     if (errorLectura) throw errorLectura;
     if (!pedido) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+    if (!['pagado', 'entregado'].includes(pedido.estado)) {
+      return res.status(409).json({ success: false, error: 'Este pedido todavía no está pagado — aprobá el pago antes de marcarlo como retirado.' });
+    }
 
     if (!puedeAvanzarEtapaLab(pedido.estado_lab as EtapaLab | null, 'entregado')) {
       return res.status(409).json({
@@ -1653,6 +1676,14 @@ app.post('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respons
 
     if (filas.length === 0) {
       return res.status(400).json({ success: false, error: 'Ninguna foto tiene los datos mínimos (ruta, categoría, grado y turno)' });
+    }
+
+    // Ver buscarColegioReal: una foto guardada con el id del colegio "de relleno" (lista de
+    // colegios sin cargar) nunca aparece en la galería de las familias del colegio real.
+    for (const colegioIdFoto of new Set(filas.map((f: any) => f.colegio_id))) {
+      if (!(await buscarColegioReal(supabase, colegioIdFoto))) {
+        return res.status(400).json({ success: false, error: 'El colegio elegido no es válido (la lista de colegios no terminó de cargar). Recargá el panel, elegí el colegio y volvé a intentar — las fotos ya subidas se pueden volver a registrar.' });
+      }
     }
 
     const seccionesDelLote = Array.from(new Map(filas.map((fila: any) => [
@@ -2565,7 +2596,7 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
 // combo del sitio— y devolvía las fotos reales sin pedir ningún código: cualquiera podía
 // ver las fotos de cualquier curso con sólo elegir las opciones del desplegable. Ahora el
 // grado/turno/división salen del código validado, nunca de lo que mande el navegador.
-app.get('/api/fotos', limitarFrecuencia('fotos-galeria', 120, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/fotos', limitarFrecuencia('fotos-galeria', 600, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { codigo } = req.query as Record<string, string | undefined>;
     if (!codigo || !codigo.trim()) {
@@ -2628,6 +2659,20 @@ function generarSlugColegio(nombre: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 }
+
+// Auditoría 2026-09-23 (bug de integridad, ALTO): el sitio muestra un colegio "de relleno"
+// (id 'col-divino-pastor-2026', ver COLEGIO_POR_DEFECTO en colegiosService.ts) mientras carga la
+// lista real o si esa carga falla. Una inscripción o un pedido enviados en ese momento quedaban
+// guardados con un colegio_id que no existe: nunca cruzaban con el padrón ni con las fotos del
+// colegio real (la familia no veía nunca sus fotos). Se valida contra la tabla antes de guardar.
+async function buscarColegioReal(supabase: SupabaseClient, colegioId: unknown): Promise<{ id: string; nombre: string } | null> {
+  const id = String(colegioId || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
+  const { data, error } = await supabase.from('colegios').select('id, nombre').eq('id', id).maybeSingle();
+  if (error) throw error;
+  return data ? { id: data.id, nombre: data.nombre } : null;
+}
+const ERROR_COLEGIO_NO_VALIDO = 'No pudimos identificar el colegio. Recargá la página y volvé a intentar.';
 
 function mapearColegioSupabase(row: any) {
   return {
@@ -3307,12 +3352,68 @@ app.post('/api/admin/codigos-seccion/actualizar', requireAdminAuth, async (req: 
   }
 });
 
+// Auditoría 2026-09-24 (bug real en datos de producción, CRÍTICO): de las inscripciones cuyo
+// alumno figura en la nómina oficial del colegio (tabla `alumnos`, cargada desde el panel), 1 de
+// cada 3 quedó en una DIVISIÓN distinta a la real — casi siempre la "A" (la que el formulario
+// traía preseleccionada) o "Jornada Extendida" (que el formulario ponía solo al elegir ese turno,
+// cuando en la nómina esos chicos son de la división C). Como el código de acceso es por sección,
+// esas familias reciben el código de OTRO curso: verían fotos de otros chicos y no las de su hijo.
+// Cuando el nombre del alumno coincide sin ambigüedad con la nómina, el curso de la nómina manda.
+type CursoNomina = { grado: string; turno: string | null; division: string };
+async function crearBuscadorEnNomina(supabase: SupabaseClient, colegioId: string) {
+  let nomina: { claves: string[]; palabras: Set<string>; curso: CursoNomina }[] | null = null;
+  const cargar = async () => {
+    if (nomina) return nomina;
+    const filas = await traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('alumnos').select('nombre, grado, turno, division').eq('colegio_id', colegioId).order('id').range(desde, hasta)
+    );
+    nomina = filas
+      .filter((a) => a.nombre && a.grado && a.division)
+      .map((a) => {
+        const clave = normalizarNombrePorPalabras(a.nombre);
+        return {
+          claves: [clave],
+          palabras: new Set(clave.split(' ').filter(Boolean)),
+          curso: { grado: String(a.grado).trim(), turno: a.turno ? String(a.turno).trim() : null, division: String(a.division).trim() },
+        };
+      });
+    return nomina;
+  };
+  const mismaSeccion = (a: CursoNomina, b: CursoNomina) => a.grado === b.grado && a.division === b.division && (a.turno || '') === (b.turno || '');
+  const unico = (cursos: CursoNomina[]): CursoNomina | null =>
+    cursos.length > 0 && cursos.every((c) => mismaSeccion(c, cursos[0])) ? cursos[0] : null;
+
+  return async (nombreCompleto: string, gradoEscrito?: unknown): Promise<CursoNomina | null> => {
+    const clave = normalizarNombrePorPalabras(nombreCompleto);
+    const palabras = clave.split(' ').filter(Boolean);
+    if (palabras.length < 2) return null;
+    try {
+      const lista = await cargar();
+      const exactos = lista.filter((a) => a.claves[0] === clave).map((a) => a.curso);
+      if (exactos.length > 0) return unico(exactos);
+      // La familia pudo escribir sólo uno de los nombres ("Juan Pérez" por "Juan Martín Pérez"):
+      // se acepta si todas sus palabras están en un único alumno de la nómina. Como una
+      // coincidencia parcial es más débil ("Juan Perez" también está contenido en "Alvarez
+      // Perez, Juan Martin", de otro año), sólo se usa si además coincide el grado elegido.
+      const grado = String(gradoEscrito || '').trim();
+      if (!grado) return null;
+      const parciales = lista
+        .filter((a) => a.curso.grado === grado && palabras.every((w) => a.palabras.has(w)))
+        .map((a) => a.curso);
+      return unico(parciales);
+    } catch (e) {
+      console.warn('[inscripciones] No se pudo consultar la nómina para corregir el curso:', e);
+      return null;
+    }
+  };
+}
+
 // Inscripción pública: valida contra el padrón autorizado del colegio y asigna código al instante si coincide.
 // Todo el acceso a `padres_autorizados` e `inscripciones` pasa exclusivamente por acá, del lado del servidor
 // (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
 // Auditoría 2026-09-23: este endpoint público no tenía límite de frecuencia (manda correos y
 // escribe en la base), a diferencia del resto de los formularios públicos.
-app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar', 10, 15 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar', 40, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const {
       colegioId,
@@ -3353,6 +3454,11 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     const supabase = getServerSupabase();
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+
+    const colegioReal = await buscarColegioReal(supabase, colegioId);
+    if (!colegioReal) {
+      return res.status(400).json({ success: false, error: ERROR_COLEGIO_NO_VALIDO });
     }
 
     const telDigits = normalizarTelefonoServidor(telefonoWhatsApp);
@@ -3402,19 +3508,21 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     // el mismo contacto (teléfono/email) y un nombre que matchea, su grado/turno/división real
     // manda por sobre lo que haya tipeado la familia — igual que ya ocurre con el alumno
     // principal cuando el padrón trae esos datos cargados.
-    const hermanosReconciliados = (Array.isArray(hermanos) ? hermanos : []).map((h: any) => {
+    const cursoEnNomina = await crearBuscadorEnNomina(supabase, colegioReal.id);
+    const hermanosReconciliados = await Promise.all((Array.isArray(hermanos) ? hermanos : []).map(async (h: any) => {
       const nombreCompletoHermano = normalizarNombrePorPalabras(`${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`);
       const matchHermano = nombreCompletoHermano
         ? candidatosPadron.find((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreCompletoHermano)
         : null;
+      const nominaHermano = await cursoEnNomina(`${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`, h?.grado);
       return {
         ...h,
         colegioId, // nunca el que venga en el hermano: siempre el colegio de esta inscripción
-        grado: (matchHermano?.grado && String(matchHermano.grado).trim()) || h?.grado,
-        turno: (matchHermano?.turno && String(matchHermano.turno).trim()) || h?.turno,
-        division: (matchHermano?.division && String(matchHermano.division).trim()) || h?.division,
+        grado: (matchHermano?.grado && String(matchHermano.grado).trim()) || nominaHermano?.grado || h?.grado,
+        turno: (matchHermano?.turno && String(matchHermano.turno).trim()) || nominaHermano?.turno || h?.turno,
+        division: (matchHermano?.division && String(matchHermano.division).trim()) || nominaHermano?.division || h?.division,
       };
-    });
+    }));
 
     // Buscar si esta misma familia (mismo colegio + mismo WhatsApp o email) ya tiene una
     // inscripción cargada, para actualizarla en vez de crear un duplicado (por ejemplo, cuando
@@ -3468,9 +3576,12 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     // división que quisiera, no sólo el que le corresponde, y así ver las fotos de cursos
     // ajenos. Si la fila autorizada no tiene su propio grado/turno/división cargados (padrones
     // viejos, sin esos datos), se sigue aceptando lo que mande el formulario como antes.
-    const gradoAprobado = (matchPadre?.grado && String(matchPadre.grado).trim()) || grado;
-    const turnoAprobado = (matchPadre?.turno && String(matchPadre.turno).trim()) || turno;
-    const divisionAprobada = (matchPadre?.division && String(matchPadre.division).trim()) || division;
+    // Orden de prioridad del curso: padrón (si trae curso) > nómina oficial (ver
+    // crearBuscadorEnNomina) > lo que eligió la familia en el formulario.
+    const cursoNominaPrincipal = await cursoEnNomina(`${alumnoNombre || ''} ${alumnoApellido || ''}`, grado);
+    const gradoAprobado = (matchPadre?.grado && String(matchPadre.grado).trim()) || cursoNominaPrincipal?.grado || grado;
+    const turnoAprobado = (matchPadre?.turno && String(matchPadre.turno).trim()) || cursoNominaPrincipal?.turno || turno;
+    const divisionAprobada = (matchPadre?.division && String(matchPadre.division).trim()) || cursoNominaPrincipal?.division || division;
 
     // Auditoría 2026-09-16 (hallazgo reportado por Pablo): si una familia YA aprobada vuelve a
     // completar este formulario público pero esta vez el curso (colegio/grado/turno/división)
@@ -3516,7 +3627,7 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
           const resultadoEnvio = await enviarCorreoCodigoAcceso({
             to: emailOficialPadron,
             padreNombre: (matchPadre.nombre && String(matchPadre.nombre).trim()) || String(padreNombre).trim(),
-            colegioNombre: String(colegioNombre || 'Colegio').trim(),
+            colegioNombre: colegioReal.nombre,
             codigo: codigoAcceso,
             alumnos: [{
               nombre: String(alumnoNombre).trim(),
@@ -3587,11 +3698,13 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
       alumno_nombre: String(alumnoNombre).trim(),
       alumno_apellido: String(alumnoApellido || '').trim(),
       alumno_dni: alumnoDniLimpio,
-      turno: String((estado === 'aceptado' ? turnoAprobado : turno) || 'Mañana').trim(),
-      grado: String((estado === 'aceptado' ? gradoAprobado : grado) || 'Sala 3 años').trim(),
-      division: String((estado === 'aceptado' ? divisionAprobada : division) || 'A').trim(),
-      colegio_id: colegioId,
-      colegio_nombre: String(colegioNombre || 'Colegio').trim(),
+      // El curso corregido (padrón/nómina) se guarda también en las pendientes: así, cuando el
+      // fotógrafo la aprueba desde el panel, el código que se genera es el de la sección real.
+      turno: String(turnoAprobado || 'Mañana').trim(),
+      grado: String(gradoAprobado || 'Sala 3 años').trim(),
+      division: String(divisionAprobada || 'A').trim(),
+      colegio_id: colegioReal.id,
+      colegio_nombre: colegioReal.nombre,
       estado,
       codigo_asignado: codigoAcceso,
       codigo_familiar: codigoAcceso,
@@ -3720,7 +3833,7 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
 // puede informar el estado igual. Pero si esa familia YA tiene un código asignado, esta ruta
 // nunca lo devuelve por acá: como mucho reenvía el código al correo de confianza YA guardado
 // (nunca a uno nuevo) y responde sin datos de la familia.
-app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 15, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 40, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { query, tutorNombre, dni } = req.body || {};
     const q = String(query || '').trim();
@@ -3920,7 +4033,7 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
 // (`PortalFamiliasModal.tsx`) usa esto para poder alternar la galería mostrada sin pedirle a la
 // familia un código distinto por cada hijo — nunca se le entrega grado/turno/división "en
 // crudo" al navegador como si fuera la llave: la llave sigue siendo siempre un código secreto.
-app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 100, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const codigo = String(req.query.codigo || '').trim().toUpperCase();
     if (!codigo) {
@@ -4458,7 +4571,7 @@ app.post('/api/padron/link/:codigo', limitarFrecuencia('padron-link-post', 20, 1
 // privado del servidor. La tabla no concede ningún permiso a anon/authenticated.
 // ==============================================================================
 
-app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 5, 15 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 10, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { nombre, email, telefono, colegio, numeroPedido, asunto, mensaje, sitioWeb } = req.body || {};
     if (String(sitioWeb || '').trim()) return res.json({ success: true });
@@ -4682,7 +4795,7 @@ Redactá la respuesta ahora.
 // ==============================================================================
 
 // Envío público: cualquier familia puede dejar su solicitud, sin login
-app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 10, 15 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 20, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { nombreSolicitante, contacto, alumnoNombre, colegioId, colegioNombre, grado, division, turno, mensaje } = req.body || {};
 
@@ -5911,13 +6024,18 @@ const MAX_FOTOS_SUELTAS = 50; // tope defensivo, no hay caso de uso real por enc
 // preferencia de Mercado Pago como el registro del pedido en la base (ver auditoría
 // 2026-09-09, punto de gestión "un solo lugar de verdad para los precios"). Devuelve null si
 // el kit no se reconoce.
+// La carpeta extra es una COPIA de la carpeta del "Kit Impreso + Digital": en un kit sin carpeta
+// física no tiene sentido (y el laboratorio no tendría qué duplicar). El portal ya la resetea al
+// cambiar de kit; esto lo garantiza del lado del servidor también.
+function carpetasExtrasValidas(kitId: string, carpetasExtras: unknown): number {
+  if (kitId !== 'kit-clasico') return 0;
+  return Math.min(MAX_CARPETAS_EXTRA, Math.max(0, Math.floor(Number(carpetasExtras) || 0)));
+}
+
 function calcularTotalPedido(kitId: string, carpetasExtras: unknown, cantidadFotosSueltas: unknown = 0): number | null {
   const precioBaseKit = PRECIOS_KITS[kitId];
   if (precioBaseKit === undefined) return null;
-  const extrasValidados = Math.min(
-    MAX_CARPETAS_EXTRA,
-    Math.max(0, Math.floor(Number(carpetasExtras) || 0))
-  );
+  const extrasValidados = carpetasExtrasValidas(kitId, carpetasExtras);
   const fotosSueltasValidadas = Math.min(
     MAX_FOTOS_SUELTAS,
     Math.max(0, Math.floor(Number(cantidadFotosSueltas) || 0))
@@ -5926,7 +6044,7 @@ function calcularTotalPedido(kitId: string, carpetasExtras: unknown, cantidadFot
 }
 
 // Crear preferencia de pago en Mercado Pago
-app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferencia', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferencia', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId,
@@ -6040,12 +6158,16 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
 // grupoPagoId compartido por todos los pedidos de este carrito (ver /api/pedidos/crear-multiple),
 // no el id de un pedido puntual — así el webhook sabe que tiene que marcar varias filas como
 // pagadas, no una sola.
-app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear-preferencia-multiple', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear-preferencia-multiple', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const { grupoPagoId, items, tutorNombre, tutorEmail, tutorTelefono } = req.body || {};
 
-    if (!grupoPagoId || !Array.isArray(items) || items.length < 2) {
-      return res.status(400).json({ success: false, error: 'Falta el grupo de pago o los ítems del carrito.' });
+    // Los ítems que manda el navegador ya no se usan para cobrar (ver abajo: se cobra lo registrado
+    // en la base para este grupo) — sólo hace falta el grupo. Así el portal puede regenerar el link
+    // de un carrito sin tener que reconstruir la lista de hijos.
+    void items;
+    if (!grupoPagoId) {
+      return res.status(400).json({ success: false, error: 'Falta el grupo de pago del carrito.' });
     }
 
     // Auditoría 2026-09-23: igual que en /api/mercadopago/crear-preferencia, cada línea se cobra
@@ -6171,7 +6293,7 @@ async function asegurarFriendlyIdUnico(supabase: SupabaseClient, propuesto: unkn
 // mandado por el cliente) y el pedido SIEMPRE nace en estado "pendiente_pago" — ningún cliente
 // puede crear un pedido ya marcado como pagado. Las políticas públicas de escritura/lectura de
 // 'familias' y 'pedidos' se cerraron del lado de Supabase (ver migración de la auditoría).
-app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId, kitId, carpetasExtras, tutorNombre, tutorTelefono, metodoPago,
@@ -6201,6 +6323,11 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
     const supabase = getServerSupabase();
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    // Ver buscarColegioReal: un pedido con un colegio inexistente nunca cruza con sus fotos.
+    const colegioReal = await buscarColegioReal(supabase, colegioId);
+    if (!colegioReal) {
+      return res.status(400).json({ success: false, error: ERROR_COLEGIO_NO_VALIDO });
     }
 
     // Recorta cualquier texto libre recibido a una longitud razonable, para que un campo
@@ -6257,7 +6384,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
     }
 
     const tipoKit = kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
-    const extrasValidados = Math.min(MAX_CARPETAS_EXTRA, Math.max(0, Math.floor(Number(carpetasExtras) || 0)));
+    const extrasValidados = carpetasExtrasValidas(String(kitId), carpetasExtras);
     const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
     const metodoPagoValido = metodosValidos.includes(metodoPago) ? metodoPago : 'mercadopago';
     const cursoCodigoServidor = determinarCodigoCursoServidor(String(grado || ''), String(turno || ''), String(division || ''));
@@ -6276,11 +6403,12 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
       // "pagado". Ver comentario de auditoría arriba de este endpoint.
       estado: 'pendiente_pago',
       total: totalCalculado,
-      carpetas_impresas: extrasValidados + 1,
+      // Un kit sólo digital no lleva carpeta impresa.
+      carpetas_impresas: kitId === 'kit-clasico' ? extrasValidados + 1 : 0,
       metodo_pago: metodoPagoValido,
       pedido_friendly_id: await asegurarFriendlyIdUnico(supabase, pedidoFriendlyId, new Set()),
-      colegio_id: acotar(colegioId, 100) || null,
-      colegio_nombre: acotar(colegioNombre, 200) || null,
+      colegio_id: colegioReal.id,
+      colegio_nombre: colegioReal.nombre,
       // Auditoría 2026-09-21 (refuerzo tras el bug de "sigue sin armarse el zip"): NUNCA se
       // acepta el curso_codigo tal como lo manda el navegador — ese fue exactamente el bug real
       // que rompió la entrega de HD para todo pedido (ver auditoría en PortalFamiliasModal.tsx).
@@ -6334,7 +6462,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 20, 10 * 60 * 
 // pedido nace siempre en "pendiente_pago" — nunca se acepta un total o estado mandado por el
 // cliente. No reemplaza a /api/pedidos/crear: una familia con un solo hijo sigue usando ese
 // camino exactamente como antes.
-app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multiple', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multiple', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const { tutorNombre, tutorTelefono, tutorEmail, items } = req.body || {};
 
@@ -6375,6 +6503,18 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
       }
       return limpio;
     };
+
+    // Ver buscarColegioReal: cada hijo del carrito tiene que estar en un colegio real.
+    const colegiosReales = new Map<string, { id: string; nombre: string }>();
+    for (const item of items) {
+      const clave = String(item?.colegioId || '');
+      if (colegiosReales.has(clave)) continue;
+      const colegio = await buscarColegioReal(supabase, clave);
+      if (!colegio) {
+        return res.status(400).json({ success: false, error: ERROR_COLEGIO_NO_VALIDO });
+      }
+      colegiosReales.set(clave, colegio);
+    }
 
     // Un total válido para CADA ítem, calculado siempre del lado del servidor. Si cualquier
     // ítem tiene un kit no reconocido, se corta todo el carrito antes de escribir nada.
@@ -6434,7 +6574,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
     for (const item of items) {
       const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item)) as number;
       const tipoKit = item?.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
-      const extrasValidados = Math.min(20, Math.max(0, Math.floor(Number(item?.carpetasExtras) || 0)));
+      const extrasValidados = carpetasExtrasValidas(String(item?.kitId), item?.carpetasExtras);
       const metodoPagoValida = metodosValidos.includes(item?.metodoPago) ? item.metodoPago : 'mercadopago';
       const cursoCodigoServidor = determinarCodigoCursoServidor(String(item?.grado || ''), String(item?.turno || ''), String(item?.division || ''));
       if (numeroListaBasePorCurso[cursoCodigoServidor] === undefined) {
@@ -6448,12 +6588,12 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         tipo_kit: tipoKit,
         estado: 'pendiente_pago',
         total: totalItem,
-        carpetas_impresas: extrasValidados + 1,
+        carpetas_impresas: item?.kitId === 'kit-clasico' ? extrasValidados + 1 : 0,
         metodo_pago: metodoPagoValida,
         grupo_pago_id: grupoPagoId,
         pedido_friendly_id: await asegurarFriendlyIdUnico(supabase, item?.pedidoFriendlyId, friendlyIdsUsados),
-        colegio_id: acotar(item?.colegioId, 100) || null,
-        colegio_nombre: acotar(item?.colegioNombre, 200) || null,
+        colegio_id: colegiosReales.get(String(item?.colegioId || ''))!.id,
+        colegio_nombre: colegiosReales.get(String(item?.colegioId || ''))!.nombre,
         // Auditoría 2026-09-21: mismo refuerzo que en /api/pedidos/crear — nunca se confía en el
         // curso_codigo que manda el cliente, se deriva siempre de grado/turno/división acá.
         curso_codigo: cursoCodigoServidor,
@@ -6619,7 +6759,7 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
 // Crear intención de pago en Nave (Banco Galicia) — equivalente a
 // /api/mercadopago/crear-preferencia, mismo criterio de recalcular siempre el monto en el
 // servidor (nunca confiar en un total mandado por el cliente).
-app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId, kitId, kitNombre, alumnoNombre, colegioNombre, carpetasExtras, cantidadFotosSueltas,
@@ -6729,12 +6869,16 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
 // seguridad: cada monto se recalcula siempre acá con calcularTotalPedido. "external_payment_id"
 // es el grupoPagoId compartido por todos los pedidos del carrito (ver
 // /api/pedidos/crear-multiple) — un uuid entra justo en el límite de 36 caracteres de Nave.
-app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-intencion-multiple', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-intencion-multiple', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const { grupoPagoId, items, tutorNombre, tutorEmail, tutorTelefono } = req.body || {};
 
-    if (!grupoPagoId || !Array.isArray(items) || items.length < 2) {
-      return res.status(400).json({ success: false, error: 'Falta el grupo de pago o los ítems del carrito.' });
+    // Los ítems que manda el navegador ya no se usan para cobrar (ver abajo: se cobra lo registrado
+    // en la base para este grupo) — sólo hace falta el grupo. Así el portal puede regenerar el link
+    // de un carrito sin tener que reconstruir la lista de hijos.
+    void items;
+    if (!grupoPagoId) {
+      return res.status(400).json({ success: false, error: 'Falta el grupo de pago del carrito.' });
     }
 
     // Auditoría 2026-09-23: montos tomados de las filas ya registradas del carrito (ver MP).
@@ -6848,7 +6992,7 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
 // Auditoría 2026-09-21 (refuerzo): sin límite, una notificación falsa repetida a alta frecuencia
 // obligaba a reconsultar la API de Nave una y otra vez (gasto/carga innecesaria). El límite es
 // generoso a propósito para no bloquear notificaciones legítimas de Nave en picos de tráfico.
-app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('nave-webhook', 60, 5 * 60 * 1000), async (req, res) => {
+app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('nave-webhook', 1000, 5 * 60 * 1000), async (req, res) => {
   try {
     const credenciales = getNaveCredenciales();
     if (!credenciales) {
@@ -7224,7 +7368,7 @@ app.get('/api/admin/zoho/historial', requireAdminAuth, async (req: Request, res:
 // Auditoría 2026-09-21 (refuerzo): la pantalla de "preparando tu descarga" lo consulta en un
 // intervalo corto mientras espera, así que el límite tiene que ser generoso para no cortar esa
 // consulta legítima — pero sin límite, se podía usar para probar IDs de pedido al voleo.
-app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 60 * 1000), async (req, res) => {
+app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 * 60 * 1000), async (req, res) => {
   try {
     const { id } = req.params;
     const supabase = getServerSupabase();
@@ -7244,7 +7388,7 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id))) {
       return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
     }
-    const columnasStatus = 'id, estado, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd';
+    const columnasStatus = 'id, estado, total, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd';
     let { data, error } = await supabase
       .from('pedidos')
       .select(columnasStatus)
@@ -7381,6 +7525,17 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
     // un link firmado hace más de 90 días que ya dejó de funcionar.
     const linkDescargaHD = await refirmarLinkDescargaHDSiExiste(supabase, data);
 
+    // Monto del pedido (o de todo el carrito, si es un pago combinado): el portal lo usa para
+    // completar la pantalla de confirmación cuando la familia vuelve del pago en otro navegador
+    // y no tiene el pedido guardado (antes mostraba "$0").
+    let totalReferencia = Number(data.total) || 0;
+    if (data.grupo_pago_id) {
+      const { data: filasGrupo } = await supabase.from('pedidos').select('total').eq('grupo_pago_id', data.grupo_pago_id);
+      if (filasGrupo && filasGrupo.length > 0) {
+        totalReferencia = filasGrupo.reduce((acc: number, f: any) => acc + (Number(f.total) || 0), 0);
+      }
+    }
+
     // Auditoría 2026-09-18 (reporte de Pablo): el Portal de Familias deja de consultar este
     // endpoint apenas el pago queda "aprobado" (ver PortalFamiliasModal.tsx), así que el botón
     // "Descarga Inmediata" se quedaba para siempre en "Preparando..." si el .zip HD tardaba
@@ -7393,6 +7548,8 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
       estado: estadoFinal,
       estadoPago: esAprobado ? 'aprobado' : esRechazado ? 'rechazado' : 'pendiente',
       actualizadoEl: data.updated_at,
+      total: totalReferencia,
+      pedidoFriendlyId: data.pedido_friendly_id || undefined,
       linkDescargaHD: linkDescargaHD || undefined,
     });
   } catch (err: any) {
@@ -7408,7 +7565,7 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 60, 10 * 
 // elegido al crear el pedido, aunque el pago nunca se hubiera completado. Este endpoint permite
 // cambiar el método de pago de un pedido TODAVÍA NO PAGADO — el Portal de Familias lo llama
 // cuando la familia elige otro método desde esa misma pantalla de "Pendiente de Pago".
-app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-cambiar-metodo-pago', 20, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-cambiar-metodo-pago', 40, 10 * 60 * 1000), async (req, res) => {
   try {
     const { id } = req.params;
     const { metodoPago } = req.body;
@@ -7488,7 +7645,7 @@ app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-camb
 // por nombre+DNI del tutor) — este chequeo no expone nada que esa familia no pueda ya ver. Aun
 // así se devuelve sólo un resumen mínimo (sin teléfono/email/link de descarga) y se rate-limitea
 // como el resto de los endpoints públicos de pedidos.
-app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     // Auditoría 2026-09-23 (bug: el aviso de "ya tenés un pedido" NUNCA aparecía): el portal
     // mandaba acá el código SECRETO de la sección (ej. "88BU-M8TF") como `cursoCodigo`, pero
@@ -7532,7 +7689,8 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 30, 10 
       pedido: {
         id: encontrado.pedido_friendly_id || encontrado.id,
         kit: encontrado.kit_nombre,
-        total: encontrado.total,
+        // Siempre número: el portal hace total.toLocaleString() y un null rompía la pantalla.
+        total: Number(encontrado.total) || 0,
         estado: encontrado.estado,
         fecha: encontrado.created_at,
       },
@@ -7568,7 +7726,7 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 30, 10 
 //      posibles.
 const FORMATO_PEDIDO_FRIENDLY_ID = /^[A-Z]{2,4}-\d{4}-\d{3,5}$/;
 
-app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 1000), async (req, res) => {
+app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 10, 30 * 60 * 1000), async (req, res) => {
   try {
     const qRaw = String(req.query.query || '').trim();
     if (!qRaw) {
@@ -7640,7 +7798,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 5, 30 * 60 * 
         tutor: fila.familias?.nombre || null,
         telefono: telefonoMostrado,
         kit: fila.kit_nombre,
-        total: fila.total,
+        total: Number(fila.total) || 0,
         fecha: fila.created_at,
         estado: fila.estado,
         linkDescargaHD: linkDescargaHD || null,

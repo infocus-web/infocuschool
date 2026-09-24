@@ -118,7 +118,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     {onOpenInscripcion && (
                       <button
                         id="btn-cambiar-familia-activa"
-                        onClick={onOpenInscripcion}
+                        onClick={() => onOpenInscripcion('login')}
                         className="px-3 py-2 bg-white hover:bg-slate-100 text-slate-700 font-semibold text-xs rounded-xl border border-slate-200 transition-colors cursor-pointer"
                         title="Cambiar datos de alumno o seleccionar otro"
                       >
@@ -157,7 +157,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                     <div className="flex flex-col gap-1.5 shrink-0">
                       <button
                         id="btn-inscribirme-hero"
-                        onClick={onOpenInscripcion}
+                        onClick={() => onOpenInscripcion('registro')}
                         className="px-6 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-sm rounded-xl transition-all shadow-md shadow-amber-400/40 flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                       >
                         <UserPlus className="w-4 h-4" />

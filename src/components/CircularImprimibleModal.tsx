@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Printer, Copy, Check, Send, Download, FileText, School, Scissors } from 'lucide-react';
 import { SeccionEscolar } from '../data/alumnosData';
 import { generarMensajeWhatsApp } from '../services/difusionEscolarService';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 interface CircularImprimibleModalProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export function CircularImprimibleModal({
   };
 
   const handleCopiar = (texto: string, id: string) => {
-    navigator.clipboard.writeText(texto);
+    void copiarAlPortapapeles(texto);
     setCopiadoIdx(id);
     setTimeout(() => setCopiadoIdx(null), 2500);
   };
