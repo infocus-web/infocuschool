@@ -280,9 +280,14 @@ Cómo funciona:
 - Las fotos de un curso se cargan al sistema después de que se toman las fotografías en el
   colegio. Hasta que eso pasa, la familia no puede elegir fotos ni pagar todavía, y se le avisa
   por email automáticamente en cuanto estén disponibles — no hace falta que vuelva a registrarse.
-- Recién cuando están las fotos, la familia elige las que quiere y paga: no se paga nada por
-  adelantado. El pago se hace dentro del mismo portal con Mercado Pago, Nave o transferencia
-  bancaria (en ese caso se manda el comprobante por email a fotos@retratoescolar.com.ar).
+- Hay dos formas de comprar, las dos dentro del portal ("Acceder a las Fotos"):
+  1) Cuando las fotos ya están online: la familia elige las 3 fotos, el kit y paga.
+  2) Pago anticipado ("Reservá tu kit ahora"): mientras las fotos todavía no están, puede elegir
+     el kit de cada hijo y pagarlo ya. Cuando se suben las fotos entra, elige las 3 y toca
+     "Confirmar mis fotos", sin volver a pagar; ahí le llega la descarga en alta resolución.
+  No es obligatorio pagar por adelantado: la familia elige la opción que prefiera.
+- Medios de pago: Mercado Pago, Nave o transferencia bancaria (en ese caso se manda el
+  comprobante por email a fotos@retratoescolar.com.ar indicando el número de pedido).
 
 Tu tarea: redactar una respuesta breve, cálida y clara en español rioplatense (tratamiento
 "vos"), para la consulta de una familia que llegó por el formulario web. Contestá solo lo que
@@ -5413,7 +5418,7 @@ async function avisarFotosDisponiblesASeccion(supabase: SupabaseClient, seccion:
       .range(desde, hasta)
   );
 
-  const destinatarios = new Map<string, { id: string; email: string; tutor: string; alumno: string; colegio: string }>();
+  const destinatarios = new Map<string, { id: string; email: string; tutor: string; alumno: string; colegio: string; reservaPagada?: boolean }>();
   for (const inscripcion of inscripciones || []) {
     const alumnos = [
       { nombre: inscripcion.alumno_nombre, grado: inscripcion.grado, turno: inscripcion.turno, division: inscripcion.division },
@@ -5440,18 +5445,44 @@ async function avisarFotosDisponiblesASeccion(supabase: SupabaseClient, seccion:
     });
   }
 
+  // Pago anticipado: las familias que ya pagaron el kit de este curso reciben el aviso aunque el
+  // email de la reserva no coincida con el de la inscripción, y con el texto "ya está pago, sólo
+  // falta elegir" (si no, parece que tienen que volver a comprar).
+  const { data: reservasPagadas, error: errorReservas } = await supabase
+    .from('pedidos')
+    .select('id, alumno_nombre, colegio_nombre, familias(nombre, email)')
+    .eq('colegio_id', seccion.colegioId)
+    .eq('curso_codigo', seccion.codigoCurso)
+    .eq('estado', 'pagado')
+    .eq('seleccion_pendiente', true);
+  if (errorReservas) console.error('[fotos] No se pudieron leer las reservas pagadas del curso:', errorReservas);
+  for (const reserva of reservasPagadas || []) {
+    const familia: any = Array.isArray((reserva as any).familias) ? (reserva as any).familias[0] : (reserva as any).familias;
+    const email = String(familia?.email || '').trim().toLowerCase();
+    if (!email.includes('@')) continue;
+    const previo = destinatarios.get(email);
+    destinatarios.set(email, {
+      id: previo?.id || `reserva-${reserva.id}`,
+      email,
+      tutor: previo?.tutor || familia?.nombre || 'Familia',
+      alumno: reserva.alumno_nombre || previo?.alumno || 'el alumno/a',
+      colegio: previo?.colegio || reserva.colegio_nombre || 'la institución',
+      reservaPagada: true,
+    });
+  }
+
   // Auditoría 2026-09-23 (bug real): antes se mandaban TODOS los avisos a la vez con
   // Promise.allSettled + emails.send — Resend limita a ~2 pedidos por segundo, así que en un curso
   // con más de un par de familias casi todos los avisos volvían con error 429 (rate limit) y esas
   // familias nunca se enteraban de que sus fotos estaban online. Ahora se usa la API de lotes de
   // Resend (hasta 100 correos por pedido), de a un lote por vez.
   const lista = Array.from(destinatarios.values());
-  const armarCorreo = (destinatario: { email: string; tutor: string; alumno: string; colegio: string }) => ({
+  const armarCorreo = (destinatario: { email: string; tutor: string; alumno: string; colegio: string; reservaPagada?: boolean }) => ({
     from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
     replyTo: resendReplyTo,
     to: [destinatario.email],
     subject: `Las fotos de ${destinatario.alumno} ya están online`,
-    html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">¡Las fotos ya están online!</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(destinatario.tutor)}</strong>,</p><p style="line-height:1.6">Las fotografías de <strong>${escapeHtml(destinatario.alumno)}</strong>, de ${escapeHtml(seccion.grado)} "${escapeHtml(seccion.division)}" · Turno ${escapeHtml(seccion.turno)}, ya están disponibles para ver y elegir.</p><div style="margin:24px 0;text-align:center"><a href="https://retratoescolar.com.ar" style="display:inline-block;background:#fbbf24;color:#0f172a;text-decoration:none;font-weight:800;padding:13px 22px;border-radius:10px">Ver mis fotos</a></div><p style="font-size:12px;color:#64748b">Ingresá con el mismo código de acceso que recibiste al aprobarse tu inscripción en ${escapeHtml(destinatario.colegio)}.</p></div></div></body></html>`,
+    html: `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">¡Las fotos ya están online!</h1></div><div style="padding:28px 24px"><p>Hola <strong>${escapeHtml(destinatario.tutor)}</strong>,</p><p style="line-height:1.6">Las fotografías de <strong>${escapeHtml(destinatario.alumno)}</strong>, de ${escapeHtml(seccion.grado)} "${escapeHtml(seccion.division)}" · Turno ${escapeHtml(seccion.turno)}, ya están disponibles para ver y elegir.</p>${destinatario.reservaPagada ? '<p style="line-height:1.6;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;color:#065f46"><strong>Tu kit ya está pago</strong>: entrá, elegí tus 3 fotos favoritas y tocá <strong>"Confirmar mis fotos"</strong>. No tenés que volver a pagar; apenas las confirmes te llega la descarga en alta resolución.</p>' : ''}<div style="margin:24px 0;text-align:center"><a href="https://retratoescolar.com.ar" style="display:inline-block;background:#fbbf24;color:#0f172a;text-decoration:none;font-weight:800;padding:13px 22px;border-radius:10px">${destinatario.reservaPagada ? 'Elegir mis fotos' : 'Ver mis fotos'}</a></div><p style="font-size:12px;color:#64748b">Ingresá con el mismo código de acceso que recibiste al aprobarse tu inscripción en ${escapeHtml(destinatario.colegio)}.</p></div></div></body></html>`,
   });
 
   let enviados = 0;
@@ -6168,6 +6199,7 @@ async function enviarCorreoCodigoAcceso(datos: DatosCorreoCodigoAcceso) {
         <li>Ver las galerías individuales y grupales de todos sus hijos sin usar códigos diferentes</li>
         <li>Seleccionar las fotos favoritas y armar un pedido consolidado en un solo pago</li>
       </ol>
+      <p style="font-size: 13px; line-height: 1.6; color: #334155;"><strong>¿Preferís dejarlo pago?</strong> Si todavía no están las fotos, al ingresar podés reservar el kit y pagarlo por adelantado; cuando estén, elegís las fotos sin volver a pagar.</p>
       <!-- Auditoría 2026-09-22 (pedido de Pablo): este código lo comparte todo el curso, así que
            además de él hace falta escribir el nombre y DNI del tutor para que el sitio identifique
            a la familia exacta — se lo aclaramos acá para que no se sorprendan al entrar. -->
@@ -7094,6 +7126,24 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 
       resueltos.push({ seccion, colegio, alumnoNombre, kitId, cursoCodigo });
     }
 
+    // Si la familia había empezado una reserva y no la pagó (cerró Mercado Pago, cambió de medio,
+    // etc.), esa reserva vieja se anula: queda sólo la nueva y el panel no se llena de pendientes.
+    for (const r of resueltos) {
+      const { data: viejas } = await supabase
+        .from('pedidos')
+        .select('id, alumno_nombre')
+        .eq('colegio_id', r.colegio.id)
+        .eq('curso_codigo', r.cursoCodigo)
+        .eq('seleccion_pendiente', true)
+        .eq('estado', 'pendiente_pago');
+      const ids = (viejas || [])
+        .filter((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === normalizarNombrePorPalabras(r.alumnoNombre))
+        .map((p: any) => p.id);
+      if (ids.length > 0) {
+        await supabase.from('pedidos').update({ estado: 'cancelado', updated_at: new Date().toISOString() }).in('id', ids);
+      }
+    }
+
     const { data: famData } = await supabase
       .from('familias')
       .insert({
@@ -7169,7 +7219,7 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
     const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado')
+      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, metodo_pago')
       .eq('colegio_id', seccion.colegioId)
       .eq('curso_codigo', cursoCodigo)
       .eq('seleccion_pendiente', true)
@@ -7190,6 +7240,7 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
         kitNombre: elegida.kit_nombre,
         total: Number(elegida.total) || 0,
         pagada: elegida.estado === 'pagado',
+        metodoPago: elegida.metodo_pago || 'mercadopago',
       },
     });
   } catch (err: any) {
@@ -8294,7 +8345,7 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10
     const nombreBuscado = normalizarNombrePorPalabras(alumnoNombre);
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, created_at')
+      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, created_at, seleccion_pendiente')
       .eq('curso_codigo', cursoCodigo)
       .eq('colegio_id', colegioId)
       .neq('estado', 'cancelado')
@@ -8302,7 +8353,9 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10
       .limit(50);
     if (error) throw error;
 
-    const encontrado = (data || []).find((p) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreBuscado);
+    // Si hay un kit pagado por adelantado esperando fotos, ése es el que importa mostrar.
+    const propios = (data || []).filter((p) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreBuscado);
+    const encontrado = propios.find((p: any) => p.seleccion_pendiente && p.estado === 'pagado') || propios[0];
     if (!encontrado) {
       return res.json({ success: true, existe: false });
     }
@@ -8317,6 +8370,7 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10
         total: Number(encontrado.total) || 0,
         estado: encontrado.estado,
         fecha: encontrado.created_at,
+        reservaPendiente: Boolean((encontrado as any).seleccion_pendiente) && encontrado.estado === 'pagado',
       },
     });
   } catch (err: any) {
@@ -8364,7 +8418,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 10, 30 * 60 *
       return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
     }
 
-    const columnas = 'id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, familias(nombre, whatsapp)';
+    const columnas = 'id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, seleccion_pendiente, familias(nombre, whatsapp)';
     let fila: any = null;
 
     if (FORMATO_PEDIDO_FRIENDLY_ID.test(query)) {
@@ -8387,7 +8441,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 10, 30 * 60 *
     if (!fila && soloDigitos.length >= 8) {
       const { data, error } = await supabase
         .from('pedidos')
-        .select('id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, familias!inner(nombre, whatsapp)')
+        .select('id, pedido_friendly_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, link_descarga_hd, seleccion_pendiente, familias!inner(nombre, whatsapp)')
         .ilike('familias.whatsapp', `%${soloDigitos}%`)
         .order('created_at', { ascending: false })
         .limit(1);
@@ -8426,6 +8480,7 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 10, 30 * 60 *
         fecha: fila.created_at,
         estado: fila.estado,
         linkDescargaHD: linkDescargaHD || null,
+        reservaPendiente: Boolean(fila.seleccion_pendiente),
       },
     });
   } catch (err: any) {

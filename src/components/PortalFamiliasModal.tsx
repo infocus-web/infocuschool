@@ -788,6 +788,24 @@ export default function PortalFamiliasModal({
     };
   }, [codigoSeccionValidado, nombreAlumno]);
 
+  // Kits ya pagados por adelantado de CADA hermano: esos chicos no entran al carrito de compra
+  // normal (sería cobrarles dos veces); sus fotos se confirman aparte con "Confirmar mis fotos".
+  const [reservasPorHijo, setReservasPorHijo] = useState<Record<string, boolean>>({});
+  const claveHijosReserva = hijosFamilia.map((h) => `${h.id}|${h.codigoSeccion}|${h.nombreCompleto}`).join(';');
+  useEffect(() => {
+    let cancelado = false;
+    Promise.all(
+      hijosFamilia.map(async (h) => [h.id, Boolean((await obtenerReservaPendiente(h.codigoSeccion, h.nombreCompleto))?.pagada)] as const)
+    ).then((pares) => {
+      if (!cancelado) setReservasPorHijo(Object.fromEntries(pares));
+    });
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claveHijosReserva]);
+  const tieneKitPagadoPorAdelantado = (hijoId: string) => Boolean(reservasPorHijo[hijoId]);
+
   const confirmarFotosDeReserva = async () => {
     if (!reservaActiva || !codigoSeccionValidado) return;
     if (!fotoGrupalSeleccionadaValida || !fotoIndividualSeleccionadaValida || !fotoDocenteSeleccionadaValida) {
@@ -803,6 +821,7 @@ export default function PortalFamiliasModal({
     setConfirmandoReserva(false);
     if (resultado.success) {
       setReservaActiva(null);
+      setReservasPorHijo((prev) => ({ ...prev, [hijoSeleccionadoId]: false }));
       setResultadoReserva({
         ok: true,
         texto: `¡Listo! Guardamos tus fotos del pedido ${resultado.pedidoFriendlyId || reservaActiva.pedidoFriendlyId}. En unos minutos te llega por email la descarga en alta resolución.`,
@@ -1253,7 +1272,7 @@ export default function PortalFamiliasModal({
   // seleccionarHijo) además del hijo activo ahora mismo — es lo que decide si el Paso 4 muestra
   // un resumen de un solo pedido (de siempre) o de varios pedidos con un pago combinado.
   const otrosHijosEnCarrito = valoresDelCarrito(carritoHijos).filter(
-    (c) => c.hijoId !== hijoSeleccionadoId && c.completo
+    (c) => c.hijoId !== hijoSeleccionadoId && c.completo && !tieneKitPagadoPorAdelantado(c.hijoId)
   );
   const totalCombinadoCarrito = total + otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0);
 
@@ -1415,6 +1434,7 @@ export default function PortalFamiliasModal({
     // entrada qué falta, en vez de sólo leer un mensaje de error) y no se avanza.
     const hermanoIncompleto = hijosFamilia.find((h) => {
       if (h.id === hijoSeleccionadoId) return false; // el activo ya se validó arriba
+      if (tieneKitPagadoPorAdelantado(h.id)) return false; // ya pagado: sus fotos se confirman aparte
       return !carritoHijosRef.current[h.id]?.completo;
     });
     if (hermanoIncompleto) {
@@ -1531,7 +1551,7 @@ export default function PortalFamiliasModal({
     // en total se registran todos juntos y se cobran en un solo checkout combinado; si hay uno
     // solo, sigue exactamente el camino de siempre (una fila, un pago) sin ningún cambio.
     const otrosHijosCarrito = valoresDelCarrito(carritoHijos).filter(
-      (c) => c.hijoId !== hijoSeleccionadoId && c.completo
+      (c) => c.hijoId !== hijoSeleccionadoId && c.completo && !tieneKitPagadoPorAdelantado(c.hijoId)
     );
 
     if (otrosHijosCarrito.length > 0) {
@@ -1899,6 +1919,13 @@ export default function PortalFamiliasModal({
           entregado: { texto: 'Entregado en la Institución', paso: 4, descarga: true },
           cancelado: { texto: 'Pedido Cancelado', paso: 0, descarga: false },
         }[pedidoServidor.estado] || { texto: 'Pendiente de Acreditación del Pago', paso: 1, descarga: false };
+        // Pago anticipado ya pagado: todavía no hay fotos elegidas, así que ni laboratorio ni descarga.
+        const reservaPagada = Boolean(pedidoServidor.reservaPendiente) && pedidoServidor.estado === 'pagado';
+        if (reservaPagada) {
+          infoEstado.texto = 'Kit pagado · falta elegir tus fotos';
+          infoEstado.paso = 2;
+          infoEstado.descarga = false;
+        }
 
         setSearchedOrder({
           id: pedidoServidor.id,
@@ -1914,6 +1941,8 @@ export default function PortalFamiliasModal({
           descripcionEstado:
             pedidoServidor.estado === 'cancelado'
               ? 'Este pedido fue cancelado. Si creés que es un error, escribinos por email o desde el formulario de Consultas del sitio.'
+              : reservaPagada
+              ? 'Pagaste el kit por adelantado. Cuando estén las fotos de tu curso, entrá a "Acceder a las Fotos", elegí las 3 y tocá "Confirmar mis fotos" — no tenés que volver a pagar. Ahí te llega la descarga en alta resolución.'
               : pedidoServidor.estado === 'pendiente_pago'
               ? 'Todavía estamos esperando la acreditación de tu pago (por ejemplo, la confirmación de la transferencia bancaria). En cuanto se acredite, tus fotos pasan a laboratorio para el revelado químico profesional en papel satinado 260g y corte computarizado.'
               : 'Tus fotos se encuentran en proceso de revelado químico profesional en papel satinado 260g y corte computarizado.',
@@ -2729,7 +2758,29 @@ export default function PortalFamiliasModal({
                       automáticamente por el useEffect de arriba), se muestra este cartel en vez
                       del botón normal — avisa que ya hay un pedido para este alumno/a y deja elegir entre verlo o
                       confirmar que se quiere hacer otro. */}
-                  {pedidoExistente ? (
+                  {pedidoExistente?.reservaPendiente ? (
+                    <div className="p-4 sm:p-5 bg-emerald-50 border-2 border-emerald-300 rounded-xl text-left space-y-3 animate-in fade-in duration-150">
+                      <div className="flex items-start gap-2.5">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-extrabold text-emerald-950">
+                            {nombreAlumno} ya tiene su {pedidoExistente.kit} pagado
+                          </p>
+                          <p className="text-[11px] text-emerald-800 mt-0.5">
+                            Pedido <strong>{pedidoExistente.id}</strong>. Entrá a la galería, elegí las 3 fotos y tocá "Confirmar mis fotos" — no tenés que volver a pagar.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setStep(2)}
+                        className="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <span>Elegir mis fotos</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : pedidoExistente ? (
                     <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-xl text-left space-y-3 animate-in fade-in duration-150">
                       <div className="flex items-start gap-2.5">
                         <PackageCheck className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />

@@ -169,6 +169,11 @@ export const PREGUNTAS_FRECUENTES = [
       'Podés abonar 100% online y seguro mediante Mercado Pago (tarjeta de débito, crédito o saldo en cuenta), Nave (tarjetas y QR de Banco Galicia) o por Transferencia Bancaria directa con comprobante. No se maneja efectivo ni sobres en la escuela.',
   },
   {
+    pregunta: '¿Puedo pagar el kit por adelantado, antes de que estén las fotos?',
+    respuesta:
+      'Sí. Si las fotos del curso de tu hijo/a todavía no están publicadas, al entrar en "Acceder a las Fotos" vas a ver la opción "Reservá tu kit ahora": elegís el kit, lo pagás con Mercado Pago, Nave o transferencia y listo. Cuando se suban las fotos te avisamos, entrás de nuevo, elegís tus 3 fotos favoritas y tocás "Confirmar mis fotos", sin volver a pagar. Apenas las confirmás te llega la descarga en alta resolución.',
+  },
+  {
     pregunta: '¿Qué pasa si tengo más de un hijo en el colegio? ¿Tengo que hacer todo doble?',
     respuesta:
       '¡No, para nada! Ahora funciona con 1 solo Código Familiar para todos tus hijos. Al anotarte en la web, cargás a tu primer hijo/a y hacés clic en "Agregar Hermano/a" para sumar a los demás (sin importar si van a distintas salas, turnos o grados). El sistema te entrega un único código familiar (ej: FAM-4821) que te llega por email. Al entrar a la web con ese código podés ver las fotos de todos tus hijos en la misma pantalla y alternar entre ellos con un solo toque. Además, podés pedir la toma de foto de hermanos juntos.',
