@@ -4667,7 +4667,7 @@ app.get('/api/admin/consultas-familias', requireAdminAuth, async (req: Request, 
     const supabase = getServerSupabase();
     if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
     const estado = String(req.query.estado || 'nueva');
-    const estadosValidos = ['nueva', 'en_proceso', 'resuelta', 'todas'];
+    const estadosValidos = ['nueva', 'en_proceso', 'resuelta', 'archivada', 'todas'];
     if (!estadosValidos.includes(estado)) return res.status(400).json({ success: false, error: 'Estado inválido.' });
     let query = supabase.from('consultas_familias').select('*, consultas_familias_mensajes(*)').order('created_at', { ascending: false }).limit(500);
     if (estado !== 'todas') query = query.eq('estado', estado);
@@ -4682,7 +4682,7 @@ app.get('/api/admin/consultas-familias', requireAdminAuth, async (req: Request, 
 app.patch('/api/admin/consultas-familias/:id/estado', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const estado = String(req.body?.estado || '');
-    if (!['nueva', 'en_proceso', 'resuelta'].includes(estado)) return res.status(400).json({ success: false, error: 'Estado inválido.' });
+    if (!['nueva', 'en_proceso', 'resuelta', 'archivada'].includes(estado)) return res.status(400).json({ success: false, error: 'Estado inválido.' });
     const supabase = getServerSupabase();
     if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
     const { data, error } = await supabase.from('consultas_familias').update({ estado, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('id').single();

@@ -1,6 +1,6 @@
 import { fetchAdminAutenticado } from './adminAuthService';
 
-export type EstadoConsultaFamilia = 'nueva' | 'en_proceso' | 'resuelta';
+export type EstadoConsultaFamilia = 'nueva' | 'en_proceso' | 'resuelta' | 'archivada';
 
 export interface ConsultaFamilia {
   id: string;
@@ -98,6 +98,14 @@ export async function actualizarEstadoConsultaFamiliaAdmin(id: string, estado: E
   });
   const data = await response.json();
   if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo actualizar la consulta.');
+}
+
+export async function eliminarConsultaFamiliaAdmin(id: string) {
+  const response = await fetchAdminAutenticado(`/api/admin/consultas-familias/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  const data = await response.json();
+  if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo borrar la consulta.');
 }
 
 export async function responderConsultaFamiliaAdmin(id: string, mensaje: string) {
