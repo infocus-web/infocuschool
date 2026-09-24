@@ -39,27 +39,37 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
     });
     if (evento.type !== 'email.received') return res.json({ success: true });
 
-    const { data: email, error: emailError } = await resend.emails.receiving.get(evento.data.email_id);
-    if (emailError || !email) throw emailError || new Error('No se pudo obtener el correo recibido.');
+    // Auditoría 2026-09-24 (bug real en producción): si Resend no devolvía el texto del correo
+    // (respondió 404 "Inbound email not found" al reenviar un evento), se tiraba un error y la
+    // respuesta de la familia se perdía por completo. El evento ya trae remitente, destinatarios
+    // y asunto: con eso se registra igual la respuesta en la consulta, con un aviso para leer el
+    // texto en el panel de Resend.
+    const datosEvento: any = evento.data || {};
+    const { data: email, error: emailError } = await resend.emails.receiving.get(datosEvento.email_id);
+    if (emailError || !email) {
+      console.warn('[Resend Inbound] No se pudo descargar el texto del correo recibido:', emailError);
+    }
     const inboundDomain = (process.env.RESEND_INBOUND_DOMAIN || 'respuestas.retratoescolar.com.ar').toLowerCase();
-    const destinatarios = Array.isArray(email.to) ? email.to : [];
-    const direccionDestino = destinatarios.find((destino) => destino.toLowerCase().includes(`@${inboundDomain}`));
+    const destinatarios: string[] = Array.isArray(email?.to) ? email.to : Array.isArray(datosEvento.to) ? datosEvento.to : [];
+    const direccionDestino = destinatarios.find((destino) => String(destino).toLowerCase().includes(`@${inboundDomain}`));
     const consultaId = direccionDestino?.match(/consulta-([0-9a-f-]{36})@/i)?.[1];
     if (!consultaId) return res.json({ success: true, ignored: true });
 
-    const contenido = String(email.text || '').trim() || String(email.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    const contenido = email
+      ? String(email.text || '').trim() || String(email.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+      : '(No se pudo descargar el texto de esta respuesta. Leela en resend.com → Emails → Receiving.)';
     if (!contenido) return res.json({ success: true, ignored: true });
     const supabase = getServerSupabase();
     if (!supabase) throw new Error('Supabase no configurado.');
     const { error: insertError } = await supabase.from('consultas_familias_mensajes').upsert({
       consulta_id: consultaId,
       direccion: 'entrante',
-      remitente: email.from,
+      remitente: email?.from || datosEvento.from || 'desconocido',
       destinatario: direccionDestino,
-      asunto: email.subject || null,
+      asunto: email?.subject || datosEvento.subject || null,
       contenido: contenido.slice(0, 10000),
-      resend_email_id: email.id,
-      created_at: email.created_at,
+      resend_email_id: email?.id || datosEvento.email_id,
+      created_at: email?.created_at || datosEvento.created_at || new Date().toISOString(),
     }, { onConflict: 'resend_email_id', ignoreDuplicates: true });
     if (insertError) throw insertError;
     await supabase.from('consultas_familias').update({ estado: 'nueva', updated_at: new Date().toISOString() }).eq('id', consultaId);
