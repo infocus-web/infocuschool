@@ -35,6 +35,7 @@ import {
 import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { irAConsultasConDatos } from '../utils/consultaPrefill';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 // Deja sólo los dígitos del DNI (acepta que la familia lo escriba con puntos, ej: "38.456.789")
 // y valida que tenga un largo razonable (los DNI argentinos tienen 7 u 8 dígitos).
@@ -80,9 +81,13 @@ export default function ModalInscripcionFamilia({
   const [alumnoNombre, setAlumnoNombre] = useState('');
   const [alumnoApellido, setAlumnoApellido] = useState('');
   const [alumnoDni, setAlumnoDni] = useState('');
-  const [turno, setTurno] = useState('Tarde');
-  const [grado, setGrado] = useState('Sala 5 años');
-  const [division, setDivision] = useState('A');
+  // Auditoría 2026-09-24 (bug real en datos de producción): el curso arrancaba preseleccionado
+  // ("Tarde" / "Sala 5 años" / "A") y muchas familias lo enviaban sin cambiarlo — 1 de cada 3
+  // inscripciones que figuran en la nómina quedó en una división que no era la suya (y con el
+  // código de acceso de OTRO curso). Ahora arranca vacío y hay que elegirlo a propósito.
+  const [turno, setTurno] = useState('');
+  const [grado, setGrado] = useState('');
+  const [division, setDivision] = useState('');
   const { colegios } = useColegiosLista();
   const { config: configWhatsApp } = useWhatsAppConfig();
   const [colegioId, setColegioId] = useState(() => colegios[0]?.id || 'col-divino-pastor-2026');
@@ -111,9 +116,9 @@ export default function ModalInscripcionFamilia({
         alumnoNombre: '',
         alumnoApellido: alumnoApellido.trim() || '',
         alumnoDni: '',
-        turno: turno || turnosDisponibles[0] || 'Mañana',
-        grado: gradosDisponibles[0] || 'Sala 4 años',
-        division: divisionesDisponibles[0] || 'A'
+        turno: '',
+        grado: '',
+        division: ''
       }
     ]);
   };
@@ -156,35 +161,26 @@ export default function ModalInscripcionFamilia({
     }
   }, [colegios, colegioId]);
 
+  // Si el valor elegido deja de existir (se cambió de colegio), se vacía para que la familia lo
+  // vuelva a elegir — antes se reemplazaba en silencio por el primero de la lista.
   React.useEffect(() => {
-    if (!division || !divisionesDisponibles.includes(division)) {
-      setDivision(divisionesDisponibles[0] || 'A');
-    }
+    if (division && !divisionesDisponibles.includes(division)) setDivision('');
   }, [divisionesDisponibles, division]);
 
   React.useEffect(() => {
-    if (!turno || !turnosDisponibles.includes(turno)) {
-      setTurno(turnosDisponibles[0] || 'Mañana');
-    }
+    if (turno && !turnosDisponibles.includes(turno)) setTurno('');
   }, [turnosDisponibles, turno]);
 
   React.useEffect(() => {
-    if (!grado || !gradosDisponibles.includes(grado)) {
-      setGrado(gradosDisponibles[0] || 'Sala 3 años');
-    }
+    if (grado && !gradosDisponibles.includes(grado)) setGrado('');
   }, [gradosDisponibles, grado]);
 
+  // Auditoría 2026-09-24: antes, elegir el turno cambiaba sola la división ("Mañana" → A, "Tarde"
+  // → B, "Jornada" → "Jornada Extendida"). En la nómina real los chicos de Jornada Extendida son de
+  // la división C, y los de la tarde no siempre de la B: la familia terminaba con la división
+  // equivocada sin darse cuenta. El turno ya no toca la división.
   const handleCambioTurno = (nuevoTurno: string) => {
     setTurno(nuevoTurno);
-    if (nuevoTurno === 'Mañana') {
-      setDivision('A');
-    } else if (nuevoTurno === 'Tarde') {
-      if (division !== 'B' && division !== 'C') {
-        setDivision('B');
-      }
-    } else if (nuevoTurno.toLowerCase().includes('jornada') || nuevoTurno.toLowerCase().includes('extendida')) {
-      setDivision('Jornada Extendida');
-    }
   };
 
   const [mensajeCopiado, setMensajeCopiado] = useState(false);
@@ -240,9 +236,9 @@ export default function ModalInscripcionFamilia({
     setAlumnoNombre(activa.alumnoNombre || '');
     setAlumnoApellido(activa.alumnoApellido || '');
     setAlumnoDni(activa.alumnoDni || '');
-    setTurno(activa.turno || 'Tarde');
-    setGrado(activa.grado || 'Sala 5 años');
-    setDivision(activa.division || 'A');
+    setTurno(activa.turno || '');
+    setGrado(activa.grado || '');
+    setDivision(activa.division || '');
     setColegioId(activa.colegioId || colegios[0]?.id || 'col-divino-pastor-2026');
     setHermanos(
       (activa.hermanos || []).map((h) => ({
@@ -294,6 +290,15 @@ export default function ModalInscripcionFamilia({
     }
     if (!dniEsValido(alumnoDni)) {
       setFormError('Por favor ingresá un número de DNI válido del alumno/a (sin puntos).');
+      return;
+    }
+    if (!turno || !grado || !division) {
+      setFormError('Elegí el turno, el grado/sala y la división de tu hijo/a. Revisalo bien: el código que vas a recibir es el de ese curso.');
+      return;
+    }
+    const hermanoSinCurso = hermanos.find((h) => h.alumnoNombre.trim() && (!h.turno || !h.grado || !h.division));
+    if (hermanoSinCurso) {
+      setFormError(`Elegí el turno, el grado/sala y la división de ${hermanoSinCurso.alumnoNombre}.`);
       return;
     }
     const hermanoConDniInvalido = hermanos.find((h) => h.alumnoNombre.trim() && !dniEsValido(h.alumnoDni));
@@ -593,9 +598,16 @@ export default function ModalInscripcionFamilia({
                           type="button"
                           onClick={() => {
                             const code = familiaCreada.codigoAsignado || familiaCreada.codigoFamiliar;
-                            navigator.clipboard.writeText(code);
-                            setMensajeCopiado(true);
-                            setTimeout(() => setMensajeCopiado(false), 2000);
+                            // Sólo se muestra "Copiado" si de verdad se copió (en navegadores de
+                            // apps como Instagram la API del portapapeles no existe).
+                            void copiarAlPortapapeles(code).then((ok) => {
+                              if (!ok) {
+                                window.prompt('Copiá tu código:', code);
+                                return;
+                              }
+                              setMensajeCopiado(true);
+                              setTimeout(() => setMensajeCopiado(false), 2000);
+                            });
                           }}
                           className="px-3.5 py-2.5 bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
                         >
@@ -962,6 +974,7 @@ export default function ModalInscripcionFamilia({
                         onChange={(e) => handleCambioTurno(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
                       >
+                        <option value="" disabled>Elegí el turno</option>
                         {turnosDisponibles.map((t) => (
                           <option key={t} value={t}>{t}</option>
                         ))}
@@ -977,6 +990,7 @@ export default function ModalInscripcionFamilia({
                         onChange={(e) => setGrado(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium text-slate-800"
                       >
+                        <option value="" disabled>Elegí el grado o sala</option>
                         {gradosDisponibles.map((g) => (
                           <option key={g} value={g}>{g}</option>
                         ))}
@@ -992,6 +1006,7 @@ export default function ModalInscripcionFamilia({
                         onChange={(e) => setDivision(e.target.value)}
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold text-slate-800"
                       >
+                        <option value="" disabled>Elegí la división</option>
                         {divisionesDisponibles.map((div) => (
                           <option key={div} value={div}>
                             {div.toLowerCase().includes('extendida') || div.toLowerCase().includes('jornada')
@@ -1123,6 +1138,7 @@ export default function ModalInscripcionFamilia({
                               }
                               className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                             >
+                              <option value="" disabled>Elegí</option>
                               {turnosDisponibles.map((t) => (
                                 <option key={t} value={t}>{t}</option>
                               ))}
@@ -1139,6 +1155,7 @@ export default function ModalInscripcionFamilia({
                               }
                               className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400"
                             >
+                              <option value="" disabled>Elegí</option>
                               {gradosDisponibles.map((g) => (
                                 <option key={g} value={g}>{g}</option>
                               ))}
@@ -1155,6 +1172,7 @@ export default function ModalInscripcionFamilia({
                               }
                               className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold"
                             >
+                              <option value="" disabled>Elegí</option>
                               {divisionesDisponibles.map((div) => (
                                 <option key={div} value={div}>
                                   {div.toLowerCase().includes('extendida') || div.toLowerCase().includes('jornada')

@@ -107,7 +107,7 @@ export default function Header({
             {onOpenInscripcion && (
               <button
                 id="btn-inscribirme-header"
-                onClick={onOpenInscripcion}
+                onClick={() => onOpenInscripcion()}
                 className="px-4 py-2.5 text-xs font-extrabold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl shadow-xs shadow-amber-400/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-98"
               >
                 <UserPlus className="w-4 h-4" />
@@ -131,7 +131,7 @@ export default function Header({
             {onOpenInscripcion && (
               <button
                 id="btn-inscribirme-mobile"
-                onClick={onOpenInscripcion}
+                onClick={() => onOpenInscripcion()}
                 className="p-2 text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-lg shadow-xs cursor-pointer"
                 aria-label="Inscribirme"
                 title="Inscribirme"

@@ -165,7 +165,7 @@ export async function extraerResumenKitsDesdeSupabase(): Promise<{
           fecha: p.created_at || new Date().toISOString(),
           estado: p.estado || 'pendiente_pago',
           total: monto,
-          carpetasImpresas: p.carpetas_impresas || 1,
+          carpetasImpresas: p.carpetas_impresas ?? 1,
         });
       }
     }

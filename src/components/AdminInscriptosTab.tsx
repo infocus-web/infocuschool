@@ -28,6 +28,7 @@ import {
   prepararEmailAprobacion,
   enviarEmailAprobacionAdmin
 } from '../services/inscripcionesService';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 interface AdminInscriptosTabProps {
   onProbarCodigo?: (codigo: string) => void;
@@ -284,33 +285,52 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
 
   const handleAprobarTodosLosPendientes = async () => {
     if (pendientes.length === 0) return;
+    // Auditoría 2026-09-24: aprobaba (y mandaba mails) a TODAS las pendientes sin pedir
+    // confirmación, sin pausa entre envíos (el proveedor de correo limita la cantidad por segundo)
+    // y siempre informaba "¡Todas aprobadas!" aunque alguna fallara.
+    const confirmado = window.confirm(
+      `¿Aprobar las ${pendientes.length} inscripciones pendientes y mandarle a cada familia el email con su código?\n\nRevisá antes que el curso (grado, turno y división) de cada una sea el correcto: el código que reciben es el de ese curso.`
+    );
+    if (!confirmado) return;
     setProcesandoId('__todos__');
-    for (const item of pendientes) {
+    const lista = [...pendientes];
+    let aprobadas = 0;
+    let emailsOk = 0;
+    const fallidas: string[] = [];
+    for (let i = 0; i < lista.length; i++) {
+      const item = lista[i];
       const codigoElegido =
         codigosEditables[item.id] || item.codigoAsignado || sugerirCodigoSeguro(item.id);
       const resultado = await aprobarInscripcionAdmin(item.id, codigoElegido);
       // Auditoría 2026-09-23 (pedido de Pablo: "son muchísimos! que están pendientes... enviar
-      // uno por uno? es inviable!"): se rastreó la causa a este mismo botón. Aprobar UNA
-      // inscripción a mano (handleAprobar, más arriba) manda el email con el código enseguida
-      // después de aprobar — pero este botón de aprobación MASIVA nunca lo hacía, sólo cambiaba
-      // el estado a "aceptado". Cada tanda de aprobaciones masivas dejaba a TODAS esas familias
-      // con el email en "Pendiente" para siempre, acumulándose hasta que alguien las mandara a
-      // mano una por una. Ahora también manda el email acá (con la misma pausa entre envíos que
-      // el botón de envío masivo, para no saturar el proveedor de correo), igual que hace la
-      // aprobación individual, para que una futura tanda masiva no vuelva a generar este mismo
-      // backlog.
+      // uno por uno? es inviable!"): la aprobación masiva nunca mandaba el email con el código —
+      // cada tanda dejaba a todas esas familias con el email en "Pendiente". Ahora lo manda acá.
       if (resultado.success && resultado.familia) {
-        await enviarEmailAprobacionAdmin(resultado.familia.id);
+        aprobadas++;
+        const envio = await enviarEmailAprobacionAdmin(resultado.familia.id);
+        if (envio.success) emailsOk++;
+        else fallidas.push(`${item.alumnoNombre} ${item.alumnoApellido} (aprobada, pero el email falló: ${envio.error || 'error desconocido'})`);
+      } else {
+        fallidas.push(`${item.alumnoNombre} ${item.alumnoApellido} (${resultado.error || 'no se pudo aprobar'})`);
       }
+      if (i < lista.length - 1) await new Promise((resolve) => setTimeout(resolve, 600));
     }
     setProcesandoId(null);
     await cargarInscripciones();
-    setToastNotificacion({
-      titulo: '¡Todas las solicitudes fueron aprobadas!',
-      mensaje: `Se asignaron los códigos y se mandó el email con el código de acceso a las ${pendientes.length} familias pendientes.`,
-      tipo: 'success'
-    });
-    setTimeout(() => setToastNotificacion(null), 5000);
+    setToastNotificacion(
+      fallidas.length === 0
+        ? {
+            titulo: '¡Todas las solicitudes fueron aprobadas!',
+            mensaje: `Se aprobaron ${aprobadas} inscripciones y se mandó el email con el código a las ${emailsOk} familias.`,
+            tipo: 'success'
+          }
+        : {
+            titulo: 'Aprobación masiva terminada con errores',
+            mensaje: `Aprobadas: ${aprobadas}. Emails enviados: ${emailsOk}. Con problemas: ${fallidas.join('; ')}`,
+            tipo: 'error'
+          }
+    );
+    setTimeout(() => setToastNotificacion(null), fallidas.length === 0 ? 5000 : 15000);
   };
 
   // Envía (o reintenta) el email con el código de acceso a TODAS las familias ya aprobadas que
@@ -917,7 +937,7 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard.writeText(detalleEnvioModal.codigo);
+                  void copiarAlPortapapeles(detalleEnvioModal.codigo);
                   setToastNotificacion({
                     titulo: 'Código copiado',
                     mensaje: `Código ${detalleEnvioModal.codigo} copiado al portapapeles.`,

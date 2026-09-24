@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useColegiosLista, obtenerTokensPadronAdmin, regenerarTokenPadronAdmin } from '../services/colegiosService';
 import { FilaPadron, obtenerPadronAdmin, eliminarPadronAdmin } from '../services/inscripcionesService';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 export default function AdminPadronTab() {
   const { colegios } = useColegiosLista();
@@ -65,7 +66,7 @@ export default function AdminPadronTab() {
     const link = construirLinkPadron(id);
     if (!link) return;
     try {
-      await navigator.clipboard.writeText(link);
+      if (!(await copiarAlPortapapeles(link))) throw new Error('No se pudo copiar');
       setCopiadoId(id);
       setTimeout(() => setCopiadoId((actual) => (actual === id ? null : actual)), 2000);
     } catch {

@@ -70,6 +70,7 @@ import AdminResumenKitsSection from './AdminResumenKitsSection';
 import { CircularImprimibleModal } from './CircularImprimibleModal';
 import { enviarFotosPorEmail } from '../services/emailService';
 import { Colegio, Foto } from '../types';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -425,7 +426,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   const handleAprobarPago = async (pedido: PedidoEscolarCompleto) => {
     const hermanosPendientes = pedido.grupoPagoId
       ? pedidosCompletos.filter(
-          (item) => item.grupoPagoId === pedido.grupoPagoId && item.id !== pedido.id && item.estadoPago === 'pendiente'
+          // "rechazado" también: un intento de pago con tarjeta que rebotó antes de pagar en efectivo.
+          (item) => item.grupoPagoId === pedido.grupoPagoId && item.id !== pedido.id && item.estadoPago !== 'aprobado'
         )
       : [];
     await aprobarPagoPedido(pedido);
@@ -675,7 +677,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   const [errorCodigos, setErrorCodigos] = useState<string | null>(null);
 
   const handleCopiarTexto = (texto: string, label: string) => {
-    navigator.clipboard.writeText(texto);
+    void copiarAlPortapapeles(texto);
     setCopiadoFeedback(label);
     setTimeout(() => setCopiadoFeedback(null), 2500);
   };
@@ -906,7 +908,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
 
   const handleCopiarPackCompletoWhatsApp = () => {
     const guiaTexto = generarGuiaWhatsAppColegioTexto(seccionesCodigosReales, codigosRealesMap, colegioCodigosNombre);
-    navigator.clipboard.writeText(guiaTexto);
+    void copiarAlPortapapeles(guiaTexto);
     setCopiadoFeedback('¡Pack completo de WhatsApp copiado al portapapeles para enviar a la Dirección!');
     setTimeout(() => setCopiadoFeedback(null), 3500);
   };
@@ -1296,7 +1298,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
     const link = construirLinkPadron(colegioId);
     if (!link) return;
     try {
-      await navigator.clipboard.writeText(link);
+      if (!(await copiarAlPortapapeles(link))) throw new Error('No se pudo copiar');
       setCopiadoPadronId(colegioId);
       setTimeout(() => setCopiadoPadronId((actual) => (actual === colegioId ? null : actual)), 2000);
     } catch {
@@ -1546,9 +1548,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
             {activeTab === 'laboratorio' && (
               <AdminLaboratorioTab
                 pedidos={pedidosCompletos}
-                onActualizarPedidos={(actualizados) => {
-                  setPedidosCompletos(actualizados);
-                  guardarPedidosEnStorage(actualizados);
+                onActualizarPedidos={(actualizar) => {
+                  // Forma funcional: la pestaña actualiza en bucle (ej. "Reintentar todos") y cada
+                  // vuelta tiene que partir del estado más reciente, no de una lista vieja.
+                  setPedidosCompletos((prev) => {
+                    const actualizados = actualizar(prev);
+                    guardarPedidosEnStorage(actualizados);
+                    return actualizados;
+                  });
                 }}
                 colegioNombre={colegiosList[0]?.nombre}
                 busquedaInicial={busquedaInicialLaboratorio}
@@ -2768,7 +2775,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                   <button
                     type="button"
                     onClick={() => {
-                      navigator.clipboard.writeText(mensajeWhatsAppModal.texto);
+                      void copiarAlPortapapeles(mensajeWhatsAppModal.texto);
                       setCopiadoFeedback('¡Mensaje para WhatsApp copiado al portapapeles!');
                       setTimeout(() => setCopiadoFeedback(null), 2500);
                       setMensajeWhatsAppModal(null);

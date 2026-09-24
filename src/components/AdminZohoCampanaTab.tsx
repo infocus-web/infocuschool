@@ -137,7 +137,7 @@ export default function AdminZohoCampanaTab() {
     }
     setEnviandoPrueba(true);
     const res = await mandarCorreoPruebaZoho({
-      destinatarioEjemplo: previewDestinatario || {},
+      destinatarioEjemplo: previewDestinatario || { email: '' },
       asunto,
       cuerpoHtml,
       remitente,

@@ -59,8 +59,8 @@ export interface PedidoEscolarCompleto {
   kitNombre: string;
   total: number;
   metodoPago: 'mercadopago' | 'transferencia' | 'efectivo' | 'nave';
-  estadoPago: 'aprobado' | 'pendiente';
-  estadoEntrega: 'en_espera' | 'en_laboratorio' | 'listo_retiro' | 'listo_descarga' | 'entregado';
+  estadoPago: 'aprobado' | 'pendiente' | 'rechazado';
+  estadoEntrega: 'en_espera' | 'en_laboratorio' | 'laboratorio_listo' | 'listo_retiro' | 'listo_descarga' | 'entregado';
   fotosSeleccionadas: {
     individualId: string;
     grupalId: string;
@@ -833,7 +833,8 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
   // de esta auditoría (portal de familias, seguimiento) — estado_lab es la fuente de verdad.
   let estadoPago: 'aprobado' | 'pendiente' = 'pendiente';
   let estadoEntrega: PedidoEscolarCompleto['estadoEntrega'] = 'en_espera';
-  if (fila.estado === 'entregado' || fila.estado_lab === 'entregado') {
+  // El pago lo define sólo `estado` (un pedido retirado sin pagar no se muestra como "Aprobado").
+  if (fila.estado === 'entregado' || (fila.estado_lab === 'entregado' && fila.estado === 'pagado')) {
     estadoPago = 'aprobado';
     estadoEntrega = 'entregado';
   } else if (fila.estado === 'pagado') {
@@ -885,15 +886,15 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
  * panel. Devuelve [] ante cualquier falla de red/servidor en vez de tirar, para que el panel
  * pueda seguir mostrando lo que tenga en localStorage como respaldo en ese caso.
  */
-export async function obtenerPedidosAdminDesdeSupabase(): Promise<PedidoEscolarCompleto[]> {
+export async function obtenerPedidosAdminDesdeSupabase(): Promise<PedidoEscolarCompleto[] | null> {
   try {
     const [resPedidos, resFotos] = await Promise.all([
       fetchAdminAutenticado('/api/admin/pedidos'),
       fetchAdminAutenticado('/api/admin/fotos'),
     ]);
-    if (!resPedidos.ok || !resFotos.ok) return [];
+    if (!resPedidos.ok || !resFotos.ok) return null;
     const [dataPedidos, dataFotos] = await Promise.all([resPedidos.json(), resFotos.json()]);
-    if (!dataPedidos?.success || !Array.isArray(dataPedidos.pedidos) || !dataFotos?.success || !Array.isArray(dataFotos.fotos)) return [];
+    if (!dataPedidos?.success || !Array.isArray(dataPedidos.pedidos) || !dataFotos?.success || !Array.isArray(dataFotos.fotos)) return null;
 
     const fotosDisponibles: Foto[] = dataFotos.fotos.map((foto: any) => ({
       id: foto.id,
@@ -906,7 +907,8 @@ export async function obtenerPedidosAdminDesdeSupabase(): Promise<PedidoEscolarC
     return dataPedidos.pedidos.map((fila: any) => construirPedidoCompletoDesdeFila(fila, fotosDisponibles));
   } catch (e) {
     console.warn('No se pudieron obtener los pedidos reales de Supabase:', e);
-    return [];
+    // null (y no []): así quien llama distingue "no pude consultar" de "no hay pedidos".
+    return null;
   }
 }
 
@@ -985,10 +987,16 @@ export async function cambiarMetodoPagoPedido(
  * con el servidor todavía no se refleja en una lectura posterior). Supabase es la fuente de la
  * verdad: si un pedido está en ambos lados, se usa siempre la versión del servidor.
  */
-export function combinarPedidosConLocal(pedidosServidor: PedidoEscolarCompleto[], pedidosLocales: PedidoEscolarCompleto[]): PedidoEscolarCompleto[] {
+export function combinarPedidosConLocal(pedidosServidor: PedidoEscolarCompleto[] | null, pedidosLocales: PedidoEscolarCompleto[]): PedidoEscolarCompleto[] {
+  // Sin respuesta del servidor (sin conexión, sesión vencida): se muestra lo guardado localmente.
+  if (pedidosServidor === null) return pedidosLocales;
   const idsServidor = new Set(pedidosServidor.map((p) => p.supabaseId).filter(Boolean));
-  const localesSinServidor = pedidosLocales.filter((p) => !p.supabaseId || !idsServidor.has(p.supabaseId));
-  return [...pedidosServidor, ...localesSinServidor];
+  // Auditoría 2026-09-24 (bug real): antes se conservaban también los pedidos locales que SÍ
+  // tenían id de Supabase pero ya no existen en el servidor (borrados desde otra computadora o con
+  // "Cerrar año") — quedaban como fantasmas en el panel para siempre. Si el servidor respondió,
+  // sólo se suman los locales que nunca llegaron a registrarse (sin supabaseId).
+  const localesSinServidor = pedidosLocales.filter((p) => !p.supabaseId);
+  return [...pedidosServidor, ...localesSinServidor.filter((p) => !idsServidor.has(p.id))];
 }
 
 export interface PedidoSeguimiento {
@@ -1012,13 +1020,19 @@ export interface PedidoSeguimiento {
  * distinto al que usó para comprar. Devuelve null si no hay coincidencia o si falla la consulta
  * (auditoría 2026-09-09, revisión a fondo — antes esta búsqueda sólo miraba el localStorage).
  */
+export class ErrorLimiteBusqueda extends Error {}
+
 export async function buscarPedidoPorSeguimiento(query: string): Promise<PedidoSeguimiento | null> {
   try {
     const res = await fetch(`/api/pedidos/buscar?query=${encodeURIComponent(query)}`);
     const data = await res.json().catch(() => null);
+    // Límite de búsquedas alcanzado: se avisa tal cual (antes se informaba "no encontramos tu
+    // pedido", y la familia creía que su pedido no existía).
+    if (res.status === 429) throw new ErrorLimiteBusqueda(data?.error || 'Demasiadas búsquedas seguidas. Probá de nuevo en unos minutos.');
     if (!res.ok || !data?.success || !data.pedido) return null;
     return data.pedido as PedidoSeguimiento;
   } catch (e) {
+    if (e instanceof ErrorLimiteBusqueda) throw e;
     console.warn('Error al buscar el pedido por seguimiento:', e);
     return null;
   }

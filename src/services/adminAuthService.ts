@@ -90,7 +90,10 @@ export async function verificarSesionAdmin(): Promise<boolean> {
       },
     });
     if (!res.ok) {
-      cerrarSesionAdmin();
+      // Auditoría 2026-09-24: sólo un 401/403 significa que el token venció o es inválido. Un
+      // error pasajero del servidor (500, 429, corte de red) antes borraba la sesión y obligaba
+      // a reingresar el PIN en pleno reparto de sobres.
+      if (res.status === 401 || res.status === 403) cerrarSesionAdmin();
       return false;
     }
     const data = await res.json();

@@ -61,8 +61,12 @@ export default function App() {
     setFamiliasModalOpen(true);
   };
 
-  const handleOpenInscripcion = (tab?: 'registro' | 'login') => {
-    setInscripcionModalTab(tab || 'registro');
+  // Auditoría 2026-09-23 (bug real, ALTO): varios botones hacían `onClick={onOpenInscripcion}`, así
+  // que React pasaba el evento del clic como `tab`. `tab || 'registro'` quedaba con ese objeto, y
+  // el modal (que no lo reconocía) caía al formulario de "Ya me inscribí": el botón principal
+  // "Inscribirme" nunca mostraba el formulario de inscripción. Sólo se acepta 'login' explícito.
+  const handleOpenInscripcion = (tab?: unknown) => {
+    setInscripcionModalTab(tab === 'login' ? 'login' : 'registro');
     setInscripcionModalOpen(true);
   };
 

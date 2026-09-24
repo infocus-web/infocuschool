@@ -8,7 +8,6 @@ import {
 import {
   PedidoEscolarCompleto,
   descargarLoteLaboratorioZip,
-  guardarPedidosEnStorage,
   formatearCodigoCliente,
   generarZipHDAdmin,
   marcarPedidoRetirado
@@ -248,7 +247,11 @@ function TarjetaPedidoLaboratorio({
 
 interface AdminLaboratorioTabProps {
   pedidos: PedidoEscolarCompleto[];
-  onActualizarPedidos: (pedidos: PedidoEscolarCompleto[]) => void;
+  // Recibe una función (lista actual → lista nueva). Auditoría 2026-09-24 (bug real): antes recibía
+  // la lista ya armada a partir de `pedidos` capturado en el render; en "Reintentar todos" (que
+  // procesa pedido por pedido en un bucle) cada vuelta pisaba lo que había guardado la anterior y
+  // sólo quedaba registrado el último pedido.
+  onActualizarPedidos: (actualizar: (pedidos: PedidoEscolarCompleto[]) => PedidoEscolarCompleto[]) => void;
   colegioNombre?: string;
   // Nombre de alumno para arrancar con la búsqueda ya cargada — usado por "Ver en
   // Laboratorio" desde la pestaña de Pedidos, para llevar directo al pedido en
@@ -501,8 +504,8 @@ export default function AdminLaboratorioTab({
     // en el estado local — sin esperar a que se vuelva a abrir la pestaña.
     if (resultado.resultados && resultado.resultados.length > 0) {
       const porId = new Map(resultado.resultados.map((r) => [r.pedidoId, r]));
-      onActualizarPedidos(
-        pedidos.map((pedido) => {
+      onActualizarPedidos((actuales) =>
+        actuales.map((pedido) => {
           const actualizado = porId.get(pedido.supabaseId || pedido.id);
           if (!actualizado) return pedido;
           return {
@@ -731,29 +734,21 @@ export default function AdminLaboratorioTab({
       // terminaba marcando falsamente a TODOS como enviados. Ahora sólo se graba
       // emailEnviado/fechaEnvioEmail cuando `res.success` es realmente true.
       if (res.success) {
-        const pedidosActualizados = pedidos.map(p => {
-          if (p.id === pedido.id) {
-            return {
-              ...p,
-              emailEnviado: true,
-              fechaEnvioEmail: fechaHora,
-              linkDescargaHD: linkDescargaHD || p.linkDescargaHD,
-            };
-          }
-          return p;
-        });
-        onActualizarPedidos(pedidosActualizados);
-        guardarPedidosEnStorage(pedidosActualizados);
+        onActualizarPedidos((actuales) =>
+          actuales.map((p) =>
+            p.id === pedido.id
+              ? { ...p, emailEnviado: true, fechaEnvioEmail: fechaHora, linkDescargaHD: linkDescargaHD || p.linkDescargaHD }
+              : p
+          )
+        );
         setEmailFeedbackMsg(`✅ Correo con enlaces HD enviado con éxito a ${pedido.tutorEmail} desde fotos@retratoescolar.com.ar (ID: ${res.messageId || 'OK'})`);
       } else if (linkDescargaHD && linkDescargaHD !== pedido.linkDescargaHD) {
         // El envío no se confirmó, pero si se llegó a generar un .zip HD nuevo (arriba), igual
         // vale la pena guardar ese link para no tener que regenerarlo en el próximo intento —
         // sin tocar emailEnviado, que sigue reflejando la realidad (no se mandó).
-        const pedidosActualizados = pedidos.map(p =>
-          p.id === pedido.id ? { ...p, linkDescargaHD } : p
+        onActualizarPedidos((actuales) =>
+          actuales.map((p) => (p.id === pedido.id ? { ...p, linkDescargaHD } : p))
         );
-        onActualizarPedidos(pedidosActualizados);
-        guardarPedidosEnStorage(pedidosActualizados);
         setEmailFeedbackMsg(`⚠️ ${res.warning || res.error || 'No se pudo confirmar el envío del correo'} (no se marcó como enviado para ${pedido.tutorEmail})`);
       } else {
         setEmailFeedbackMsg(`⚠️ ${res.warning || res.error || 'No se pudo confirmar el envío del correo'} (no se marcó como enviado para ${pedido.tutorEmail})`);
@@ -774,13 +769,13 @@ export default function AdminLaboratorioTab({
     const resultado = await marcarPedidoRetirado(pedido.supabaseId);
     setMarcandoRetiradoId(null);
     if (resultado.success) {
-      const pedidosActualizados = pedidos.map((p) =>
-        p.id === pedido.id
-          ? { ...p, estadoLab: (resultado.estadoLab as PedidoEscolarCompleto['estadoLab']) || 'entregado', fechaEntregado: resultado.fechaEntregado || p.fechaEntregado }
-          : p
+      onActualizarPedidos((actuales) =>
+        actuales.map((p) =>
+          p.id === pedido.id
+            ? { ...p, estadoLab: (resultado.estadoLab as PedidoEscolarCompleto['estadoLab']) || 'entregado', fechaEntregado: resultado.fechaEntregado || p.fechaEntregado }
+            : p
+        )
       );
-      onActualizarPedidos(pedidosActualizados);
-      guardarPedidosEnStorage(pedidosActualizados);
       setEmailFeedbackMsg(`✅ ${pedido.alumnoNombre}: marcado como retirado.`);
     } else {
       setEmailFeedbackMsg(`⚠️ ${resultado.error || 'No se pudo marcar el pedido como retirado.'}`);

@@ -27,6 +27,7 @@ import {
   regenerarMarcaAguaAdmin,
   FotoRegistrada
 } from '../services/fotosSubidasService';
+import { copiarAlPortapapeles } from '../utils/portapapeles';
 
 interface FotoLoteItem {
   id: string;
@@ -520,10 +521,20 @@ export default function AdminLoteFotosTab() {
         // panel, sólo la clave del archivo en Storage usa la versión saneada.
         const extensionOriginal = (item.nombreOriginal.match(/\.[^./]+$/)?.[0] || '.jpg');
         const nombreBaseOriginal = item.nombreOriginal.replace(/\.[^./]+$/, '');
+        // Auditoría 2026-09-24 (bug real, CRÍTICO): la ruta era sólo "2026/<curso>/originales/
+        // <nombre de archivo>" y se sube pisando lo que haya. Dos fotos con el mismo nombre de
+        // archivo (DSC_0001.jpg de dos cámaras, la grupal y la individual, una segunda tanda, o dos
+        // colegios con el mismo código de curso) terminaban en el MISMO archivo: la segunda borraba
+        // a la primera y las dos fichas del catálogo apuntaban a la misma foto — una familia podía
+        // recibir en su descarga HD la foto de otro chico. Ahora la ruta lleva el colegio y un
+        // sufijo único por foto (el nombre original se conserva para poder reconocerla).
         const nombreBaseSaneado = sanitizarNombreParaStorage(nombreBaseOriginal);
-        const pathHD = `2026/${cursoSeleccionado}/originales/${nombreBaseSaneado}${extensionOriginal}`;
-        const pathWeb = `2026/${cursoSeleccionado}/muestras/${nombreBaseSaneado}.jpg`;
-        const pathThumb = `2026/${cursoSeleccionado}/miniaturas/${nombreBaseSaneado}.jpg`;
+        const sufijoUnico = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+        const carpetaColegio = sanitizarNombreParaStorage(colegioSeleccionado || 'colegio');
+        const nombreUnico = `${nombreBaseSaneado}_${sufijoUnico}`;
+        const pathHD = `2026/${carpetaColegio}/${cursoSeleccionado}/originales/${nombreUnico}${extensionOriginal}`;
+        const pathWeb = `2026/${carpetaColegio}/${cursoSeleccionado}/muestras/${nombreUnico}.jpg`;
+        const pathThumb = `2026/${carpetaColegio}/${cursoSeleccionado}/miniaturas/${nombreUnico}.jpg`;
 
         // 1. Upload HD (el archivo original, sin tocar) al bucket privado
         const resHD = await uploadFotoHD(item.file, pathHD);
@@ -578,10 +589,12 @@ export default function AdminLoteFotosTab() {
     // Registrar en Supabase, en un solo lote, las fotos subidas con éxito
     let emailsEnviados = 0;
     let avisoEmail: string | undefined;
+    let registroFallido = false;
     if (fotosParaRegistrar.length > 0) {
       const resultadoRegistro = await registrarFotosAdmin(fotosParaRegistrar);
       if (!resultadoRegistro.success) {
-        setErrorMessage(resultadoRegistro.error || 'Las fotos se subieron a Storage pero no se pudieron registrar en el catálogo.');
+        registroFallido = true;
+        setErrorMessage(`${resultadoRegistro.error || 'Las fotos se subieron a Storage pero no se pudieron registrar en el catálogo.'} Las fotos siguen en la lista para que puedas volver a intentar.`);
       } else {
         emailsEnviados = resultadoRegistro.emailsEnviados || 0;
         avisoEmail = resultadoRegistro.warning;
@@ -596,6 +609,15 @@ export default function AdminLoteFotosTab() {
 
     const fueCancelada = canceladaEn !== -1;
     const pendientes = colaActualizada.filter(f => f.estado !== 'subida').length;
+
+    // Auditoría 2026-09-24 (bug real): si el registro en el catálogo fallaba, igual se mostraba
+    // "¡subidas y vinculadas con éxito!" y se vaciaba la cola — las fotos quedaban en Storage pero
+    // invisibles para las familias, sin forma de reintentar. Ahora vuelven a la cola como
+    // pendientes (al reintentar se suben de nuevo con una ruta nueva y se registran).
+    if (registroFallido) {
+      setFotosLote(colaActualizada.map(f => (f.estado === 'subida' ? { ...f, estado: 'procesada' as const } : f)));
+      return;
+    }
 
     if (fueCancelada) {
       setStatusMessage(`Subida cancelada: ${exitosas} foto(s) ya quedaron guardadas en Supabase, ${pendientes} quedaron pendientes en la lista para subir después.`);
@@ -819,7 +841,7 @@ USING (bucket_id = 'fotos-web');
 -- el agujero de seguridad de la auditoría 2026-09-09. Todo eso pasa por el servidor.`;
 
   const handleCopiarSql = () => {
-    navigator.clipboard.writeText(sqlPoliticas);
+    void copiarAlPortapapeles(sqlPoliticas);
     setSqlCopiado(true);
     setTimeout(() => setSqlCopiado(false), 3000);
   };
