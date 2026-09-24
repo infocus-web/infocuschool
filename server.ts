@@ -20,6 +20,26 @@ const PORT = 3000;
 // req.protocol, como la URL de retorno que le mandamos a Mercado Pago más abajo.
 app.set('trust proxy', true);
 
+// Las respuestas por email traen debajo el mensaje original citado ("El mar, 22 sept 2026, ...
+// escribió:" + líneas con ">"), que en el panel ya se ve arriba en la conversación. Se recorta
+// para mostrar sólo lo que escribió la familia; si el recorte dejara el texto vacío, se deja entero.
+function quitarMensajeCitado(texto: string): string {
+  const lineas = texto.split(/\r?\n/);
+  let corte = lineas.findIndex((linea) => /^\s*>/.test(linea));
+  if (corte === -1) return texto;
+  // Encabezado de la cita ("El ..., X escribió:" / "On ..., X wrote:"), que Gmail puede partir en 2-3 líneas.
+  for (let i = corte - 1; i >= Math.max(0, corte - 4); i--) {
+    if (/(escribi[oó]|wrote)\s*:\s*$/i.test(lineas[i])) {
+      let inicio = i;
+      while (inicio > 0 && inicio > i - 3 && lineas[inicio - 1].trim() !== '' && !/^\s*(El|On)\s/i.test(lineas[inicio])) inicio--;
+      corte = inicio;
+      break;
+    }
+  }
+  const recortado = lineas.slice(0, corte).join('\n').trim();
+  return recortado || texto;
+}
+
 // Resend firma el cuerpo exacto del webhook. Esta ruta debe procesarse como texto
 // antes del parser JSON global para poder verificar que el evento sea auténtico.
 app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json' }), async (req: Request, res: Response) => {
@@ -56,7 +76,7 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
     if (!consultaId) return res.json({ success: true, ignored: true });
 
     const contenido = email
-      ? String(email.text || '').trim() || String(email.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+      ? quitarMensajeCitado(String(email.text || '').trim()) || String(email.html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
       : '(No se pudo descargar el texto de esta respuesta. Leela en resend.com → Emails → Receiving.)';
     if (!contenido) return res.json({ success: true, ignored: true });
     const supabase = getServerSupabase();
