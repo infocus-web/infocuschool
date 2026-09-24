@@ -1016,6 +1016,8 @@ export interface PedidoSeguimiento {
   fecha: string;
   estado: 'pendiente_pago' | 'pagado' | 'entregado' | 'cancelado';
   linkDescargaHD?: string;
+  /** Pago anticipado: kit pagado (o por pagar) que todavía espera que la familia elija las fotos. */
+  reservaPendiente?: boolean;
 }
 
 /**
@@ -1049,6 +1051,8 @@ export interface PedidoExistenteResumen {
   total: number;
   estado: 'pendiente_pago' | 'pagado' | 'entregado' | 'cancelado';
   fecha: string;
+  /** Kit pagado por adelantado que todavía espera que la familia elija sus fotos. */
+  reservaPendiente?: boolean;
 }
 
 /**

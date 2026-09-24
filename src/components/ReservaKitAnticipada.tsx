@@ -54,7 +54,14 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claveHijos]);
 
-  const hijosSinReservaPagada = hijos.filter((h) => !reservas[h.id]?.pagada);
+  // Reserva por transferencia todavía sin confirmar: se muestra como "esperando tu transferencia"
+  // (para que no la paguen dos veces), con la opción de pagarla con otro medio.
+  const [reabiertos, setReabiertos] = useState<Record<string, boolean>>({});
+  const esperandoTransferencia = (id: string) => {
+    const r = reservas[id];
+    return Boolean(r && !r.pagada && r.metodoPago === 'transferencia' && !reabiertos[id]);
+  };
+  const hijosSinReservaPagada = hijos.filter((h) => !reservas[h.id]?.pagada && !esperandoTransferencia(h.id));
   const elegidos = hijosSinReservaPagada.filter((h) => kits[h.id]);
   const total = useMemo(
     () => elegidos.reduce((acc, h) => acc + (KITS_RESERVA.find((k) => k.id === kits[h.id])?.precio || 0), 0),
@@ -125,6 +132,20 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
       <div className="mt-4 space-y-3">
         {hijos.map((h) => {
           const reserva = reservas[h.id];
+          if (reserva && esperandoTransferencia(h.id)) {
+            return (
+              <div key={h.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+                <p>
+                  <strong>{h.nombreCompleto}:</strong> tu reserva del {reserva.kitNombre} ({reserva.pedidoFriendlyId}) está registrada y
+                  esperamos tu transferencia de <strong>${reserva.total.toLocaleString('es-AR')}</strong> (Alias RETRATO.ESCOLAR). Mandá el
+                  comprobante a fotos@retratoescolar.com.ar indicando el número de pedido; cuando lo confirmemos te llega un email.
+                </p>
+                <button type="button" onClick={() => setReabiertos((r) => ({ ...r, [h.id]: true }))} className="mt-2 font-bold text-amber-800 underline">
+                  Prefiero pagar con otro medio
+                </button>
+              </div>
+            );
+          }
           if (reserva?.pagada) {
             return (
               <div key={h.id} className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">

@@ -1586,7 +1586,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                       </button>
                     )}
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                      {pedidosCompletos.filter(p => p.estadoPago === 'aprobado').length} Aprobados para Revelado
+                      {pedidosCompletos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente).length} Aprobados para Revelado
                     </span>
                   </div>
                 </div>

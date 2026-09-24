@@ -16,6 +16,7 @@ export interface ReservaPendiente {
   kitNombre: string;
   total: number;
   pagada: boolean;
+  metodoPago?: string;
 }
 
 export async function crearReserva(datos: {
