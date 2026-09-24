@@ -61,6 +61,8 @@ export interface PedidoEscolarCompleto {
   metodoPago: 'mercadopago' | 'transferencia' | 'efectivo' | 'nave';
   estadoPago: 'aprobado' | 'pendiente' | 'rechazado';
   estadoEntrega: 'en_espera' | 'en_laboratorio' | 'laboratorio_listo' | 'listo_retiro' | 'listo_descarga' | 'entregado';
+  /** Pago anticipado: el kit está pagado pero la familia todavía no eligió las fotos. */
+  seleccionPendiente?: boolean;
   fotosSeleccionadas: {
     individualId: string;
     grupalId: string;
@@ -839,7 +841,8 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
     estadoEntrega = 'entregado';
   } else if (fila.estado === 'pagado') {
     estadoPago = 'aprobado';
-    estadoEntrega = fila.estado_lab === 'listo_retiro' ? 'listo_retiro' : 'en_laboratorio';
+    // Un kit pagado por adelantado no va al laboratorio hasta que la familia elija sus fotos.
+    estadoEntrega = fila.seleccion_pendiente ? 'en_espera' : fila.estado_lab === 'listo_retiro' ? 'listo_retiro' : 'en_laboratorio';
   }
 
   const fecha = fila.created_at ? new Date(fila.created_at) : new Date();
@@ -868,6 +871,7 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
     metodoPago: fila.metodo_pago || 'mercadopago',
     estadoPago,
     estadoEntrega,
+    seleccionPendiente: Boolean(fila.seleccion_pendiente),
     fotosSeleccionadas,
     copiasExtras,
     archivosParaLaboratorio: archivosLab,

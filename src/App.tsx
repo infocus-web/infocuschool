@@ -11,6 +11,7 @@ import ModalInscripcionFamilia from './components/ModalInscripcionFamilia';
 import AdminModal from './components/AdminModal';
 import EscaneoPedidoModal from './components/EscaneoPedidoModal';
 import ErrorBoundary from './components/ErrorBoundary';
+import ReservaRetorno from './components/ReservaRetorno';
 import { InscripcionFamilia } from './services/inscripcionesService';
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
       // (`grupo_pago_id`), el portal procesaba la vuelta pero quedaba cerrado: la familia volvía a
       // la home sin ver ninguna confirmación de su pago.
       const search = new URLSearchParams(window.location.search);
+      if (search.get('reserva') === '1') return false; // pago anticipado: ver ReservaRetorno
       return Boolean((search.get('mp_status') || search.get('nave_status')) && (search.get('pedido_id') || search.get('grupo_pago_id')));
     }
     return false;
@@ -36,6 +38,12 @@ export default function App() {
     return null;
   });
   const [escaneoModalOpen, setEscaneoModalOpen] = useState(Boolean(escaneoPedidoId));
+  // Vuelta de Mercado Pago / Nave después de pagar un kit por adelantado ("?reserva=1").
+  const [reservaRetornoId, setReservaRetornoId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const search = new URLSearchParams(window.location.search);
+    return search.get('reserva') === '1' ? search.get('grupo_pago_id') : null;
+  });
   const [inscripcionModalOpen, setInscripcionModalOpen] = useState(false);
   // Auditoría 2026-09-22 (pedido de Pablo: el link "¿Ya te inscribiste? Consultar código" de
   // Hero.tsx abría el modal siempre en la pestaña "Inscribirme", igual que el botón de alta
@@ -102,6 +110,16 @@ export default function App() {
         onScrollTo={handleScrollTo}
         onOpenAdmin={() => setAdminModalOpen(true)}
       />
+
+      {reservaRetornoId && (
+        <ReservaRetorno
+          grupoPagoId={reservaRetornoId}
+          onCerrar={() => {
+            setReservaRetornoId(null);
+            window.history.replaceState({}, '', window.location.pathname);
+          }}
+        />
+      )}
 
       {/* Main Sections */}
       <main className="flex-1">

@@ -1648,9 +1648,15 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                           </td>
                           <td className="py-3 px-4 font-medium text-slate-800">
                             {p.kitNombre}
-                            <span className="block text-[10px] text-slate-400">
-                              {p.archivosParaLaboratorio.length} archivos para el laboratorio
-                            </span>
+                            {p.seleccionPendiente ? (
+                              <span className="mt-0.5 inline-block text-[10px] font-bold text-violet-800 bg-violet-100 border border-violet-200 px-1.5 py-0.5 rounded">
+                                Pago anticipado · falta elegir fotos
+                              </span>
+                            ) : (
+                              <span className="block text-[10px] text-slate-400">
+                                {p.archivosParaLaboratorio.length} archivos para el laboratorio
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-4 font-bold text-slate-900">
                             ${p.total.toLocaleString('es-AR')}

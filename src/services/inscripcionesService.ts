@@ -74,29 +74,6 @@ export function determinarCodigoParaInscripcion(datos: { grado: string; turno: s
   const d = (datos.division || '').toLowerCase();
   const esJornadaExtendida = t.includes('jornada') || t.includes('extendida') || d.includes('jornada') || d.includes('extendida');
 
-  // Nivel inicial (jardín): "Sala 3/4/5 años" — se mantienen los mismos códigos de
-  // siempre (SALA-3TM, SALA-4A, etc.) para no romper los cursos de nivel inicial que
-  // ya tienen fotos cargadas con ellos.
-  if (g.includes('sala')) {
-    if (g.includes('3')) {
-      if (esJornadaExtendida) return 'SALA-3JE';
-      if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
-      return 'SALA-3TM';
-    }
-    if (g.includes('4')) {
-      if (esJornadaExtendida) return 'SALA-4JE';
-      if (d.includes('c')) return 'SALA-4C';
-      if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
-      return 'SALA-4A';
-    }
-    if (g.includes('5')) {
-      if (esJornadaExtendida) return 'SALA-5JE';
-      if (d.includes('c')) return 'SALA-5C';
-      if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
-      return 'SALA-5A';
-    }
-  }
-
   const turnoAbrev = esJornadaExtendida ? 'JE' : (t.includes('tarde') ? 'TT' : 'TM');
 
   // Abreviatura de la división (ej: "División C" -> "C", "Jornada Extendida" -> "JO"),
@@ -107,6 +84,17 @@ export function determinarCodigoParaInscripcion(datos: { grado: string; turno: s
     .replace(/[^a-z0-9]/g, '')
     .toUpperCase()
     .slice(0, 2) || 'X';
+
+  // Nivel inicial (jardín): "Sala 3/4/5 años". Auditoría 2026-09-24 (bug real, una familia
+  // pagó por fotos que no eran de su curso): antes las salas usaban códigos fijos (SALA-5B,
+  // SALA-4JE...) que juntaban secciones distintas — Sala 5 tarde "A" y "B" compartían
+  // "SALA-5B", y las dos divisiones de Jornada Extendida compartían "SALA-5JE" —, así que una
+  // familia veía (y podía comprar) fotos de otra sección. Ahora, igual que en primaria, cada
+  // sala + división + turno tiene su propio código.
+  const matchSala = g.match(/sala\s*(\d+)/);
+  if (matchSala) {
+    return `SALA${matchSala[1]}-${divisionAbrev}${turnoAbrev}`;
+  }
 
   // Primaria: "1° grado" a "7° grado" (o variantes equivalentes que digan "grado").
   const matchGrado = g.match(/(\d+)\s*°?\s*grado/);

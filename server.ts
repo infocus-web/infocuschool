@@ -1711,7 +1711,13 @@ app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => 
     // igual que en los webhooks, cada vez que un pedido pasa a "pagado" por esta vía.
     let linkDescargaHD: string | null = null;
     if (nuevoEstado === 'pagado' && data?.[0]) {
-      linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, data[0]);
+      if (data[0].seleccion_pendiente) {
+        // Pago anticipado aprobado a mano (transferencia/efectivo): se le confirma la reserva.
+        const { data: conFamilia } = await supabase.from('pedidos').select('*, familias(nombre, whatsapp, email)').eq('id', data[0].id);
+        await procesarPedidosRecienPagados(supabase, conFamilia || []);
+      } else {
+        linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, data[0]);
+      }
     }
 
     return res.json({ success: true, pedido: data?.[0], linkDescargaHD: linkDescargaHD || undefined });
@@ -2966,29 +2972,6 @@ function determinarCodigoCursoServidor(grado: string, turno: string, division: s
   const d = (division || '').toLowerCase();
   const esJornadaExtendida = t.includes('jornada') || t.includes('extendida') || d.includes('jornada') || d.includes('extendida');
 
-  // Nivel inicial (jardín): "Sala 3/4/5 años" — se mantienen los mismos códigos de
-  // siempre (SALA-3TM, SALA-4A, etc.) para no romper los cursos de nivel inicial que
-  // ya tienen fotos cargadas con ellos.
-  if (g.includes('sala')) {
-    if (g.includes('3')) {
-      if (esJornadaExtendida) return 'SALA-3JE';
-      if (t.includes('tarde') || d.includes('b')) return 'SALA-3TT';
-      return 'SALA-3TM';
-    }
-    if (g.includes('4')) {
-      if (esJornadaExtendida) return 'SALA-4JE';
-      if (d.includes('c')) return 'SALA-4C';
-      if (t.includes('tarde') || d.includes('b')) return 'SALA-4TT';
-      return 'SALA-4A';
-    }
-    if (g.includes('5')) {
-      if (esJornadaExtendida) return 'SALA-5JE';
-      if (d.includes('c')) return 'SALA-5C';
-      if (t.includes('tarde') || d.includes('b')) return 'SALA-5B';
-      return 'SALA-5A';
-    }
-  }
-
   const turnoAbrev = esJornadaExtendida ? 'JE' : (t.includes('tarde') ? 'TT' : 'TM');
 
   // Abreviatura de la división (ej: "División C" -> "C", "Jornada Extendida" -> "JO"),
@@ -2999,6 +2982,17 @@ function determinarCodigoCursoServidor(grado: string, turno: string, division: s
     .replace(/[^a-z0-9]/g, '')
     .toUpperCase()
     .slice(0, 2) || 'X';
+
+  // Nivel inicial (jardín): "Sala 3/4/5 años". Auditoría 2026-09-24 (bug real, una familia
+  // pagó por fotos que no eran de su curso): antes las salas usaban códigos fijos (SALA-5B,
+  // SALA-4JE...) que juntaban secciones distintas — Sala 5 tarde "A" y "B" compartían
+  // "SALA-5B", y las dos divisiones de Jornada Extendida compartían "SALA-5JE" —, así que una
+  // familia veía (y podía comprar) fotos de otra sección. Ahora, igual que en primaria, cada
+  // sala + división + turno tiene su propio código.
+  const matchSala = g.match(/sala\s*(\d+)/);
+  if (matchSala) {
+    return `SALA${matchSala[1]}-${divisionAbrev}${turnoAbrev}`;
+  }
 
   // Primaria: "1° grado" a "7° grado" (o variantes equivalentes que digan "grado").
   const matchGrado = g.match(/(\d+)\s*°?\s*grado/);
@@ -5766,6 +5760,22 @@ async function procesarPedidosRecienPagados(supabase: SupabaseClient, filas: any
   await Promise.all((filas || []).map(async (orderData: any) => {
     const emailDestino = orderData?.familias?.email || emailRespaldo;
     if (!emailDestino || !String(emailDestino).includes('@')) return;
+    if (orderData?.seleccion_pendiente) {
+      // Pago anticipado: se confirma la reserva; el HD sale cuando la familia elija sus fotos.
+      const envio = await enviarCorreoReservaConfirmada({
+        to: emailDestino,
+        tutorNombre: orderData?.familias?.nombre || nombreRespaldo || 'Familia',
+        alumnoNombre: orderData?.alumno_nombre || 'tu hijo/a',
+        colegioNombre: orderData?.colegio_nombre || 'tu colegio',
+        kitNombre: orderData?.kit_nombre || 'Kit',
+        pedidoId: orderData?.pedido_friendly_id || orderData?.id,
+        total: Number(orderData?.total) || 0,
+      });
+      if (envio.success && orderData?.id) {
+        await supabase.from('pedidos').update({ email_enviado: true, fecha_envio_email: new Date().toISOString() }).eq('id', orderData.id);
+      }
+      return;
+    }
     const linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, orderData);
     const resultadoEnvio = await enviarCorreoFotosHD({
       to: emailDestino,
@@ -5802,7 +5812,7 @@ async function obtenerPedidosPendientesParaCobro(
   }
   const { data, error } = await supabase
     .from('pedidos')
-    .select('id, estado, total, kit_nombre, alumno_nombre, colegio_nombre, grupo_pago_id')
+    .select('id, estado, total, kit_nombre, alumno_nombre, colegio_nombre, grupo_pago_id, seleccion_pendiente')
     .eq(columna, valor as string);
   if (error) return { filas: [], status: 500, error: error.message };
   if (!data || data.length === 0) {
@@ -5876,6 +5886,8 @@ async function marcarReferenciaComoPagada(
 async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: any): Promise<string | null> {
   try {
     if (!pedido?.colegio_id || !pedido?.curso_codigo) return null;
+    // Pago anticipado: todavía no hay fotos elegidas, el .zip se arma cuando la familia las elija.
+    if (pedido?.seleccion_pendiente) return null;
 
     const { data: fotosCurso, error: errorFotos } = await supabase
       .from('fotos')
@@ -5979,6 +5991,7 @@ async function reintentarPedidosConHDPendiente(
     .from('pedidos')
     .select('*, familias(nombre, whatsapp, email)')
     .eq('estado', 'pagado')
+    .eq('seleccion_pendiente', false)
     .or('link_descarga_hd.is.null,link_descarga_hd.eq.')
     .lt('created_at', cortaFecha)
     .order('created_at', { ascending: false })
@@ -6535,6 +6548,8 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
     if (cobro.error) {
       return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
     }
+    // Pago anticipado: al volver del pago se muestra la pantalla de "reserva confirmada".
+    const sufijoReserva = cobro.filas.some((fila: any) => fila.seleccion_pendiente) ? '&reserva=1' : '';
     const mpItems: any[] = cobro.filas.map((fila: any) => ({
       id: fila.id,
       title: `Retrato Escolar 2026 - ${fila.kit_nombre || 'Kit Fotográfico'} (${fila.alumno_nombre || 'Alumno'})`,
@@ -6568,9 +6583,9 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
           phone: { number: tutorTelefono || '' },
         },
         back_urls: {
-          success: `${appUrl}/?mp_status=approved&grupo_pago_id=${grupoPagoId}`,
-          failure: `${appUrl}/?mp_status=rejected&grupo_pago_id=${grupoPagoId}`,
-          pending: `${appUrl}/?mp_status=pending&grupo_pago_id=${grupoPagoId}`,
+          success: `${appUrl}/?mp_status=approved&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
+          failure: `${appUrl}/?mp_status=rejected&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
+          pending: `${appUrl}/?mp_status=pending&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
         },
         auto_return: 'approved',
         external_reference: grupoPagoId,
@@ -6989,6 +7004,257 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
   }
 });
 
+// ==============================================================================
+// PAGO ANTICIPADO — "Reservá tu kit ahora, elegí las fotos después" (pedido de Pablo, 24/9:
+// "muchos padres están acostumbrados a pagar por adelantado"). La familia paga el kit antes de
+// que se suban las fotos de su curso: el pedido nace con seleccion_pendiente = true y sin fotos.
+// Al pagarse le llega un email de "reserva confirmada" (no el de fotos HD). Cuando las fotos están
+// online, las elige desde el portal sin volver a pagar (/api/reservas/:id/elegir-fotos): recién
+// ahí se arma el .zip HD, se le manda el email con la descarga y el pedido pasa al laboratorio.
+// ==============================================================================
+const NOMBRES_KITS_RESERVA: Record<string, string> = {
+  'kit-clasico': 'Kit Impreso + Digital',
+  'kit-digital': 'Solo Digital HD',
+};
+
+async function enviarCorreoReservaConfirmada(datos: {
+  to: string;
+  tutorNombre: string;
+  alumnoNombre: string;
+  colegioNombre: string;
+  kitNombre: string;
+  pedidoId: string;
+  total: number;
+}): Promise<{ success: boolean; error?: string }> {
+  if (!datos.to || !datos.to.includes('@')) return { success: false, error: 'Email de destino inválido' };
+  const resend = getResendClient();
+  if (!resend) return { success: false, error: 'RESEND_API_KEY no está configurada.' };
+  const resultado = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+    to: [datos.to],
+    subject: `Retrato Escolar: ¡Reserva confirmada! ${datos.kitNombre} de ${datos.alumnoNombre} (${datos.pedidoId})`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a;line-height:1.6">
+<h2 style="margin-bottom:4px">¡Reserva confirmada! 🎉</h2>
+<p>Hola ${escapeHtml(datos.tutorNombre)},</p>
+<p>Recibimos tu pago del <strong>${escapeHtml(datos.kitNombre)}</strong> para <strong>${escapeHtml(datos.alumnoNombre)}</strong> (${escapeHtml(datos.colegioNombre)}). Tu kit ya está reservado y pagado.</p>
+<div style="padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin:16px 0">
+<p style="margin:0"><strong>Pedido:</strong> ${escapeHtml(datos.pedidoId)}<br><strong>Total abonado:</strong> $${Number(datos.total || 0).toLocaleString('es-AR')}</p>
+</div>
+<p><strong>¿Qué sigue?</strong> Cuando estén las fotos de su curso en la web, entrá a <a href="https://www.retratoescolar.com.ar">retratoescolar.com.ar</a> → "Acceder a las Fotos" con tu código de acceso, elegí las 3 fotos del kit y confirmalas. <strong>No vas a tener que volver a pagar.</strong> Apenas las confirmes te llega la descarga en alta resolución.</p>
+<p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p>
+</div>`,
+  });
+  if (resultado.error) {
+    console.error('[Reservas] No se pudo enviar el email de reserva confirmada:', resultado.error);
+    return { success: false, error: resultado.error.message };
+  }
+  return { success: true };
+}
+
+app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const { tutorNombre, tutorTelefono, tutorEmail, metodoPago, items } = req.body || {};
+    if (!Array.isArray(items) || items.length < 1 || items.length > 10) {
+      return res.status(400).json({ success: false, error: 'Elegí el kit de al menos un hijo/a.' });
+    }
+    const emailTutor = String(tutorEmail || '').trim().toLowerCase().slice(0, 200);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTutor)) {
+      return res.status(400).json({ success: false, error: 'Necesitamos un email válido para confirmarte la reserva.' });
+    }
+    const metodosValidos = ['mercadopago', 'transferencia', 'nave'];
+    const metodo = metodosValidos.includes(metodoPago) ? metodoPago : 'mercadopago';
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+
+    // El curso de cada hijo sale SIEMPRE del código secreto de su sección (el mismo que usa la
+    // galería), nunca de un grado/turno/división mandado por el navegador.
+    const resueltos: { seccion: { colegioId: string; grado: string; turno: string; division: string }; colegio: { id: string; nombre: string }; alumnoNombre: string; kitId: string; cursoCodigo: string }[] = [];
+    for (const item of items) {
+      const kitId = String(item?.kitId || '');
+      if (!NOMBRES_KITS_RESERVA[kitId]) return res.status(400).json({ success: false, error: 'Kit no reconocido.' });
+      const alumnoNombre = String(item?.alumnoNombre || '').trim().slice(0, 200);
+      if (alumnoNombre.length < 2) return res.status(400).json({ success: false, error: 'Falta el nombre de uno de los chicos.' });
+      const seccion = await buscarSeccionPorCodigoSecreto(supabase, String(item?.codigoSeccion || ''));
+      if (!seccion) return res.status(400).json({ success: false, error: `No pudimos identificar el curso de ${alumnoNombre}.` });
+      const colegio = await buscarColegioReal(supabase, seccion.colegioId);
+      if (!colegio) return res.status(400).json({ success: false, error: ERROR_COLEGIO_NO_VALIDO });
+      const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
+
+      // Un mismo chico no puede quedar con dos kits pagados sin querer.
+      const { data: previos } = await supabase
+        .from('pedidos')
+        .select('alumno_nombre, estado')
+        .eq('colegio_id', colegio.id)
+        .eq('curso_codigo', cursoCodigo)
+        .in('estado', ['pagado', 'entregado']);
+      if ((previos || []).some((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === normalizarNombrePorPalabras(alumnoNombre))) {
+        return res.status(409).json({ success: false, error: `${alumnoNombre} ya tiene un kit pagado. Si querés otro, escribinos desde Ayuda y Contacto.` });
+      }
+      resueltos.push({ seccion, colegio, alumnoNombre, kitId, cursoCodigo });
+    }
+
+    const { data: famData } = await supabase
+      .from('familias')
+      .insert({
+        nombre: String(tutorNombre || 'Familia').trim().slice(0, 200) || 'Familia',
+        whatsapp: String(tutorTelefono || '').trim().slice(0, 40),
+        email: emailTutor,
+      })
+      .select('id')
+      .single();
+
+    const grupoPagoId = crypto.randomUUID();
+    const friendlyIdsUsados = new Set<string>();
+    const numeroListaBasePorCurso: Record<string, number> = {};
+    const filas: Record<string, any>[] = [];
+    let totalGrupo = 0;
+    for (const r of resueltos) {
+      const total = calcularTotalPedido(r.kitId, 0, 0) as number;
+      totalGrupo += total;
+      if (numeroListaBasePorCurso[r.cursoCodigo] === undefined) {
+        numeroListaBasePorCurso[r.cursoCodigo] = await obtenerNumeroListaSecuencial(supabase, r.cursoCodigo) - 1;
+      }
+      const numeroLista = ++numeroListaBasePorCurso[r.cursoCodigo];
+      filas.push({
+        familia_id: famData?.id || null,
+        tipo_kit: r.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital',
+        estado: 'pendiente_pago',
+        total,
+        carpetas_impresas: r.kitId === 'kit-clasico' ? 1 : 0,
+        metodo_pago: metodo,
+        grupo_pago_id: grupoPagoId,
+        pedido_friendly_id: await asegurarFriendlyIdUnico(supabase, '', friendlyIdsUsados),
+        colegio_id: r.colegio.id,
+        colegio_nombre: r.colegio.nombre,
+        curso_codigo: r.cursoCodigo,
+        grado: r.seccion.grado,
+        division: r.seccion.division,
+        turno: r.seccion.turno,
+        alumno_nombre: r.alumnoNombre,
+        alumno_numero_lista: numeroLista,
+        codigo_alumno: calcularCodigoAlumnoServidor(r.cursoCodigo, numeroLista, r.alumnoNombre),
+        kit_nombre: NOMBRES_KITS_RESERVA[r.kitId],
+        fotos_seleccionadas: {},
+        copias_extras: {},
+        link_descarga_hd: null,
+        seleccion_pendiente: true,
+      });
+    }
+    const { error } = await supabase.from('pedidos').insert(filas);
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      grupoPagoId,
+      total: totalGrupo,
+      pedidoFriendlyIds: filas.map((f) => f.pedido_friendly_id),
+    });
+  } catch (err: any) {
+    console.error('[Reservas] Error al crear la reserva:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos registrar la reserva. Intentá nuevamente.' });
+  }
+});
+
+// ¿Este chico tiene un kit pagado por adelantado esperando que elijan sus fotos?
+app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const codigo = String(req.query.codigo || '').trim().slice(0, 40);
+    const alumnoNombre = String(req.query.alumnoNombre || '').trim().slice(0, 200);
+    if (!codigo || !alumnoNombre) return res.status(400).json({ success: false, error: 'Faltan datos.' });
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(503).json({ success: false, error: 'Servicio no disponible' });
+    const seccion = await buscarSeccionPorCodigoSecreto(supabase, codigo);
+    if (!seccion) return res.json({ success: true, reserva: null });
+    const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
+    const { data, error } = await supabase
+      .from('pedidos')
+      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado')
+      .eq('colegio_id', seccion.colegioId)
+      .eq('curso_codigo', cursoCodigo)
+      .eq('seleccion_pendiente', true)
+      .in('estado', ['pagado', 'pendiente_pago'])
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    const buscado = normalizarNombrePorPalabras(alumnoNombre);
+    const propias = (data || []).filter((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === buscado);
+    const pagada = propias.find((p: any) => p.estado === 'pagado');
+    const elegida = pagada || propias[0];
+    if (!elegida) return res.json({ success: true, reserva: null });
+    return res.json({
+      success: true,
+      reserva: {
+        id: elegida.id,
+        pedidoFriendlyId: elegida.pedido_friendly_id,
+        kitNombre: elegida.kit_nombre,
+        total: Number(elegida.total) || 0,
+        pagada: elegida.estado === 'pagado',
+      },
+    });
+  } catch (err: any) {
+    console.error('[Reservas] Error al buscar reserva pendiente:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos verificar tu reserva.' });
+  }
+});
+
+// La familia elige las 3 fotos de un kit que ya pagó por adelantado. Sin cobro: se guardan las
+// fotos, se arma el .zip HD y se le manda el email con la descarga, igual que en un pago normal.
+app.post('/api/reservas/:id/elegir-fotos', limitarFrecuencia('reservas-elegir', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const { codigo, fotos } = req.body || {};
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(503).json({ success: false, error: 'Servicio no disponible' });
+    const seccion = await buscarSeccionPorCodigoSecreto(supabase, String(codigo || ''));
+    if (!seccion) return res.status(403).json({ success: false, error: 'No pudimos validar tu acceso. Volvé a ingresar con tu código.' });
+    const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
+
+    const { data: pedido, error } = await supabase
+      .from('pedidos')
+      .select('id, estado, seleccion_pendiente, colegio_id, curso_codigo')
+      .eq('id', String(req.params.id))
+      .single();
+    if (error || !pedido) return res.status(404).json({ success: false, error: 'No encontramos tu reserva.' });
+    if (pedido.colegio_id !== seccion.colegioId || pedido.curso_codigo !== cursoCodigo) {
+      return res.status(403).json({ success: false, error: 'Esta reserva no corresponde a este curso.' });
+    }
+    if (pedido.estado !== 'pagado') return res.status(409).json({ success: false, error: 'Tu reserva todavía no figura como pagada.' });
+    if (!pedido.seleccion_pendiente) return res.status(409).json({ success: false, error: 'Las fotos de este kit ya fueron elegidas.' });
+
+    const ids = {
+      grupalId: String(fotos?.grupalId || ''),
+      individualId: String(fotos?.individualId || ''),
+      docenteId: String(fotos?.docenteId || ''),
+    };
+    const { data: fotosValidas } = await supabase
+      .from('fotos')
+      .select('id, categoria')
+      .eq('colegio_id', seccion.colegioId)
+      .eq('codigo_curso', cursoCodigo)
+      .in('id', Object.values(ids).filter(Boolean));
+    const categoriaDe = (id: string) => (fotosValidas || []).find((f: any) => f.id === id)?.categoria;
+    if (categoriaDe(ids.grupalId) !== 'grupal' || categoriaDe(ids.individualId) !== 'individual' || categoriaDe(ids.docenteId) !== 'docente') {
+      return res.status(400).json({ success: false, error: 'Elegí una foto grupal, una individual y una con la seño de este curso.' });
+    }
+
+    const { data: actualizado, error: errorUpdate } = await supabase
+      .from('pedidos')
+      .update({ fotos_seleccionadas: ids, seleccion_pendiente: false, updated_at: new Date().toISOString() })
+      .eq('id', pedido.id)
+      .eq('seleccion_pendiente', true)
+      .select('*, familias(nombre, whatsapp, email)');
+    if (errorUpdate) throw errorUpdate;
+    if (!actualizado || actualizado.length === 0) {
+      return res.status(409).json({ success: false, error: 'Las fotos de este kit ya fueron elegidas.' });
+    }
+    await procesarPedidosRecienPagados(supabase, actualizado);
+    return res.json({ success: true, pedidoFriendlyId: actualizado[0].pedido_friendly_id });
+  } catch (err: any) {
+    console.error('[Reservas] Error al elegir fotos de la reserva:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos guardar tu elección. Intentá nuevamente.' });
+  }
+});
+
 // Webhook de Mercado Pago
 app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) => {
   try {
@@ -7244,6 +7510,8 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
     if (cobro.error) {
       return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
     }
+    // Pago anticipado: al volver del pago se muestra la pantalla de "reserva confirmada".
+    const sufijoReserva = cobro.filas.some((fila: any) => fila.seleccion_pendiente) ? '&reserva=1' : '';
     let totalGrupo = 0;
     const products: any[] = cobro.filas.map((fila: any) => {
       const totalItem = Number(fila.total);
@@ -7290,7 +7558,7 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
         user_id: grupoPagoId,
       },
       additional_info: {
-        callback_url: `${appUrl}/?nave_status=vuelta&grupo_pago_id=${grupoPagoId}`,
+        callback_url: `${appUrl}/?nave_status=vuelta&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
       },
     };
     if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
@@ -7742,7 +8010,7 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 *
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id))) {
       return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
     }
-    const columnasStatus = 'id, estado, total, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd';
+    const columnasStatus = 'id, estado, total, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd, seleccion_pendiente';
     let { data, error } = await supabase
       .from('pedidos')
       .select(columnasStatus)
@@ -7905,6 +8173,8 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 *
       total: totalReferencia,
       pedidoFriendlyId: data.pedido_friendly_id || undefined,
       linkDescargaHD: linkDescargaHD || undefined,
+      // Pago anticipado: el pedido está pagado pero todavía sin fotos elegidas (no hay HD que esperar).
+      reservaAnticipada: Boolean((data as any).seleccion_pendiente),
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al consultar estado del pedido' });
