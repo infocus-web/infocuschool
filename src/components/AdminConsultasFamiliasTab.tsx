@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Archive, ArchiveRestore, CheckCircle2, ChevronDown, Clock3, Inbox, Loader2, Mail, MessageSquare, RefreshCw, Search, Send, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Archive, ArchiveRestore, Bot, CheckCircle2, ChevronDown, Clock3, Inbox, Loader2, Mail, MessageSquare, RefreshCw, Search, Send, Sparkles, Trash2, X } from 'lucide-react';
 import {
   actualizarEstadoConsultaFamiliaAdmin,
   ConsultaFamilia,
@@ -58,6 +58,7 @@ export default function AdminConsultasFamiliasTab() {
   const [respuesta, setRespuesta] = useState('');
   const [respuestaEnviadaId, setRespuestaEnviadaId] = useState<string | null>(null);
   const [generandoSugerenciaId, setGenerandoSugerenciaId] = useState<string | null>(null);
+  const [avisoSugerencia, setAvisoSugerencia] = useState('');
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -127,7 +128,12 @@ export default function AdminConsultasFamiliasTab() {
     setGenerandoSugerenciaId(consulta.id);
     setError('');
     try {
-      setRespuesta(await sugerirRespuestaConsultaFamiliaAdmin(consulta.id));
+      const { sugerencia, aviso } = await sugerirRespuestaConsultaFamiliaAdmin(consulta.id);
+      setRespuesta(sugerencia);
+      setAvisoSugerencia(sugerencia ? '' : aviso || 'La IA considera que no hace falta responder.');
+      // Trae la verificación actualizada de los datos de la familia.
+      const actualizadas = await obtenerConsultasFamiliasAdmin(estado);
+      setConsultas(actualizadas);
     } catch (err: any) {
       setError(err?.message || 'No se pudo generar una sugerencia.');
     } finally {
@@ -157,7 +163,7 @@ export default function AdminConsultasFamiliasTab() {
         <Inbox className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
         <div>
           <p className="text-sm font-bold">Consultas recibidas desde la web</p>
-          <p className="text-xs text-sky-800 mt-0.5">Tocá una consulta para abrirla y responder. Archivá las terminadas para sacarlas de la bandeja: si la familia vuelve a escribir, reaparecen como nuevas.</p>
+          <p className="text-xs text-sky-800 mt-0.5">Cada consulta se revisa sola con los datos de la familia: si todo está bien y es una duda sobre cómo funciona la página, se responde automáticamente; si no, te queda un borrador listo. Archivá las terminadas: si la familia vuelve a escribir, reaparecen como nuevas.</p>
         </div>
       </div>
 
@@ -214,6 +220,12 @@ export default function AdminConsultasFamiliasTab() {
                           <span className="inline-flex items-center gap-0.5 text-[10px] text-slate-400 shrink-0"><MessageSquare className="w-3 h-3" />{consulta.mensajes.length}</span>
                         )}
                         <span className={`hidden sm:inline px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${estilosEstado[consulta.estado]}`}>{etiquetasEstado[consulta.estado]}</span>
+                        {ultimo?.automatica && (
+                          <span className="hidden sm:inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold shrink-0"><Bot className="w-3 h-3" />Respondida sola</span>
+                        )}
+                        {consulta.borradorIa && (
+                          <span className="hidden sm:inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold shrink-0"><Sparkles className="w-3 h-3" />Borrador listo</span>
+                        )}
                       </div>
                       <p className="text-xs truncate mt-0.5">
                         <span className={sinLeer ? 'font-bold text-slate-800' : 'font-medium text-slate-700'}>{consulta.asunto}</span>
@@ -257,7 +269,7 @@ export default function AdminConsultasFamiliasTab() {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        <button type="button" onClick={() => { setRespondiendoId(consulta.id); setRespuesta(''); setRespuestaEnviadaId(null); }} className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"><Mail className="w-3.5 h-3.5" />Responder</button>
+                        <button type="button" onClick={() => { setRespondiendoId(consulta.id); setRespuesta(consulta.borradorIa || ''); setAvisoSugerencia(''); setRespuestaEnviadaId(null); }} className="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"><Mail className="w-3.5 h-3.5" />Responder</button>
                         <select value={consulta.estado} disabled={ocupada} onChange={(event) => void cambiarEstado(consulta, event.target.value as EstadoConsultaFamilia)} className="px-3 py-2 border border-slate-200 rounded-xl bg-white text-xs font-bold disabled:opacity-50">
                           <option value="nueva">Nueva</option>
                           <option value="en_proceso">En proceso</option>
@@ -267,13 +279,49 @@ export default function AdminConsultasFamiliasTab() {
                       </div>
                     </div>
 
+                    {consulta.verificacionIa && (
+                      <div className={`mt-4 rounded-xl border p-3 ${consulta.verificacionIa.todoOk ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/70'}`}>
+                        <p className="flex items-center gap-1.5 text-[11px] font-bold text-slate-800">
+                          <Bot className="h-3.5 w-3.5" />
+                          Revisión automática de los datos de la familia
+                        </p>
+                        <ul className="mt-2 space-y-1">
+                          {consulta.verificacionIa.chequeos.map((chequeo, i) => (
+                            <li key={i} className="flex items-start gap-1.5 text-[11px] text-slate-700">
+                              {chequeo.ok
+                                ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0 mt-px" />
+                                : <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-px" />}
+                              <span>{chequeo.texto}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {consulta.verificacionIa.datos.length > 0 && (
+                          <ul className="mt-2 space-y-0.5 border-t border-black/5 pt-2">
+                            {consulta.verificacionIa.datos.map((dato, i) => (
+                              <li key={i} className="text-[11px] text-slate-500">• {dato}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-2 text-[11px] font-semibold text-slate-700">
+                          {consulta.verificacionIa.enviadaAutomaticamente
+                            ? '✅ Se respondió automáticamente.'
+                            : consulta.borradorIa
+                              ? `✍️ Borrador listo para revisar — tocá "Responder". ${consulta.verificacionIa.motivoNoEnvio || ''}`
+                              : consulta.verificacionIa.motivoNoEnvio || consulta.verificacionIa.motivo || ''}
+                        </p>
+                      </div>
+                    )}
+
                     {consulta.mensajes.length > 0 && (
                       <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Conversación</p>
                         {consulta.mensajes.map((mensaje) => (
                           <div key={mensaje.id} className={`max-w-3xl rounded-xl border p-3 ${mensaje.direccion === 'entrante' ? 'border-emerald-200 bg-emerald-50' : 'ml-auto border-sky-200 bg-sky-50'}`}>
                             <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[10px] font-bold">
-                              <span className={mensaje.direccion === 'entrante' ? 'text-emerald-700' : 'text-sky-700'}>{mensaje.direccion === 'entrante' ? 'Familia' : 'Retrato Escolar'}</span>
+                              <span className={`inline-flex items-center gap-1 ${mensaje.direccion === 'entrante' ? 'text-emerald-700' : 'text-sky-700'}`}>
+                                {mensaje.direccion === 'entrante' ? 'Familia' : 'Retrato Escolar'}
+                                {mensaje.automatica && <span className="inline-flex items-center gap-0.5 rounded-full bg-sky-100 px-1.5 py-px font-bold text-sky-800"><Bot className="h-3 w-3" />Automática</span>}
+                              </span>
                               <span className="font-normal text-slate-400">{new Date(mensaje.createdAt).toLocaleString('es-AR')}</span>
                             </div>
                             <p className="whitespace-pre-wrap break-words text-xs text-slate-700">{mensaje.contenido}</p>
@@ -302,6 +350,7 @@ export default function AdminConsultasFamiliasTab() {
                             {ocupada ? 'Enviando...' : 'Enviar respuesta'}
                           </button>
                         </div>
+                        {avisoSugerencia && <p className="mt-1.5 text-[11px] font-semibold text-amber-700">{avisoSugerencia}</p>}
                         <p className="mt-1.5 text-[10px] text-slate-400">La IA solo redacta un borrador acá — revisalo (y editalo si hace falta) antes de enviarlo, nunca se manda solo.</p>
                       </div>
                     )}

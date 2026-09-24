@@ -16,6 +16,21 @@ export interface ConsultaFamilia {
   createdAt: string;
   updatedAt: string;
   mensajes: MensajeConsultaFamilia[];
+  /** Respuesta redactada por la IA que quedó sin enviar (para revisar y mandar desde el panel). */
+  borradorIa?: string;
+  /** Resultado de la revisión automática de los datos de la familia. */
+  verificacionIa?: VerificacionIa;
+}
+
+export interface VerificacionIa {
+  encontrada: boolean;
+  todoOk: boolean;
+  chequeos: { ok: boolean; texto: string }[];
+  datos: string[];
+  tema: string;
+  motivo?: string;
+  motivoNoEnvio?: string | null;
+  enviadaAutomaticamente: boolean;
 }
 
 export interface MensajeConsultaFamilia {
@@ -26,6 +41,7 @@ export interface MensajeConsultaFamilia {
   asunto?: string;
   contenido: string;
   createdAt: string;
+  automatica?: boolean;
 }
 
 export interface NuevaConsultaFamilia {
@@ -53,6 +69,8 @@ function mapearConsulta(row: any): ConsultaFamilia {
     origen: row.origen,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    borradorIa: row.borrador_ia || undefined,
+    verificacionIa: row.verificacion_ia && typeof row.verificacion_ia === 'object' ? row.verificacion_ia : undefined,
     mensajes: (row.consultas_familias_mensajes || [])
       .map((mensaje: any) => ({
         id: mensaje.id,
@@ -62,6 +80,7 @@ function mapearConsulta(row: any): ConsultaFamilia {
         asunto: mensaje.asunto || undefined,
         contenido: mensaje.contenido,
         createdAt: mensaje.created_at,
+        automatica: Boolean(mensaje.automatica),
       }))
       .sort((a: MensajeConsultaFamilia, b: MensajeConsultaFamilia) => a.createdAt.localeCompare(b.createdAt)),
   };
@@ -120,11 +139,11 @@ export async function responderConsultaFamiliaAdmin(id: string, mensaje: string)
 
 // Solo redacta un borrador con IA — nunca envía nada. El fotógrafo lo revisa (y edita si
 // hace falta) en el textarea de respuesta antes de mandarlo con responderConsultaFamiliaAdmin.
-export async function sugerirRespuestaConsultaFamiliaAdmin(id: string): Promise<string> {
+export async function sugerirRespuestaConsultaFamiliaAdmin(id: string): Promise<{ sugerencia: string; aviso?: string }> {
   const response = await fetchAdminAutenticado(`/api/admin/consultas-familias/${encodeURIComponent(id)}/sugerir-respuesta`, {
     method: 'POST',
   });
   const data = await response.json();
   if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo generar una sugerencia.');
-  return data.sugerencia as string;
+  return { sugerencia: String(data.sugerencia || ''), aviso: data.aviso ? String(data.aviso) : undefined };
 }

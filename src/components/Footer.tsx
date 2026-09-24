@@ -101,11 +101,11 @@ export default function Footer({ onOpenFamilias, onScrollTo, onOpenAdmin }: Foot
                 <span>Buenos Aires, Argentina</span>
               </p>
               <a
-                href="mailto:colegios@contacto.retratoescolar.com.ar"
+                href="mailto:contacto@retratoescolar.com.ar"
                 className="flex items-center gap-2 hover:text-sky-400 transition-colors"
               >
                 <Mail className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                <span className="truncate">colegios@contacto.retratoescolar.com.ar</span>
+                <span className="truncate">contacto@retratoescolar.com.ar</span>
               </a>
             </div>
           </div>
