@@ -1,4 +1,3 @@
-import JSZip from 'jszip';
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { enviarFotosPorEmail } from './emailService';
 import { fetchAdminAutenticado } from './adminAuthService';
@@ -1213,6 +1212,8 @@ export async function descargarLoteLaboratorioZip(
     organizarEnSubcarpetasPorAlumno?: boolean;
   }
 ): Promise<Blob> {
+  // Carga diferida: sólo el panel de laboratorio arma este .zip (no las familias).
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const estructura = opciones.estructuraCarpetas || (opciones.organizarEnSubcarpetasPorAlumno ? 'por_alumno' : 'solo_2_carpetas_tamano');
 
