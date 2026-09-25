@@ -118,6 +118,11 @@ export default function App() {
             setReservaRetornoId(null);
             window.history.replaceState({}, '', window.location.pathname);
           }}
+          onReintentar={() => {
+            setReservaRetornoId(null);
+            window.history.replaceState({}, '', window.location.pathname);
+            setFamiliasModalOpen(true);
+          }}
         />
       )}
 
