@@ -4336,9 +4336,11 @@ export default function PortalFamiliasModal({
                     <div className="flex flex-wrap gap-2">
                       {(
                         [
-                          { id: 'mercadopago' as const, label: 'Mercado Pago' },
-                          { id: 'nave' as const, label: 'Nave' },
-                          { id: 'transferencia' as const, label: 'Transferencia' },
+                          // Pedido de Pablo (25/9): cada medio con el color de su marca (Mercado Pago
+                          // celeste #009EE3, Nave violeta) y transferencia neutra.
+                          { id: 'mercadopago' as const, label: 'Mercado Pago', clases: 'bg-[#009EE3] hover:bg-[#0087c2] text-white border-[#009EE3]' },
+                          { id: 'nave' as const, label: 'Nave', clases: 'bg-violet-600 hover:bg-violet-700 text-white border-violet-600' },
+                          { id: 'transferencia' as const, label: 'Transferencia', clases: 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300' },
                         ]
                       )
                         .filter((opcion) => opcion.id !== pedidoGenerado?.metodoPago)
@@ -4348,7 +4350,7 @@ export default function PortalFamiliasModal({
                             type="button"
                             onClick={() => handleCambiarMetodoPago(opcion.id)}
                             disabled={cambiandoMetodoPago}
-                            className="px-3 py-2 text-xs font-bold text-slate-700 bg-white hover:bg-amber-50 hover:border-amber-300 border border-slate-300 rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            className={`px-3 py-2 text-xs font-bold border rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${opcion.clases}`}
                           >
                             {cambiandoMetodoPago ? 'Cambiando...' : `Pagar con ${opcion.label}`}
                           </button>
@@ -4378,7 +4380,7 @@ export default function PortalFamiliasModal({
                       href={mpRedirectUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#009EE3] hover:bg-[#0087c2] text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
                     >
                       <CreditCard className="w-3.5 h-3.5" />
                       <span>Ir a Pagar ${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} en Mercado Pago</span>
@@ -4404,7 +4406,7 @@ export default function PortalFamiliasModal({
                       type="button"
                       onClick={() => pedidoGenerado && generarLinkDePago(pedidoGenerado, false)}
                       disabled={generandoLinkPago}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-60"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#009EE3] hover:bg-[#0087c2] text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-60"
                     >
                       {generandoLinkPago ? (
                         <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -4432,7 +4434,7 @@ export default function PortalFamiliasModal({
                       href={naveRedirectUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-500 hover:bg-violet-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer"
                     >
                       <Smartphone className="w-3.5 h-3.5" />
                       <span>Ir a Pagar ${(pedidoGenerado?.total ?? total).toLocaleString('es-AR')} en Nave</span>
@@ -4458,7 +4460,7 @@ export default function PortalFamiliasModal({
                       type="button"
                       onClick={() => pedidoGenerado && generarLinkDeNave(pedidoGenerado, false)}
                       disabled={generandoLinkNave}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-500 hover:bg-violet-600 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-60"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs rounded-xl shadow transition-all cursor-pointer disabled:opacity-60"
                     >
                       {generandoLinkNave ? (
                         <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
