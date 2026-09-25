@@ -67,6 +67,8 @@ export interface PedidoEscolarCompleto {
   /** En espera (standby): visible con etiqueta, pero no pasa a producción. */
   enEspera?: boolean;
   notaEspera?: string;
+  /** Transferencia: cuándo subió la familia el comprobante (null = todavía no). */
+  comprobanteSubidoAt?: string | null;
   fotosSeleccionadas: {
     individualId: string;
     grupalId: string;
@@ -881,6 +883,7 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
     archivado: Boolean(fila.archivado),
     enEspera: Boolean(fila.en_espera),
     notaEspera: fila.nota_espera || '',
+    comprobanteSubidoAt: fila.comprobante_subido_at || null,
     fotosSeleccionadas,
     copiasExtras,
     archivosParaLaboratorio: archivosLab,
@@ -1062,6 +1065,8 @@ export interface PedidoExistenteResumen {
   fecha: string;
   /** Kit pagado por adelantado que todavía espera que la familia elija sus fotos. */
   reservaPendiente?: boolean;
+  pedidoUuid?: string;
+  metodoPago?: string | null;
 }
 
 /**
@@ -1446,5 +1451,17 @@ export async function organizarPedidoAdmin(
     return data;
   } catch (err: any) {
     return { success: false, error: err?.message || 'Error de red al actualizar el pedido.' };
+  }
+}
+
+/** Link temporal (10 min) para ver el comprobante de transferencia de un pedido. */
+export async function obtenerLinkComprobanteAdmin(pedidoId: string): Promise<{ success: boolean; url?: string; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/pedidos/${encodeURIComponent(pedidoId)}/comprobante`);
+    const data = await res.json();
+    if (!res.ok || !data.success) return { success: false, error: data.error || 'No se pudo abrir el comprobante.' };
+    return { success: true, url: data.url };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de conexión.' };
   }
 }

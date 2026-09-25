@@ -4,6 +4,7 @@ import { crearReserva, KITS_RESERVA, obtenerEstadoReserva, type KitReserva, type
 import { crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
 import { crearIntencionPagoNaveMultiple } from '../services/naveService';
 import { useNaveHabilitado } from '../services/mediosPagoService';
+import SubirComprobante from './SubirComprobante';
 
 interface HijoReserva {
   id: string;
@@ -47,7 +48,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
   const naveHabilitado = useNaveHabilitado();
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
-  const [transferencia, setTransferencia] = useState<{ total: number; pedidos: string[] } | null>(null);
+  const [transferencia, setTransferencia] = useState<{ total: number; pedidos: string[]; grupoPagoId: string } | null>(null);
 
   useEffect(() => setEmail((actual) => actual || tutorEmail), [tutorEmail]);
 
@@ -122,7 +123,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
     }
     if (metodo === 'transferencia') {
       setEnviando(false);
-      setTransferencia({ total: reserva.total || total, pedidos: reserva.pedidoFriendlyIds || [] });
+      setTransferencia({ total: reserva.total || total, pedidos: reserva.pedidoFriendlyIds || [], grupoPagoId: reserva.grupoPagoId });
       return;
     }
     const datosPago = { grupoPagoId: reserva.grupoPagoId, items: [], tutorNombre, tutorEmail: email.trim(), tutorTelefono };
@@ -141,15 +142,17 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
       <div className="mt-6 rounded-2xl border border-emerald-200 bg-white p-5 text-left shadow-xs">
         <p className="flex items-center gap-2 font-bold text-slate-900"><CheckCircle2 className="h-5 w-5 text-emerald-600" />¡Reserva registrada!</p>
         <p className="mt-2 text-sm text-slate-600">
-          Transferí <strong>${transferencia.total.toLocaleString('es-AR')}</strong> y mandá el comprobante a{' '}
-          <strong>fotos@retratoescolar.com.ar</strong> indicando {transferencia.pedidos.length > 1 ? 'los pedidos' : 'el pedido'}{' '}
-          <strong>{transferencia.pedidos.join(', ')}</strong>. Cuando lo confirmemos te llega un email.
+          Transferí <strong>${transferencia.total.toLocaleString('es-AR')}</strong> ({transferencia.pedidos.length > 1 ? 'pedidos' : 'pedido'}{' '}
+          <strong>{transferencia.pedidos.join(', ')}</strong>) y subí el comprobante acá abajo. Cuando lo confirmemos te llega un email.
         </p>
         <div className="mt-3 space-y-0.5 rounded-xl bg-slate-50 p-3 text-xs text-slate-700">
           <p><strong>Titular:</strong> Alderete Pablo Gabriel</p>
           <p><strong>CUIT:</strong> 20-28306117-6</p>
           <p><strong>Alias:</strong> <span className="font-mono font-bold">RETRATO.ESCOLAR</span></p>
           <p><strong>CBU:</strong> <span className="font-mono">0070313830004052956749</span></p>
+        </div>
+        <div className="mt-3">
+          <SubirComprobante grupoPagoId={transferencia.grupoPagoId} numeros={transferencia.pedidos.join(', ')} />
         </div>
       </div>
     );
@@ -193,9 +196,12 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
               <div key={h.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
                 <p>
                   <strong>{h.nombreCompleto}:</strong> tu reserva del {reserva.kitNombre} ({reserva.pedidoFriendlyId}) está registrada y
-                  esperamos tu transferencia de <strong>${reserva.total.toLocaleString('es-AR')}</strong> (Alias RETRATO.ESCOLAR). Mandá el
-                  comprobante a fotos@retratoescolar.com.ar indicando el número de pedido; cuando lo confirmemos te llega un email.
+                  esperamos tu transferencia de <strong>${reserva.total.toLocaleString('es-AR')}</strong> (Alias RETRATO.ESCOLAR). Cuando lo
+                  confirmemos te llega un email.
                 </p>
+                <div className="mt-2">
+                  <SubirComprobante pedidoId={reserva.id} numeros={reserva.pedidoFriendlyId} />
+                </div>
                 <button type="button" onClick={() => setReabiertos((r) => ({ ...r, [h.id]: true }))} className="mt-2 font-bold text-amber-800 underline">
                   Prefiero pagar con otro medio
                 </button>
