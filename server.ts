@@ -8512,6 +8512,33 @@ app.post('/api/admin/zoho/prueba', requireAdminAuth, limitarFrecuencia('zoho-pru
 // lista blanca, exige que haya al menos una prueba exitosa en las últimas 24hs, salta
 // destinatarios a los que ya se les mandó un correo real antes (dedup), y espera un poco entre
 // cada envío para no disparar límites de tasa / filtros antispam de Zoho.
+// Ritmo seguro para la campaña por Zoho: 1 correo cada 15 s, 3 por llamada (entra holgado en
+// los 60 s de la función), máx. 20 por hora y 80 por día. Lo que no entra se retoma después:
+// el dedup de más abajo saltea a quien ya recibió la campaña.
+const ZOHO_CAMPANA_MAX_POR_LLAMADA = 3;
+const ZOHO_CAMPANA_PAUSA_MS = 15_000;
+const ZOHO_CAMPANA_MAX_POR_HORA = 20;
+const ZOHO_CAMPANA_MAX_POR_DIA = 80;
+
+async function cupoCampanaZoho(supabase: any): Promise<{ ok: boolean; mensaje?: string }> {
+  const contar = async (ms: number) => {
+    const { count } = await supabase
+      .from('zoho_campana_envios')
+      .select('id', { count: 'exact', head: true })
+      .eq('tipo', 'real')
+      .eq('estado', 'enviado')
+      .gte('created_at', new Date(Date.now() - ms).toISOString());
+    return count || 0;
+  };
+  if ((await contar(24 * 60 * 60 * 1000)) >= ZOHO_CAMPANA_MAX_POR_DIA) {
+    return { ok: false, mensaje: `Llegaste al máximo seguro de ${ZOHO_CAMPANA_MAX_POR_DIA} correos por día con Zoho. Retomá mañana: a quienes ya les llegó no se les vuelve a mandar.` };
+  }
+  if ((await contar(60 * 60 * 1000)) >= ZOHO_CAMPANA_MAX_POR_HORA) {
+    return { ok: false, mensaje: `Llegaste al máximo seguro de ${ZOHO_CAMPANA_MAX_POR_HORA} correos por hora con Zoho. Retomá en un rato: a quienes ya les llegó no se les vuelve a mandar.` };
+  }
+  return { ok: true };
+}
+
 app.post('/api/admin/zoho/enviar', requireAdminAuth, limitarFrecuencia('zoho-enviar', 40, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { destinatarios, asunto, cuerpoHtml, remitente } = req.body || {};
@@ -8524,8 +8551,8 @@ app.post('/api/admin/zoho/enviar', requireAdminAuth, limitarFrecuencia('zoho-env
     if (!Array.isArray(destinatarios) || destinatarios.length === 0) {
       return res.status(400).json({ success: false, error: 'No hay destinatarios para enviar.' });
     }
-    if (destinatarios.length > 15) {
-      return res.status(400).json({ success: false, error: 'Máximo 15 destinatarios por llamada — el panel los manda en lotes automáticamente.' });
+    if (destinatarios.length > ZOHO_CAMPANA_MAX_POR_LLAMADA) {
+      return res.status(400).json({ success: false, error: `Máximo ${ZOHO_CAMPANA_MAX_POR_LLAMADA} destinatarios por llamada — el panel los manda en lotes automáticamente.` });
     }
 
     const supabase = getServerSupabase();
@@ -8546,7 +8573,17 @@ app.post('/api/admin/zoho/enviar', requireAdminAuth, limitarFrecuencia('zoho-env
     }
 
     const resultados: { email: string; estado: 'enviado' | 'error' | 'omitido'; error?: string }[] = [];
+    let primero = true;
     for (const destinatario of destinatarios as DestinatarioCampanaZoho[]) {
+      // Tope de ritmo (Zoho bloqueó colegios@ el 22/9 por mandar ~100 por minuto): se cuenta lo
+      // enviado de verdad en la última hora y en las últimas 24 h, así el tope vale aunque se
+      // recargue el panel o se abran dos pestañas.
+      const cupo = await cupoCampanaZoho(supabase);
+      if (!cupo.ok) {
+        return res.status(429).json({ success: false, resultados, limite: true, error: cupo.mensaje });
+      }
+      if (!primero) await new Promise((resolve) => setTimeout(resolve, ZOHO_CAMPANA_PAUSA_MS));
+      primero = false;
       const email = String(destinatario?.email || '').trim().toLowerCase();
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         resultados.push({ email: destinatario?.email || '(vacío)', estado: 'error', error: 'Email inválido.' });
@@ -8584,8 +8621,15 @@ app.post('/api/admin/zoho/enviar', requireAdminAuth, limitarFrecuencia('zoho-env
         error: resultado.error || null,
       });
       resultados.push({ email, estado: resultado.ok ? 'enviado' : 'error', error: resultado.error });
-      // Pausa entre envíos — no vamos a mandar 15 de una sola vez sin respiro.
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      // Si Zoho empieza a rechazar por volumen/bloqueo, se corta enseguida: insistir agrava el bloqueo.
+      if (!resultado.ok && /block|bloque|limit|exceed|spam|suspend|too many|rate/i.test(String(resultado.error || ''))) {
+        return res.status(429).json({
+          success: false,
+          resultados,
+          limite: true,
+          error: 'Zoho rechazó el envío por límite o bloqueo de la cuenta. Se frenó la campaña para no empeorarlo; revisá tu casilla de Zoho.',
+        });
+      }
     }
     res.json({ success: true, resultados });
   } catch (err: any) {

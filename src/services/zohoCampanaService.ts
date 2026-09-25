@@ -88,7 +88,7 @@ export async function mandarCorreoPruebaZoho(params: {
 }
 
 /**
- * Manda la campaña real en lotes chicos (el servidor rechaza más de 15 por llamada) para no
+ * Manda la campaña real en lotes chicos (el servidor rechaza más de 3 por llamada) para no
  * pisar el límite de tiempo de la función serverless. onProgreso se llama después de cada
  * lote para que el panel pueda ir mostrando el avance.
  */
@@ -101,7 +101,8 @@ export async function mandarCampanaRealZoho(
   },
   onProgreso?: (procesados: number, total: number) => void
 ): Promise<{ success: boolean; resultados: ResultadoEnvioZoho[]; error?: string }> {
-  const TAMANO_LOTE = 15;
+  // Lotes de 3 (el servidor manda 1 cada 15 s y corta al llegar al tope por hora/día de Zoho).
+  const TAMANO_LOTE = 3;
   const resultados: ResultadoEnvioZoho[] = [];
   for (let i = 0; i < params.destinatarios.length; i += TAMANO_LOTE) {
     const lote = params.destinatarios.slice(i, i + TAMANO_LOTE);
@@ -118,6 +119,7 @@ export async function mandarCampanaRealZoho(
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        if (Array.isArray(data.resultados)) resultados.push(...data.resultados);
         return { success: false, resultados, error: data.error || 'No se pudo mandar el lote.' };
       }
       resultados.push(...(data.resultados || []));
