@@ -140,7 +140,9 @@ export async function extraerResumenKitsDesdeSupabase(): Promise<{
   });
 
   // Procesar pedidos de Supabase (fuente primaria de la base de datos)
-  pedidosSupabase.forEach((p) => {
+  // Los cancelados (intentos de pago abandonados, reservas reemplazadas) no son pedidos reales:
+  // antes inflaban "Pedidos registrados" y "Total familias" (caso real 25/9: 14 pedidos de prueba).
+  pedidosSupabase.filter((p) => p.estado !== 'cancelado').forEach((p) => {
     const kitNormalizado = normalizarTipoKit(p.tipo_kit);
     const targetKit = kitMap[kitNormalizado] || kitMap['kit-clasico'];
 
@@ -152,7 +154,9 @@ export async function extraerResumenKitsDesdeSupabase(): Promise<{
       }
 
       // Identificador único de la familia
-      const familiaId = p.familia_id || p.familias?.id || p.familias?.whatsapp || p.familias?.nombre || p.id;
+      // Cada pedido crea su propia fila en "familias": se agrupa por email/WhatsApp para no contar
+      // la misma familia una vez por pedido.
+      const familiaId = String(p.familias?.email || '').trim().toLowerCase() || p.familias?.whatsapp || p.familia_id || p.familias?.id || p.familias?.nombre || p.id;
       const nombreFamilia = p.familias?.nombre || (p.familia_id ? `Familia (${p.familia_id.substring(0, 8)})` : 'Familia Escolar');
 
       if (!targetKit.familiasMap.has(familiaId)) {
