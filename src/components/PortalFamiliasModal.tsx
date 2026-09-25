@@ -1,4 +1,5 @@
 import { registrarContextoDeError } from '../services/reporteErrores';
+import { useNaveHabilitado } from '../services/mediosPagoService';
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { ViewfinderFocusIcon } from './RetratoEscolarLogo';
 import {
@@ -387,6 +388,11 @@ export default function PortalFamiliasModal({
   const [tutorWhatsapp, setTutorWhatsapp] = useState('');
   const [tutorEmail, setTutorEmail] = useState('');
   const [metodoPago, setMetodoPago] = useState<'mercadopago' | 'transferencia' | 'nave'>('mercadopago');
+  const naveHabilitado = useNaveHabilitado();
+  // Si Nave no está habilitado y quedó elegido, se vuelve a Mercado Pago.
+  useEffect(() => {
+    if (!naveHabilitado && metodoPago === 'nave' && step < 5) setMetodoPago('mercadopago');
+  }, [naveHabilitado, metodoPago, step]);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [numeroPedido, setNumeroPedido] = useState('');
   const [pedidoGenerado, setPedidoGenerado] = useState<PedidoEscolarCompleto | null>(null);
@@ -4013,7 +4019,7 @@ export default function PortalFamiliasModal({
                     2. Método de Pago Online
                   </h4>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className={`grid grid-cols-1 gap-2 ${naveHabilitado ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
                     <button
                       type="button"
                       onClick={() => setMetodoPago('mercadopago')}
@@ -4033,6 +4039,7 @@ export default function PortalFamiliasModal({
                       <p className="text-[10px] text-slate-500">Débito, crédito o dinero en cuenta</p>
                     </button>
 
+                    {naveHabilitado && (
                     <button
                       type="button"
                       onClick={() => setMetodoPago('nave')}
@@ -4051,6 +4058,7 @@ export default function PortalFamiliasModal({
                       <p className="text-xs font-bold text-slate-900">Nave</p>
                       <p className="text-[10px] text-slate-500">Tarjetas y QR (Banco Galicia)</p>
                     </button>
+                    )}
 
                     <button
                       type="button"
@@ -4420,7 +4428,7 @@ export default function PortalFamiliasModal({
                           { id: 'transferencia' as const, label: 'Transferencia', clases: 'bg-white hover:bg-slate-50 text-slate-800 border-slate-300' },
                         ]
                       )
-                        .filter((opcion) => opcion.id !== pedidoGenerado?.metodoPago)
+                        .filter((opcion) => opcion.id !== pedidoGenerado?.metodoPago && (opcion.id !== 'nave' || naveHabilitado))
                         .map((opcion) => (
                           <button
                             key={opcion.id}
