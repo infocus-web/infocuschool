@@ -1120,10 +1120,24 @@ app.get('/api/admin/alumnos/buscar', requireAdminAuth, async (req: Request, res:
     const soloDigitos = qRaw.replace(/\D/g, '');
     const codigoNormalizado = normalizarCodigoSeccion(qRaw);
     const qLike = `%${qRaw.replace(/[%_]/g, '\\$&')}%`;
+    // Búsqueda por nombre por palabras (caso real 25/9: "Olivia Ayelen Sanchez" no encontraba
+    // "SANCHEZ, OLIVIA AYELÉN"): la nómina viene como "Apellido, Nombre" y con tildes, y el ilike
+    // sobre el texto entero exigía el mismo orden y los mismos acentos. Ahora se trae a Supabase
+    // la palabra más larga con las vocales como comodín (tolera tildes) y acá se exige que estén
+    // todas las palabras, en cualquier orden y sin importar acentos.
+    const palabrasBusqueda = normalizarNombreComparable(qRaw).split(' ').filter((w) => w.length >= 2);
+    const palabraAncla = [...palabrasBusqueda].sort((a, b) => b.length - a.length)[0] || '';
+    const patronAncla = `%${palabraAncla.replace(/[%_\\]/g, '').replace(/[aeiou]/g, '_').replace(/n/g, '_')}%`;
+    const coincidePorPalabras = (nombre: unknown) => {
+      const n = normalizarNombreComparable(nombre);
+      return palabrasBusqueda.length > 0 && palabrasBusqueda.every((w) => n.includes(w));
+    };
 
-    const [colegiosRes, porNombreRes, porDniRes, seccionesRes, pedidosPorTelefonoRes] = await Promise.all([
+    const [colegiosRes, porNombreRes, porDniRes, seccionesRes, pedidosPorTelefonoRes, pedidosPorNombreRes] = await Promise.all([
       supabase.from('colegios').select('id, nombre'),
-      supabase.from('alumnos').select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni').ilike('nombre', qLike).limit(50),
+      palabraAncla
+        ? supabase.from('alumnos').select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni').ilike('nombre', patronAncla).limit(1000)
+        : Promise.resolve({ data: [], error: null } as any),
       supabase.from('alumnos').select('id, nombre, grado, division, turno, colegio_id, numero_lista, dni').ilike('dni', qLike).limit(50),
       codigoNormalizado.length >= 4
         ? supabase.from('codigos_seccion').select('colegio_id, grado, turno, division, codigo_secreto')
@@ -1137,6 +1151,18 @@ app.get('/api/admin/alumnos/buscar', requireAdminAuth, async (req: Request, res:
             .ilike('familias.whatsapp', `%${soloDigitos}%`)
             .order('created_at', { ascending: false })
             .limit(20)
+        : Promise.resolve({ data: [], error: null } as any),
+      // Pedidos por nombre del alumno: cubre chicos que no están en la nómina cargada (o con el
+      // nombre escrito distinto) — se muestran aparte si no quedaron asociados a un alumno.
+      palabraAncla.length >= 3
+        ? supabase
+            .from('pedidos')
+            .select(
+              'id, pedido_friendly_id, colegio_id, colegio_nombre, alumno_nombre, grado, division, kit_nombre, total, estado, created_at, familias(nombre, whatsapp, email)'
+            )
+            .ilike('alumno_nombre', patronAncla)
+            .order('created_at', { ascending: false })
+            .limit(500)
         : Promise.resolve({ data: [], error: null } as any),
     ]);
     if (porNombreRes.error) throw porNombreRes.error;
@@ -1167,7 +1193,7 @@ app.get('/api/admin/alumnos/buscar', requireAdminAuth, async (req: Request, res:
 
     // Combina y dedupea por id los tres caminos de búsqueda (nombre, DNI, código de sección).
     const mapaAlumnos = new Map<string, any>();
-    [...(porNombreRes.data || []), ...(porDniRes.data || []), ...alumnosDeSecciones].forEach((a) => mapaAlumnos.set(a.id, a));
+    [...(porNombreRes.data || []).filter((a: any) => coincidePorPalabras(a.nombre)), ...(porDniRes.data || []), ...alumnosDeSecciones].forEach((a) => mapaAlumnos.set(a.id, a));
     const alumnosEncontrados = Array.from(mapaAlumnos.values()).slice(0, 60);
 
     // Para cruzar pago, trae de una sola vez todos los pedidos de cada colegio involucrado
@@ -1262,7 +1288,16 @@ app.get('/api/admin/alumnos/buscar', requireAdminAuth, async (req: Request, res:
     // el nombre del alumno en ese pedido no matchee ningún alumno de la nómina cargada (typo,
     // alumno que ya no está en la lista, colegio sin nómina real cargada todavía, etc.), igual
     // que ya pasa en "Estado de pagos" con "Pedidos sin alumno en la nómina".
-    const pedidosPorTelefono = ((pedidosPorTelefonoRes as any).data || []).map((p: any) => ({
+    const idsYaMostrados = new Set(alumnosConDatos.map((a) => a.pedido?.id).filter(Boolean));
+    const pedidosSueltos = new Map<string, any>();
+    for (const p of (pedidosPorTelefonoRes as any).data || []) pedidosSueltos.set(p.id, p);
+    for (const p of ((pedidosPorNombreRes as any).data || []).filter((p: any) => coincidePorPalabras(p.alumno_nombre)).slice(0, 20)) {
+      const deAlumnoMostrado = alumnosEncontrados.some((a) => a.colegio_id === p.colegio_id
+        && (normalizarNombreComparable(a.nombre) === normalizarNombreComparable(p.alumno_nombre)
+          || normalizarNombrePorPalabras(a.nombre) === normalizarNombrePorPalabras(p.alumno_nombre)));
+      if (!idsYaMostrados.has(p.id) && !deAlumnoMostrado) pedidosSueltos.set(p.id, p);
+    }
+    const pedidosPorTelefono = Array.from(pedidosSueltos.values()).map((p: any) => ({
       id: p.id,
       numero: p.pedido_friendly_id || null,
       alumnoNombre: p.alumno_nombre,
@@ -1453,12 +1488,14 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
   // "listo para retirar" un pedido que todavía no se cobró (antes nada lo impedía, y el panel
   // pasaba a mostrarlo como "Aprobado").
   const estadosPago = new Map<string, string>();
+  // Pedidos que no pueden pasar por el laboratorio ahora (en espera, archivados o reservas sin fotos).
+  const bloqueados = new Map<string, string>();
   if (supabase) {
     const idsValidos = destinatarios.map((d: any) => d?.pedidoId).filter(Boolean);
     if (idsValidos.length > 0) {
       const { data: filasActuales, error: errorEstados } = await supabase
         .from('pedidos')
-        .select('id, estado, estado_lab')
+        .select('id, estado, estado_lab, en_espera, archivado, seleccion_pendiente')
         .in('id', idsValidos);
       if (errorEstados) {
         console.warn('[notificar-estado] No se pudo verificar el estado_lab actual antes de enviar:', errorEstados.message);
@@ -1466,6 +1503,9 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
         (filasActuales || []).forEach((fila: any) => {
           estadosActuales.set(fila.id, fila.estado_lab);
           estadosPago.set(fila.id, fila.estado);
+          if (fila.en_espera) bloqueados.set(fila.id, 'está "En espera" — sacalo de espera antes de avisar la etapa de laboratorio.');
+          else if (fila.archivado) bloqueados.set(fila.id, 'está archivado — desarchivalo antes de avisar la etapa de laboratorio.');
+          else if (fila.seleccion_pendiente) bloqueados.set(fila.id, 'es un kit pagado por adelantado y la familia todavía no eligió sus fotos.');
         });
       }
     }
@@ -1479,6 +1519,10 @@ app.post('/api/admin/pedidos/notificar-estado', requireAdminAuth, async (req: Re
     // una etapa hacia adelante, y retroceder una ya alcanzada.
     if (supabase && estadosPago.has(destinatario.pedidoId) && !['pagado', 'entregado'].includes(estadosPago.get(destinatario.pedidoId) as string)) {
       errores.push(`${destinatario.alumnoNombre || destinatario.to}: el pedido todavía no está pagado — aprobá el pago antes de avisar la etapa de laboratorio.`);
+      continue;
+    }
+    if (bloqueados.has(destinatario.pedidoId)) {
+      errores.push(`${destinatario.alumnoNombre || destinatario.to}: el pedido ${bloqueados.get(destinatario.pedidoId)}`);
       continue;
     }
     if (supabase && !puedeAvanzarEtapaLab(estadosActuales.get(destinatario.pedidoId) as EtapaLab | null, tipo)) {
@@ -1728,6 +1772,32 @@ app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => 
     return res.json({ success: true, pedido: data?.[0], linkDescargaHD: linkDescargaHD || undefined });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al actualizar pedido' });
+  }
+});
+
+// Organizar un pedido desde el panel sin borrarlo (pedido de Pablo, 25/9): archivar/desarchivar y
+// poner/sacar "en espera" con una nota. Ver la migración 20260925010000_pedidos_archivado_en_espera.
+app.post('/api/admin/pedidos/:id/organizar', requireAdminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { archivado, enEspera, notaEspera } = req.body || {};
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+
+    const updates: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (typeof archivado === 'boolean') updates.archivado = archivado;
+    if (typeof enEspera === 'boolean') {
+      updates.en_espera = enEspera;
+      updates.nota_espera = enEspera ? String(notaEspera || '').trim().slice(0, 300) || null : null;
+    }
+    if (Object.keys(updates).length === 1) return res.status(400).json({ success: false, error: 'No se indicó ningún cambio.' });
+
+    const { data, error } = await supabase.from('pedidos').update(updates).eq('id', id).select('id, archivado, en_espera, nota_espera');
+    if (error) throw error;
+    if (!data?.[0]) return res.status(404).json({ success: false, error: 'No se encontró el pedido.' });
+    return res.json({ success: true, archivado: data[0].archivado, enEspera: data[0].en_espera, notaEspera: data[0].nota_espera || '' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al organizar el pedido' });
   }
 });
 

@@ -187,7 +187,7 @@ export default function AdminBuscadorAlumnosTab() {
         <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 space-y-2">
           <h4 className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
             <Phone className="w-4 h-4" />
-            <span>Pedidos encontrados por ese teléfono ({pedidosPorTelefono.length})</span>
+            <span>Otros pedidos encontrados ({pedidosPorTelefono.length})</span>
           </h4>
           <p className="text-[11px] text-indigo-800">
             Puede que el nombre de estos pedidos no coincida con ningún alumno de la nómina cargada
