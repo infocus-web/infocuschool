@@ -8644,7 +8644,13 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10
     if (error) throw error;
 
     // Si hay un kit pagado por adelantado esperando fotos, ése es el que importa mostrar.
-    const propios = (data || []).filter((p) => normalizarNombrePorPalabras(p.alumno_nombre) === nombreBuscado);
+    // Una reserva de pago anticipado que quedó SIN pagar (la familia volvió de la pasarela sin
+    // pagar) no es un pedido: no se muestra "ya tenés un pedido registrado" por ella (caso real
+    // 25/9: "Elegir otro medio de pago" llevaba a ese aviso). La reserva se vuelve a ofrecer en la
+    // galería y, al crear una nueva, la vieja se cancela sola.
+    const propios = (data || []).filter((p: any) =>
+      normalizarNombrePorPalabras(p.alumno_nombre) === nombreBuscado && !(p.seleccion_pendiente && p.estado === 'pendiente_pago')
+    );
     const encontrado = propios.find((p: any) => p.seleccion_pendiente && p.estado === 'pagado') || propios[0];
     if (!encontrado) {
       return res.json({ success: true, existe: false });
