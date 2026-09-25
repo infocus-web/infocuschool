@@ -378,6 +378,37 @@ function getNaveCredenciales(): { clientId: string; clientSecret: string; posId:
 // 60s de margen para no arriesgarse a usarlo justo cuando expira.
 let naveTokenCache: { token: string; expiraEn: number; entorno: string } | null = null;
 
+// Crear la intención de pago en Nave con UN reintento automático. Caso real (25/9): Nave respondió
+// 502 sin cuerpo al primer intento y la familia esperó ~20 s y tuvo que tocar el botón de nuevo; el
+// segundo intento funcionó. Se reintenta sólo ante errores del lado de Nave (5xx / red / demora
+// mayor a 15 s), nunca ante un 4xx (datos rechazados), para no duplicar nada.
+async function crearIntencionNaveConReintento(url: string, accessToken: string, body: unknown): Promise<{ resp: globalThis.Response | null; data: any }> {
+  let ultimo: { resp: globalThis.Response | null; data: any } = { resp: null, data: null };
+  for (let intento = 1; intento <= 2; intento++) {
+    const controlador = new AbortController();
+    const temporizador = setTimeout(() => controlador.abort(), 15000);
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify(body),
+        signal: controlador.signal,
+      });
+      const data: any = await resp.json().catch(() => null);
+      ultimo = { resp, data };
+      if (resp.ok && data?.checkout_url) return ultimo;
+      if (resp.status < 500) return ultimo;
+      console.warn(`[Nave] Intento ${intento} de crear la intención falló con ${resp.status}.`);
+    } catch (err) {
+      console.warn(`[Nave] Intento ${intento} de crear la intención falló (red/demora):`, err);
+    } finally {
+      clearTimeout(temporizador);
+    }
+    if (intento === 1) await new Promise((resolve) => setTimeout(resolve, 800));
+  }
+  return ultimo;
+}
+
 async function obtenerNaveAccessToken(): Promise<string | null> {
   const credenciales = getNaveCredenciales();
   if (!credenciales) return null;
@@ -7875,17 +7906,12 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
     if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
     if (tutorTelefono) body.buyer.phone = tutorTelefono;
 
-    const resp = await fetch(crearIntencion, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify(body),
-    });
-    const data: any = await resp.json().catch(() => null);
-    if (!resp.ok || !data?.checkout_url) {
-      console.error('[Nave Crear Intención Error]:', resp.status, data);
+    const { resp, data } = await crearIntencionNaveConReintento(crearIntencion, accessToken, body);
+    if (!resp || !resp.ok || !data?.checkout_url) {
+      console.error('[Nave Crear Intención Error]:', resp?.status, data);
       return res.status(502).json({
         success: false,
-        error: (data && (data.message || data.error)) || 'Nave rechazó la creación de la intención de pago.',
+        error: (data && (data.message || data.error)) || 'Nave no respondió. Probá de nuevo en unos segundos o elegí otro medio de pago.',
       });
     }
 
@@ -7992,17 +8018,12 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
     if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
     if (tutorTelefono) body.buyer.phone = tutorTelefono;
 
-    const resp = await fetch(crearIntencion, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify(body),
-    });
-    const data: any = await resp.json().catch(() => null);
-    if (!resp.ok || !data?.checkout_url) {
-      console.error('[Nave Crear Intención Multiple Error]:', resp.status, data);
+    const { resp, data } = await crearIntencionNaveConReintento(crearIntencion, accessToken, body);
+    if (!resp || !resp.ok || !data?.checkout_url) {
+      console.error('[Nave Crear Intención Multiple Error]:', resp?.status, data);
       return res.status(502).json({
         success: false,
-        error: (data && (data.message || data.error)) || 'Nave rechazó la creación de la intención de pago combinada.',
+        error: (data && (data.message || data.error)) || 'Nave no respondió. Probá de nuevo en unos segundos o elegí otro medio de pago.',
       });
     }
 

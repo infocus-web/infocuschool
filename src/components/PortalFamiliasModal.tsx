@@ -565,6 +565,9 @@ export default function PortalFamiliasModal({
    * pantalla con el nuevo método, y limpia los links de pago viejos para que los efectos de
    * arriba generen uno nuevo del método recién elegido automáticamente.
    */
+  // Si la familia eligió a mano "Pagar con Nave / Mercado Pago", apenas esté el link se la lleva a
+  // pagar (antes el link se generaba y además había que tocar "Ir a pagar").
+  const redirigirAlTenerLinkRef = useRef(false);
   const handleCambiarMetodoPago = async (nuevoMetodo: 'mercadopago' | 'nave' | 'transferencia') => {
     if (!pedidoGenerado || cambiandoMetodoPago || nuevoMetodo === pedidoGenerado.metodoPago) return;
     const id = pedidoGenerado.supabaseId || pedidoGenerado.id;
@@ -579,6 +582,7 @@ export default function PortalFamiliasModal({
         return;
       }
 
+      redirigirAlTenerLinkRef.current = nuevoMetodo !== 'transferencia';
       setPedidoGenerado((prev) => (prev ? { ...prev, metodoPago: nuevoMetodo } : null));
       setMetodoPago(nuevoMetodo);
       setMpRedirectUrl(null);
@@ -645,8 +649,10 @@ export default function PortalFamiliasModal({
     ) {
       return;
     }
-    generarLinkDePago(pedidoGenerado, false);
-  }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, mpRedirectUrl]);
+    const redirigir = redirigirAlTenerLinkRef.current;
+    redirigirAlTenerLinkRef.current = false;
+    generarLinkDePago(pedidoGenerado, redirigir);
+  }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, mpRedirectUrl, pedidoGenerado?.metodoPago]);
 
   // Mismo mecanismo que el de arriba, pero para pedidos pagados con Nave.
   useEffect(() => {
@@ -660,8 +666,10 @@ export default function PortalFamiliasModal({
     ) {
       return;
     }
-    generarLinkDeNave(pedidoGenerado, false);
-  }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, naveRedirectUrl]);
+    const redirigir = redirigirAlTenerLinkRef.current;
+    redirigirAlTenerLinkRef.current = false;
+    generarLinkDeNave(pedidoGenerado, redirigir);
+  }, [step, pedidoGenerado?.id, pedidoGenerado?.supabaseId, pedidoGenerado?.estadoPago, naveRedirectUrl, pedidoGenerado?.metodoPago]);
 
   // Detección automática al retornar de Mercado Pago (?mp_status=approved&pedido_id=...)
   // o de Nave (?nave_status=vuelta&pedido_id=...) — Nave no manda el resultado en la URL de
