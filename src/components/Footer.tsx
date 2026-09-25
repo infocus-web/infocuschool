@@ -24,7 +24,7 @@ export default function Footer({ onOpenFamilias, onScrollTo, onOpenAdmin }: Foot
 
             <div className="flex items-center gap-2 text-slate-300 font-medium">
               <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Transacciones seguras con Mercado Pago y Transferencia</span>
+              <span>Transacciones seguras con Mercado Pago, Nave y Transferencia</span>
             </div>
           </div>
 

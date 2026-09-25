@@ -49,6 +49,7 @@ import {
   ResumenCierreAnio
 } from '../services/cierreAnioService';
 import AdminLaboratorioTab from './AdminLaboratorioTab';
+import AdminCampanaPagoAnticipado from './AdminCampanaPagoAnticipado';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
 import {
   loginAdminConServidor,
@@ -1558,7 +1559,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
 
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
-              <AdminInscriptosTab onProbarCodigo={onProbarCodigo} />
+              <>
+                <AdminCampanaPagoAnticipado />
+                <AdminInscriptosTab onProbarCodigo={onProbarCodigo} />
+              </>
             )}
 
             {/* TAB: BUSCAR ALUMNO (pedido de Pablo 2026-09-16: nombre/DNI/código/teléfono → ¿pagó?) */}
