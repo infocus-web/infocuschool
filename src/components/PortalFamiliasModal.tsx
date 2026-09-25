@@ -1,3 +1,4 @@
+import { registrarContextoDeError } from '../services/reporteErrores';
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { ViewfinderFocusIcon } from './RetratoEscolarLogo';
 import {
@@ -399,6 +400,22 @@ export default function PortalFamiliasModal({
   // El pedido en pantalla nunca llegó a registrarse en el servidor (falló /api/pedidos/crear): ahí
   // el 404 del estado es esperable y NO significa "fue anulado" — se deja el aviso real del error.
   const pedidoSinRegistrarRef = useRef(false);
+  // Lo que viaja con un reporte de error ("Avisar al equipo técnico"): en qué paso y con qué pedido.
+  useEffect(() => {
+    registrarContextoDeError('portal', {
+      abierto: isOpen,
+      paso: step,
+      colegio: selectedColegio?.nombre,
+      alumno: nombreAlumno,
+      grado,
+      division,
+      turno,
+      kit: selectedKit?.id,
+      metodoPago,
+      pedido: pedidoGenerado ? { id: pedidoGenerado.id, supabaseId: pedidoGenerado.supabaseId, grupo: pedidoGenerado.grupoPagoId, estado: pedidoGenerado.estadoPago, metodo: pedidoGenerado.metodoPago, total: pedidoGenerado.total } : null,
+      avisoEnPantalla: pagoError,
+    });
+  });
   const descartarPedidoInexistente = (referencia?: string | null) => {
     setPedidoYaNoExiste(true);
     setPagoError(null);

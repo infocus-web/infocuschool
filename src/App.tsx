@@ -14,6 +14,7 @@ import ModalInscripcionFamilia from './components/ModalInscripcionFamilia';
 const AdminModal = lazy(() => import('./components/AdminModal'));
 const EscaneoPedidoModal = lazy(() => import('./components/EscaneoPedidoModal'));
 import ErrorBoundary from './components/ErrorBoundary';
+import ReporteErrorPopup from './components/ReporteErrorPopup';
 import ReservaRetorno from './components/ReservaRetorno';
 import { InscripcionFamilia } from './services/inscripcionesService';
 
@@ -217,6 +218,9 @@ export default function App() {
           </Suspense>
         </ErrorBoundary>
       )}
+
+      {/* Aviso "Avisar al equipo técnico" cuando el servidor falla (ver services/reporteErrores.ts). */}
+      <ReporteErrorPopup />
     </div>
   );
 }
