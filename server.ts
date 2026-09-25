@@ -187,6 +187,13 @@ app.use(express.json({ limit: '4mb' }));
 // venta. Se subieron para uso legítimo en grupo; los secretos (códigos de 8 caracteres, tokens)
 // siguen siendo inviables de adivinar con estos topes.
 const intentosPorClave = new Map<string, { count: number; desde: number }>();
+// Preparación para la temporada (25/9, ~1300 familias en pocos días): en Argentina las compañías
+// de celular sacan a cientos de clientes por la MISMA IP pública (CGNAT), igual que el WiFi de un
+// colegio o una oficina. Con los topes anteriores (pensados para una IP = una persona) familias
+// reales podían quedar bloqueadas en horas pico. Se subieron los topes de las consultas normales
+// (galería, estado del pago, datos de la familia) y de las acciones de compra; los endpoints
+// sensibles a abuso (login de admin, IA, envío de emails) mantienen topes bajos. El conteo es por
+// instancia del servidor, así que en la práctica el margen es todavía mayor.
 function limitarFrecuencia(nombre: string, maxIntentos: number, ventanaMs: number) {
   return (req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip || 'desconocida';
@@ -226,7 +233,31 @@ function getResendClient(): Resend | null {
   if (!apiKey || apiKey.trim() === '') {
     return null;
   }
-  return new Resend(apiKey.trim());
+  const cliente = new Resend(apiKey.trim());
+  // Preparación temporada (25/9): Resend limita los envíos por segundo. En un pico (muchos pagos a
+  // la vez, avisos de fotos) un correo rechazado por ese límite o por un error pasajero de Resend
+  // se perdía: nadie lo reenviaba. Ahora cada envío (individual o por lotes) se reintenta hasta 4
+  // veces con espera creciente ante límite de frecuencia (429), error del servidor de Resend (5xx)
+  // o fallo de red. Errores de datos (email inválido, etc.) no se reintentan.
+  const conReintento = <T extends (...args: any[]) => Promise<any>>(fn: T): T =>
+    (async (...args: any[]) => {
+      let ultimo: any;
+      for (let intento = 0; intento < 4; intento++) {
+        try {
+          ultimo = await fn(...args);
+          const e: any = ultimo?.error;
+          const reintentable = e && (e.statusCode === 429 || e.name === 'rate_limit_exceeded' || (Number(e.statusCode) >= 500) || e.name === 'application_error' || e.name === 'internal_server_error');
+          if (!reintentable) return ultimo;
+        } catch (err) {
+          ultimo = { data: null, error: { name: 'network_error', message: (err as any)?.message || String(err) } };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 600 * (intento + 1) + Math.floor(Math.random() * 400)));
+      }
+      return ultimo;
+    }) as T;
+  cliente.emails.send = conReintento(cliente.emails.send.bind(cliente.emails));
+  cliente.batch.send = conReintento(cliente.batch.send.bind(cliente.batch));
+  return cliente;
 }
 
 // Las respuestas de las familias pueden llegar a una cuenta de Resend distinta de la que envía
@@ -1456,7 +1487,7 @@ app.get('/api/admin/pedidos', requireAdminAuth, async (req, res) => {
     const data = await traerTodasLasFilas((desde, hasta) =>
       supabase
         .from('pedidos')
-        .select('*, pedido_fotos(*), familias(nombre, whatsapp, email, colegio_id)')
+        .select('*, familias(nombre, whatsapp, email, colegio_id)')
         .order('created_at', { ascending: false })
         .order('id')
         .range(desde, hasta)
@@ -2811,7 +2842,7 @@ app.post('/api/admin/cerrar-anio/ejecutar', requireAdminAuth, async (req: Reques
 // combo del sitio— y devolvía las fotos reales sin pedir ningún código: cualquiera podía
 // ver las fotos de cualquier curso con sólo elegir las opciones del desplegable. Ahora el
 // grado/turno/división salen del código validado, nunca de lo que mande el navegador.
-app.get('/api/fotos', limitarFrecuencia('fotos-galeria', 600, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/fotos', limitarFrecuencia('fotos-galeria', 2000, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { codigo } = req.query as Record<string, string | undefined>;
     if (!codigo || !codigo.trim()) {
@@ -3616,7 +3647,7 @@ async function crearBuscadorEnNomina(supabase: SupabaseClient, colegioId: string
 // (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
 // Auditoría 2026-09-23: este endpoint público no tenía límite de frecuencia (manda correos y
 // escribe en la base), a diferencia del resto de los formularios públicos.
-app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar', 40, 15 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar', 150, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const {
       colegioId,
@@ -4036,7 +4067,7 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
 // puede informar el estado igual. Pero si esa familia YA tiene un código asignado, esta ruta
 // nunca lo devuelve por acá: como mucho reenvía el código al correo de confianza YA guardado
 // (nunca a uno nuevo) y responde sin datos de la familia.
-app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 40, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 150, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { query, tutorNombre, dni } = req.body || {};
     const q = String(query || '').trim();
@@ -4236,7 +4267,7 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
 // (`PortalFamiliasModal.tsx`) usa esto para poder alternar la galería mostrada sin pedirle a la
 // familia un código distinto por cada hijo — nunca se le entrega grado/turno/división "en
 // crudo" al navegador como si fuera la llave: la llave sigue siendo siempre un código secreto.
-app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 100, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/familia/hijos', limitarFrecuencia('familia-hijos', 500, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const codigo = String(req.query.codigo || '').trim().toUpperCase();
     if (!codigo) {
@@ -4774,7 +4805,7 @@ app.post('/api/padron/link/:codigo', limitarFrecuencia('padron-link-post', 20, 1
 // privado del servidor. La tabla no concede ningún permiso a anon/authenticated.
 // ==============================================================================
 
-app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 10, 15 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 40, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { nombre, email, telefono, colegio, numeroPedido, asunto, mensaje, sitioWeb } = req.body || {};
     if (String(sitioWeb || '').trim()) return res.json({ success: true });
@@ -5468,7 +5499,7 @@ app.post(
 // ==============================================================================
 
 // Envío público: cualquier familia puede dejar su solicitud, sin login
-app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 20, 15 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 60, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { nombreSolicitante, contacto, alumnoNombre, colegioId, colegioNombre, grado, division, turno, mensaje } = req.body || {};
 
@@ -6270,23 +6301,29 @@ async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: an
 
     if (elegidas.length === 0) return null;
 
+    // Preparación temporada (25/9): las fotos se descargan en paralelo (antes de a una) y el .zip
+    // se arma sin comprimir — los JPG ya vienen comprimidos, recomprimirlos no achica nada y
+    // gastaba CPU y segundos de la función en cada pago.
     const zip = new JSZip();
-    let algunaDescargada = false;
-    for (const item of elegidas) {
-      if (!item.foto.storage_path) continue;
-      const { data: archivo, error: errorDescarga } = await supabase.storage
-        .from('fotos-hd')
-        .download(item.foto.storage_path);
-      if (errorDescarga || !archivo) {
-        console.warn(`[ZIP HD] No se pudo descargar ${item.nombre} (pedido ${pedido.id}):`, errorDescarga?.message);
-        continue;
-      }
-      zip.file(item.nombre, Buffer.from(await archivo.arrayBuffer()));
-      algunaDescargada = true;
-    }
-    if (!algunaDescargada) return null;
+    const descargas = await Promise.all(
+      elegidas.filter((item) => item.foto.storage_path).map(async (item) => {
+        const { data: archivo, error: errorDescarga } = await supabase.storage
+          .from('fotos-hd')
+          .download(item.foto.storage_path);
+        if (errorDescarga || !archivo) {
+          console.warn(`[ZIP HD] No se pudo descargar ${item.nombre} (pedido ${pedido.id}):`, errorDescarga?.message);
+          return null;
+        }
+        return { nombre: item.nombre, contenido: Buffer.from(await archivo.arrayBuffer()) };
+      })
+    );
+    const faltantes = elegidas.filter((item) => item.foto.storage_path).length - descargas.filter(Boolean).length;
+    // Si falta alguna foto (error pasajero de Storage) no se entrega un .zip incompleto: se devuelve
+    // null y el reintento horario lo vuelve a armar completo.
+    if (faltantes > 0 || descargas.length === 0) return null;
+    for (const d of descargas) if (d) zip.file(d.nombre, d.contenido);
 
-    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' });
     // Auditoría 2026-09-23 (bug CRÍTICO de privacidad): antes el .zip se nombraba con el número
     // amigable del pedido (IFS-2026-XXXX, 4 dígitos al azar generados en el navegador) y se subía
     // con upsert:true. Con ~9.000 combinaciones posibles, dos pedidos distintos terminan tarde o
@@ -6343,7 +6380,9 @@ async function reintentarPedidosConHDPendiente(
     .select('*, familias(nombre, whatsapp, email)')
     .eq('estado', 'pagado')
     .eq('seleccion_pendiente', false)
-    .or('link_descarga_hd.is.null,link_descarga_hd.eq.')
+    // También los pagos con link pero cuyo correo no salió (p. ej. Resend caído en ese momento),
+    // limitado a los últimos 14 días para no escribirle a familias de pedidos viejos.
+    .or(`link_descarga_hd.is.null,link_descarga_hd.eq.,and(email_enviado.is.false,created_at.gte.${new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()})`)
     .lt('created_at', cortaFecha)
     .order('created_at', { ascending: false })
     .limit(500);
@@ -6358,10 +6397,14 @@ async function reintentarPedidosConHDPendiente(
 
   let resueltos = 0;
   let fallidos = 0;
+  // Tope de tiempo: la función tiene 60 s; con 20 .zip seguidos podía cortarse a la mitad. Lo que
+  // no alcance a procesarse queda para la próxima corrida (ahora cada hora).
+  const inicio = Date.now();
   // En serie, no en paralelo: a diferencia del webhook (que procesa como mucho los pedidos de UN
   // pago), acá puede haber varios pedidos de distintos pagos juntos, y no tiene sentido armar
   // todos los .zip al mismo tiempo dentro de una función serverless con tiempo límite.
   for (const pedido of pendientes) {
+    if (Date.now() - inicio > 40000) break;
     const emailDestino = pedido.familias.email;
     try {
       const linkDescargaHD = await generarYSubirZipHDParaPedido(supabase, pedido);
@@ -6393,10 +6436,62 @@ async function reintentarPedidosConHDPendiente(
 // cuando esa variable de entorno existe — hay que crearla en el proyecto de Vercel (cualquier
 // texto largo al azar sirve) para que este endpoint acepte las llamadas. Sin esa variable
 // configurada, el endpoint sigue existiendo pero rechaza todo (falla cerrado, no abierto).
-app.get('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
-  const secretoEsperado = process.env.CRON_SECRET;
+// Autorización de tareas programadas: acepta el CRON_SECRET de Vercel o el secreto que guarda la
+// base (tabla privada tareas_programadas_secreto), que es el que usa pg_cron de Supabase para
+// llamar cada 10 minutos sin depender del plan de Vercel ni de tener el secreto en otro lado.
+async function autorizarTareaProgramada(req: Request): Promise<boolean> {
   const autorizacion = req.headers.authorization || '';
-  if (!secretoEsperado || !compararTimingSafe(autorizacion, `Bearer ${secretoEsperado}`)) {
+  const secretoVercel = process.env.CRON_SECRET;
+  if (secretoVercel && compararTimingSafe(autorizacion, `Bearer ${secretoVercel}`)) return true;
+  const supabase = getServerSupabase();
+  if (!supabase) return false;
+  const { data } = await supabase.from('tareas_programadas_secreto').select('secreto').eq('id', 1).maybeSingle();
+  return Boolean(data?.secreto) && compararTimingSafe(autorizacion, `Bearer ${data!.secreto}`);
+}
+
+// Control automático de pagos (cada 10 minutos, vía pg_cron): reconsulta a Mercado Pago / Nave
+// los pedidos con link de pago generado que siguen sin pagar (o cancelados) en los últimos 3 días.
+// Así un pago acreditado cuyo aviso se perdió se registra solo, con su correo y su .zip, aunque la
+// familia haya cerrado la web.
+app.all('/api/cron/conciliar-pagos', async (req: Request, res: Response) => {
+  if (!(await autorizarTareaProgramada(req))) return res.status(401).json({ success: false, error: 'No autorizado.' });
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+  const inicio = Date.now();
+  const desde = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const columnas = 'id, estado, total, updated_at, mp_payment_id, metodo_pago, nave_payment_request_id, mp_preference_id, grupo_pago_id, pedido_friendly_id, link_descarga_hd, seleccion_pendiente';
+  const { data: candidatos, error } = await supabase
+    .from('pedidos')
+    .select(columnas)
+    .in('estado', ['pendiente_pago', 'cancelado'])
+    .gte('updated_at', desde)
+    .or('mp_preference_id.not.is.null,nave_payment_request_id.not.is.null')
+    .order('updated_at', { ascending: false })
+    .limit(400);
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  const vistos = new Set<string>();
+  let revisados = 0;
+  let pagados = 0;
+  for (const fila of candidatos || []) {
+    const clave = fila.grupo_pago_id || fila.id;
+    if (vistos.has(clave)) continue;
+    vistos.add(clave);
+    if (Date.now() - inicio > 45000) break; // margen dentro del límite de 60 s de la función
+    try {
+      const estado = await conciliarPagoPendiente(supabase, fila);
+      revisados += 1;
+      if (estado === 'pagado' && fila.estado !== 'pagado') pagados += 1;
+    } catch (err) {
+      console.error('[cron conciliar-pagos] Error con', clave, err);
+    }
+  }
+  if (pagados > 0) console.log(`[cron conciliar-pagos] ${pagados} pago(s) recuperados.`);
+  return res.json({ success: true, revisados, pagados });
+});
+
+app.all('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
+  // Además del cron diario de Vercel, pg_cron lo llama cada hora (ver autorizarTareaProgramada).
+  if (!(await autorizarTareaProgramada(req))) {
     return res.status(401).json({ success: false, error: 'No autorizado.' });
   }
   const supabase = getServerSupabase();
@@ -6763,7 +6858,7 @@ function calcularTotalPedido(kitId: string, carpetasExtras: unknown, cantidadFot
 }
 
 // Crear preferencia de pago en Mercado Pago
-app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferencia', 60, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferencia', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId,
@@ -6877,7 +6972,7 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
 // grupoPagoId compartido por todos los pedidos de este carrito (ver /api/pedidos/crear-multiple),
 // no el id de un pedido puntual — así el webhook sabe que tiene que marcar varias filas como
 // pagadas, no una sola.
-app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear-preferencia-multiple', 60, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear-preferencia-multiple', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const { grupoPagoId, items, tutorNombre, tutorEmail, tutorTelefono } = req.body || {};
 
@@ -7039,7 +7134,7 @@ async function cancelarReservasSinPagarDe(supabase: SupabaseClient, filas: { col
   }
 }
 
-app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 60, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId, kitId, carpetasExtras, tutorNombre, tutorTelefono, metodoPago,
@@ -7209,7 +7304,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 60, 10 * 60 * 
 // pedido nace siempre en "pendiente_pago" — nunca se acepta un total o estado mandado por el
 // cliente. No reemplaza a /api/pedidos/crear: una familia con un solo hijo sigue usando ese
 // camino exactamente como antes.
-app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multiple', 60, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multiple', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const { tutorNombre, tutorTelefono, tutorEmail, items } = req.body || {};
 
@@ -7432,7 +7527,7 @@ async function enviarCorreoReservaConfirmada(datos: {
   return { success: true };
 }
 
-app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 150, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { tutorNombre, tutorTelefono, tutorEmail, metodoPago, items, grupoPagoId: grupoExistente } = req.body || {};
     if (!Array.isArray(items) || items.length < 1 || items.length > 10) {
@@ -7628,7 +7723,7 @@ async function cursoTieneFotosDelPack(supabase: SupabaseClient, colegioId: strin
   return (count || 0) > 0;
 }
 
-app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 1500, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const codigo = String(req.query.codigo || '').trim().slice(0, 40);
     const alumnoNombre = String(req.query.alumnoNombre || '').trim().slice(0, 200);
@@ -7682,7 +7777,7 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
 
 // La familia elige las 3 fotos de un kit que ya pagó por adelantado. Sin cobro: se guardan las
 // fotos, se arma el .zip HD y se le manda el email con la descarga, igual que en un pago normal.
-app.post('/api/reservas/:id/elegir-fotos', limitarFrecuencia('reservas-elegir', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.post('/api/reservas/:id/elegir-fotos', limitarFrecuencia('reservas-elegir', 150, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { codigo, fotos } = req.body || {};
     const supabase = getServerSupabase();
@@ -7853,15 +7948,19 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
 
     return res.status(200).send('OK');
   } catch (error: any) {
+    // Preparación temporada (25/9): antes se respondía 200 también ante un error, así que Mercado
+    // Pago daba el aviso por entregado y NO reintentaba — un fallo pasajero (base de datos lenta,
+    // timeout) dejaba un pago acreditado sin registrar. Con 500, Mercado Pago reintenta, y el
+    // procesamiento es idempotente (marcar pagado con .neq('estado','pagado'): sin correos dobles).
     console.error('[Mercado Pago Webhook Error]:', error);
-    return res.status(200).send('OK');
+    return res.status(500).send('Error');
   }
 });
 
 // Crear intención de pago en Nave (Banco Galicia) — equivalente a
 // /api/mercadopago/crear-preferencia, mismo criterio de recalcular siempre el monto en el
 // servidor (nunca confiar en un total mandado por el cliente).
-app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 60, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
       pedidoId, kitId, kitNombre, alumnoNombre, colegioNombre, carpetasExtras, cantidadFotosSueltas,
@@ -7966,7 +8065,7 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
 // seguridad: cada monto se recalcula siempre acá con calcularTotalPedido. "external_payment_id"
 // es el grupoPagoId compartido por todos los pedidos del carrito (ver
 // /api/pedidos/crear-multiple) — un uuid entra justo en el límite de 36 caracteres de Nave.
-app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-intencion-multiple', 60, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-intencion-multiple', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const { grupoPagoId, items, tutorNombre, tutorEmail, tutorTelefono } = req.body || {};
 
@@ -8088,7 +8187,7 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
 // Auditoría 2026-09-21 (refuerzo): sin límite, una notificación falsa repetida a alta frecuencia
 // obligaba a reconsultar la API de Nave una y otra vez (gasto/carga innecesaria). El límite es
 // generoso a propósito para no bloquear notificaciones legítimas de Nave en picos de tráfico.
-app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('nave-webhook', 1000, 5 * 60 * 1000), async (req, res) => {
+app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('nave-webhook', 5000, 5 * 60 * 1000), async (req, res) => {
   try {
     const credenciales = getNaveCredenciales();
     if (!credenciales) {
@@ -8104,7 +8203,9 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('
     const accessToken = await obtenerNaveAccessToken();
     if (!accessToken) {
       console.error('[Nave Webhook] No se pudo autenticar contra Nave para reconfirmar el pago.');
-      return res.status(200).send('OK');
+      // 500 (antes 200): así Nave reintenta el aviso; además el control automático cada 10 min
+      // (/api/cron/conciliar-pagos) lo recupera igual si el aviso no vuelve.
+      return res.status(500).send('Error');
     }
 
     const { pagos } = getNaveUrls();
@@ -8114,7 +8215,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('
     const pago: any = await resp.json().catch(() => null);
     if (!resp.ok || !pago) {
       console.error('[Nave Webhook] No se pudo reconsultar el pago', paymentId, resp.status);
-      return res.status(200).send('OK');
+      return res.status(500).send('Error');
     }
 
     const estadoNave: string | undefined = pago?.status?.name;
@@ -8169,7 +8270,7 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('
     return res.status(200).send('OK');
   } catch (error: any) {
     console.error('[Nave Webhook Error]:', error);
-    return res.status(200).send('OK');
+    return res.status(500).send('Error');
   }
 });
 
@@ -8460,11 +8561,123 @@ app.get('/api/admin/zoho/historial', requireAdminAuth, async (req: Request, res:
   res.json({ success: true, envios: data });
 });
 
+// Respaldo de pagos (Nave y Mercado Pago): si un pedido sigue "pendiente_pago" pero ya se generó
+// un link de pago, se reconsulta directo a la pasarela y se autocorrige (marcar pagado + .zip +
+// correo, o cancelado). Lo usan /api/pedidos/:id/status (mientras la familia mira la pantalla) y
+// el control automático /api/cron/conciliar-pagos (cada 10 minutos, aunque nadie tenga la web
+// abierta). Devuelve el estado final del pedido.
+async function conciliarPagoPendiente(supabase: SupabaseClient, data: any): Promise<string> {
+  let estadoFinal: string = data.estado;
+  // Nave no firma sus webhooks (ver comentario en /api/nave/webhook) y, en teoría, una
+  // notificación puede perderse — la propia documentación de Nave recomienda esta consulta
+  // activa como respaldo ("Consultar una intención de pago... alternativa cuando la
+  // notificación no se recibe"). Se aprovecha este endpoint (que el Portal de Familias ya
+  // consulta con polling mientras el pago está pendiente) para hacer ese respaldo: si el
+  // pedido es de Nave, sigue pendiente, y tenemos el id de la intención, se reconsulta contra
+  // Nave y se autocorrige el estado en la base antes de responder.
+  // "cancelado" también se revisa: un intento cancelado puede haberse pagado después (la familia
+  // reintentó) y si ese aviso de la pasarela se perdió, el pago quedaría sin registrar.
+  const revisable = data.estado === 'pendiente_pago' || data.estado === 'cancelado';
+  if (data.metodo_pago === 'nave' && revisable && data.nave_payment_request_id) {
+    try {
+      const accessToken = await obtenerNaveAccessToken();
+      if (accessToken) {
+        const { intenciones } = getNaveUrls();
+        const resp = await fetch(`${intenciones}/${encodeURIComponent(data.nave_payment_request_id)}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        const intencion: any = await resp.json().catch(() => null);
+        const estadoIntencion = intencion?.status?.name;
+        // Auditoría 2026-09-23: antes esto actualizaba sólo `.eq('id', id)` — en un carrito
+        // multi-hijo (varias filas con el mismo grupo_pago_id y UNA sola intención de Nave) sólo
+        // el hermano que estaba en pantalla quedaba pagado y los demás seguían "pendiente_pago".
+        // Además, al marcarlo pagado acá no se armaba el .zip ni se mandaba el correo, y el
+        // webhook que llegaba después ya no lo procesaba (lo encontraba "pagado"). Ahora usa la
+        // misma lógica compartida que los webhooks.
+        const referencia = data.grupo_pago_id || data.id;
+        if (resp.ok && estadoIntencion === 'SUCCESS_PROCESSED') {
+          const pagoAprobadoId = intencion?.payment_attempts?.payments?.find((p: any) => p.status === 'APPROVED')?.payment_id;
+          const filasPagadas = await marcarReferenciaComoPagada(supabase, referencia, NaN, pagoAprobadoId ? { nave_payment_id: String(pagoAprobadoId) } : {});
+          await procesarPedidosRecienPagados(supabase, filasPagadas);
+          estadoFinal = 'pagado';
+        } else if (data.estado === 'pendiente_pago' && resp.ok && (estadoIntencion === 'FAILURE_PROCESSED' || estadoIntencion === 'EXPIRED' || estadoIntencion === 'BLOCKED')) {
+          await supabase
+            .from('pedidos')
+            .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+            .eq(data.grupo_pago_id ? 'grupo_pago_id' : 'id', referencia)
+            .neq('estado', 'pagado');
+          estadoFinal = 'cancelado';
+        }
+      }
+    } catch (errNave) {
+      console.warn('[Nave] No se pudo reconsultar la intención de pago como respaldo:', errNave);
+    }
+  }
+
+  // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): Mercado Pago SÍ
+  // firma sus webhooks (a diferencia de Nave), pero un webhook igual puede perderse por una
+  // caída puntual, un timeout, o quedar bloqueado por un error de configuración temporal — y
+  // hasta ahora no había ningún respaldo: un pedido pagado en Mercado Pago cuyo webhook no
+  // llegara se quedaba en "pendiente_pago" para siempre del lado nuestro, aunque el dinero sí
+  // se hubiera acreditado. Mismo criterio que el respaldo de Nave de arriba: si el pedido es
+  // de Mercado Pago, sigue pendiente y ya se intentó generar una preferencia de pago
+  // (mp_preference_id), se reconsulta directo contra la API de Mercado Pago por
+  // external_reference (el id del pedido, o el grupo_pago_id si es un carrito multi-hijo) y se
+  // autocorrige el estado antes de responder.
+  if (data.metodo_pago === 'mercadopago' && (estadoFinal === 'pendiente_pago' || estadoFinal === 'cancelado') && data.mp_preference_id) {
+    try {
+      const mpConfig = getMercadoPagoConfig();
+      if (mpConfig) {
+        const referenciaBusqueda = data.grupo_pago_id || data.id;
+        const resultadoBusqueda = await new Payment(mpConfig).search({
+          options: { external_reference: referenciaBusqueda, sort: 'date_created', criteria: 'desc' },
+        });
+        const pagos = resultadoBusqueda?.results || [];
+        const pagoAprobado = pagos.find((p) => p.status === 'approved');
+        // Auditoría 2026-09-23 (bug real): antes alcanzaba con que CUALQUIER intento viejo
+        // estuviera rechazado para cancelar el pedido — ej. la tarjeta rebotó y la familia pagó
+        // después en efectivo (Rapipago/Pago Fácil, queda "pending" hasta acreditarse): el portal
+        // le mostraba "pago rechazado" aunque tuviera un pago en curso. Sólo cuenta el intento
+        // MÁS RECIENTE (la búsqueda viene ordenada por fecha, descendente).
+        const ultimoPago = pagos[0];
+        const pagoRechazado = ultimoPago && (ultimoPago.status === 'rejected' || ultimoPago.status === 'cancelled') ? ultimoPago : undefined;
+        if (pagoAprobado) {
+          // Auditoría 2026-09-23: misma lógica compartida que el webhook (control de monto +
+          // .zip HD + correo). Antes acá sólo se cambiaba el estado y el correo con las fotos no
+          // salía nunca por este camino.
+          const filasPagadas = await marcarReferenciaComoPagada(
+            supabase,
+            data.grupo_pago_id || data.id,
+            Number(pagoAprobado.transaction_amount),
+            pagoAprobado.id ? { mp_payment_id: String(pagoAprobado.id) } : {}
+          );
+          await procesarPedidosRecienPagados(supabase, filasPagadas, pagoAprobado.payer?.email);
+          const { data: releido } = await supabase.from('pedidos').select('estado').eq('id', data.id).maybeSingle();
+          estadoFinal = releido?.estado || estadoFinal;
+        } else if (pagoRechazado && estadoFinal === 'pendiente_pago') {
+          const filtroActualizacion = data.grupo_pago_id
+            ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
+            : { columna: 'id' as const, valor: data.id };
+          await supabase
+            .from('pedidos')
+            .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+            .eq(filtroActualizacion.columna, filtroActualizacion.valor)
+            .neq('estado', 'pagado');
+          estadoFinal = 'cancelado';
+        }
+      }
+    } catch (errMp) {
+      console.warn('[Mercado Pago] No se pudo reconsultar el pago como respaldo:', errMp);
+    }
+  }
+  return estadoFinal;
+}
+
 // Endpoint público para que el cliente consulte el estado de pago actualizado de su pedido
 // Auditoría 2026-09-21 (refuerzo): la pantalla de "preparando tu descarga" lo consulta en un
 // intervalo corto mientras espera, así que el límite tiene que ser generoso para no cortar esa
 // consulta legítima — pero sin límite, se podía usar para probar IDs de pedido al voleo.
-app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 * 60 * 1000), async (req, res) => {
+app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 1500, 10 * 60 * 1000), async (req, res) => {
   try {
     const { id } = req.params;
     const supabase = getServerSupabase();
@@ -8512,106 +8725,7 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 *
       return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
     }
 
-    // Nave no firma sus webhooks (ver comentario en /api/nave/webhook) y, en teoría, una
-    // notificación puede perderse — la propia documentación de Nave recomienda esta consulta
-    // activa como respaldo ("Consultar una intención de pago... alternativa cuando la
-    // notificación no se recibe"). Se aprovecha este endpoint (que el Portal de Familias ya
-    // consulta con polling mientras el pago está pendiente) para hacer ese respaldo: si el
-    // pedido es de Nave, sigue pendiente, y tenemos el id de la intención, se reconsulta contra
-    // Nave y se autocorrige el estado en la base antes de responder.
-    let estadoFinal = data.estado;
-    if (data.metodo_pago === 'nave' && data.estado === 'pendiente_pago' && data.nave_payment_request_id) {
-      try {
-        const accessToken = await obtenerNaveAccessToken();
-        if (accessToken) {
-          const { intenciones } = getNaveUrls();
-          const resp = await fetch(`${intenciones}/${encodeURIComponent(data.nave_payment_request_id)}`, {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-          const intencion: any = await resp.json().catch(() => null);
-          const estadoIntencion = intencion?.status?.name;
-          // Auditoría 2026-09-23: antes esto actualizaba sólo `.eq('id', id)` — en un carrito
-          // multi-hijo (varias filas con el mismo grupo_pago_id y UNA sola intención de Nave) sólo
-          // el hermano que estaba en pantalla quedaba pagado y los demás seguían "pendiente_pago".
-          // Además, al marcarlo pagado acá no se armaba el .zip ni se mandaba el correo, y el
-          // webhook que llegaba después ya no lo procesaba (lo encontraba "pagado"). Ahora usa la
-          // misma lógica compartida que los webhooks.
-          const referencia = data.grupo_pago_id || data.id;
-          if (resp.ok && estadoIntencion === 'SUCCESS_PROCESSED') {
-            const pagoAprobadoId = intencion?.payment_attempts?.payments?.find((p: any) => p.status === 'APPROVED')?.payment_id;
-            const filasPagadas = await marcarReferenciaComoPagada(supabase, referencia, NaN, pagoAprobadoId ? { nave_payment_id: String(pagoAprobadoId) } : {});
-            await procesarPedidosRecienPagados(supabase, filasPagadas);
-            estadoFinal = 'pagado';
-          } else if (resp.ok && (estadoIntencion === 'FAILURE_PROCESSED' || estadoIntencion === 'EXPIRED' || estadoIntencion === 'BLOCKED')) {
-            await supabase
-              .from('pedidos')
-              .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
-              .eq(data.grupo_pago_id ? 'grupo_pago_id' : 'id', referencia)
-              .neq('estado', 'pagado');
-            estadoFinal = 'cancelado';
-          }
-        }
-      } catch (errNave) {
-        console.warn('[Nave] No se pudo reconsultar la intención de pago como respaldo:', errNave);
-      }
-    }
-
-    // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): Mercado Pago SÍ
-    // firma sus webhooks (a diferencia de Nave), pero un webhook igual puede perderse por una
-    // caída puntual, un timeout, o quedar bloqueado por un error de configuración temporal — y
-    // hasta ahora no había ningún respaldo: un pedido pagado en Mercado Pago cuyo webhook no
-    // llegara se quedaba en "pendiente_pago" para siempre del lado nuestro, aunque el dinero sí
-    // se hubiera acreditado. Mismo criterio que el respaldo de Nave de arriba: si el pedido es
-    // de Mercado Pago, sigue pendiente y ya se intentó generar una preferencia de pago
-    // (mp_preference_id), se reconsulta directo contra la API de Mercado Pago por
-    // external_reference (el id del pedido, o el grupo_pago_id si es un carrito multi-hijo) y se
-    // autocorrige el estado antes de responder.
-    if (data.metodo_pago === 'mercadopago' && estadoFinal === 'pendiente_pago' && data.mp_preference_id) {
-      try {
-        const mpConfig = getMercadoPagoConfig();
-        if (mpConfig) {
-          const referenciaBusqueda = data.grupo_pago_id || data.id;
-          const resultadoBusqueda = await new Payment(mpConfig).search({
-            options: { external_reference: referenciaBusqueda, sort: 'date_created', criteria: 'desc' },
-          });
-          const pagos = resultadoBusqueda?.results || [];
-          const pagoAprobado = pagos.find((p) => p.status === 'approved');
-          // Auditoría 2026-09-23 (bug real): antes alcanzaba con que CUALQUIER intento viejo
-          // estuviera rechazado para cancelar el pedido — ej. la tarjeta rebotó y la familia pagó
-          // después en efectivo (Rapipago/Pago Fácil, queda "pending" hasta acreditarse): el portal
-          // le mostraba "pago rechazado" aunque tuviera un pago en curso. Sólo cuenta el intento
-          // MÁS RECIENTE (la búsqueda viene ordenada por fecha, descendente).
-          const ultimoPago = pagos[0];
-          const pagoRechazado = ultimoPago && (ultimoPago.status === 'rejected' || ultimoPago.status === 'cancelled') ? ultimoPago : undefined;
-          if (pagoAprobado) {
-            // Auditoría 2026-09-23: misma lógica compartida que el webhook (control de monto +
-            // .zip HD + correo). Antes acá sólo se cambiaba el estado y el correo con las fotos no
-            // salía nunca por este camino.
-            const filasPagadas = await marcarReferenciaComoPagada(
-              supabase,
-              data.grupo_pago_id || data.id,
-              Number(pagoAprobado.transaction_amount),
-              pagoAprobado.id ? { mp_payment_id: String(pagoAprobado.id) } : {}
-            );
-            await procesarPedidosRecienPagados(supabase, filasPagadas, pagoAprobado.payer?.email);
-            const { data: releido } = await supabase.from('pedidos').select('estado').eq('id', data.id).maybeSingle();
-            estadoFinal = releido?.estado || estadoFinal;
-          } else if (pagoRechazado) {
-            const filtroActualizacion = data.grupo_pago_id
-              ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
-              : { columna: 'id' as const, valor: data.id };
-            await supabase
-              .from('pedidos')
-              .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
-              .eq(filtroActualizacion.columna, filtroActualizacion.valor)
-              .neq('estado', 'pagado');
-            estadoFinal = 'cancelado';
-          }
-        }
-      } catch (errMp) {
-        console.warn('[Mercado Pago] No se pudo reconsultar el pago como respaldo:', errMp);
-      }
-    }
+    const estadoFinal = await conciliarPagoPendiente(supabase, data);
 
     const esAprobado = estadoFinal === 'pagado' || estadoFinal === 'entregado';
     const esRechazado = estadoFinal === 'cancelado';
@@ -8664,7 +8778,7 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 *
 // elegido al crear el pedido, aunque el pago nunca se hubiera completado. Este endpoint permite
 // cambiar el método de pago de un pedido TODAVÍA NO PAGADO — el Portal de Familias lo llama
 // cuando la familia elige otro método desde esa misma pantalla de "Pendiente de Pago".
-app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-cambiar-metodo-pago', 40, 10 * 60 * 1000), async (req, res) => {
+app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-cambiar-metodo-pago', 150, 10 * 60 * 1000), async (req, res) => {
   try {
     const { id } = req.params;
     const { metodoPago } = req.body;
@@ -8744,7 +8858,7 @@ app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-camb
 // por nombre+DNI del tutor) — este chequeo no expone nada que esa familia no pueda ya ver. Aun
 // así se devuelve sólo un resumen mínimo (sin teléfono/email/link de descarga) y se rate-limitea
 // como el resto de los endpoints públicos de pedidos.
-app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10 * 60 * 1000), async (req: Request, res: Response) => {
+app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 500, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     // Auditoría 2026-09-23 (bug: el aviso de "ya tenés un pedido" NUNCA aparecía): el portal
     // mandaba acá el código SECRETO de la sección (ej. "88BU-M8TF") como `cursoCodigo`, pero
@@ -8834,7 +8948,7 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 100, 10
 //      posibles.
 const FORMATO_PEDIDO_FRIENDLY_ID = /^[A-Z]{2,4}-\d{4}-\d{3,5}$/;
 
-app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 10, 30 * 60 * 1000), async (req, res) => {
+app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 40, 30 * 60 * 1000), async (req, res) => {
   try {
     const qRaw = String(req.query.query || '').trim();
     if (!qRaw) {
