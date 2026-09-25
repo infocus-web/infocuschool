@@ -7401,6 +7401,9 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 
       const colegio = await buscarColegioReal(supabase, seccion.colegioId);
       if (!colegio) return res.status(400).json({ success: false, error: ERROR_COLEGIO_NO_VALIDO });
       const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
+      if (await cursoTieneFotosDelPack(supabase, seccion.colegioId, cursoCodigo)) {
+        return res.status(409).json({ success: false, error: `Las fotos de ${alumnoNombre} ya están online: elegilas en su galería y comprá desde ahí (el pago anticipado es sólo para cursos sin fotos).` });
+      }
 
       // Un mismo chico no puede quedar con dos kits pagados sin querer.
       const { data: previos } = await supabase
@@ -7496,6 +7499,19 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 
 });
 
 // ¿Este chico tiene un kit pagado por adelantado esperando que elijan sus fotos?
+// ¿El curso ya tiene fotos del pack online? Mismo criterio que /api/fotos (colegio + código de curso).
+// Caso real (25/9): el pago anticipado se ofrecía también para un hijo cuyo curso YA tenía fotos.
+async function cursoTieneFotosDelPack(supabase: SupabaseClient, colegioId: string, cursoCodigo: string): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('fotos')
+    .select('id', { count: 'exact', head: true })
+    .eq('colegio_id', colegioId)
+    .eq('codigo_curso', cursoCodigo)
+    .in('categoria', ['individual', 'grupal', 'docente']);
+  if (error) throw error;
+  return (count || 0) > 0;
+}
+
 app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const codigo = String(req.query.codigo || '').trim().slice(0, 40);
@@ -7506,6 +7522,7 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
     const seccion = await buscarSeccionPorCodigoSecreto(supabase, codigo);
     if (!seccion) return res.json({ success: true, reserva: null });
     const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
+    const fotosDisponibles = await cursoTieneFotosDelPack(supabase, seccion.colegioId, cursoCodigo);
     const { data, error } = await supabase
       .from('pedidos')
       .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, metodo_pago')
@@ -7520,9 +7537,10 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
     const propias = (data || []).filter((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === buscado);
     const pagada = propias.find((p: any) => p.estado === 'pagado');
     const elegida = pagada || propias[0];
-    if (!elegida) return res.json({ success: true, reserva: null });
+    if (!elegida) return res.json({ success: true, reserva: null, fotosDisponibles });
     return res.json({
       success: true,
+      fotosDisponibles,
       reserva: {
         id: elegida.id,
         pedidoFriendlyId: elegida.pedido_friendly_id,

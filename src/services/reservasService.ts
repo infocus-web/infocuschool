@@ -40,16 +40,25 @@ export async function crearReserva(datos: {
   }
 }
 
-export async function obtenerReservaPendiente(codigoSeccion: string, alumnoNombre: string): Promise<ReservaPendiente | null> {
-  if (!codigoSeccion || !alumnoNombre) return null;
+/** Reserva del alumno (si hay) y si su curso ya tiene fotos online (entonces no se puede reservar). */
+export async function obtenerEstadoReserva(
+  codigoSeccion: string,
+  alumnoNombre: string
+): Promise<{ reserva: ReservaPendiente | null; fotosDisponibles: boolean }> {
+  if (!codigoSeccion || !alumnoNombre) return { reserva: null, fotosDisponibles: false };
   try {
     const params = new URLSearchParams({ codigo: codigoSeccion, alumnoNombre });
     const res = await fetch(`/api/reservas/pendiente?${params.toString()}`);
     const data = await res.json();
-    return res.ok && data.success && data.reserva ? (data.reserva as ReservaPendiente) : null;
+    if (!res.ok || !data.success) return { reserva: null, fotosDisponibles: false };
+    return { reserva: (data.reserva as ReservaPendiente) || null, fotosDisponibles: Boolean(data.fotosDisponibles) };
   } catch {
-    return null;
+    return { reserva: null, fotosDisponibles: false };
   }
+}
+
+export async function obtenerReservaPendiente(codigoSeccion: string, alumnoNombre: string): Promise<ReservaPendiente | null> {
+  return (await obtenerEstadoReserva(codigoSeccion, alumnoNombre)).reserva;
 }
 
 export async function elegirFotosDeReserva(
