@@ -167,7 +167,7 @@ function TarjetaPedidoLaboratorio({
                   <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
                 </div>
               ) : (
-                <img src={archivo.urlMuestra} alt="" className="w-6 h-6 rounded object-cover border border-slate-200 shrink-0 bg-white" />
+                <img src={archivo.urlMuestra} alt="" loading="lazy" decoding="async" className="w-6 h-6 rounded object-cover border border-slate-200 shrink-0 bg-white" />
               )}
               <span className="truncate">
                 {modoEstructuraCarpetas === 'solo_2_carpetas_tamano' ? (
@@ -1423,7 +1423,7 @@ export default function AdminLaboratorioTab({
                                       <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
                                     </div>
                                   ) : (
-                                    <img
+                                    <img loading="lazy" decoding="async"
                                       src={archivo.urlMuestra}
                                       alt=""
                                       className="w-6 h-6 rounded object-cover border border-slate-200 shrink-0 bg-white"

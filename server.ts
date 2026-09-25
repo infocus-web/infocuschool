@@ -1863,6 +1863,40 @@ app.post('/api/admin/pedidos/:id/organizar', requireAdminAuth, async (req, res) 
   }
 });
 
+// "Estado del sistema" (preparación temporada 25/9): un vistazo rápido para el panel de lo que
+// puede necesitar atención — pagos sin descarga HD o sin correo, transferencias por aprobar,
+// consultas nuevas y si los controles automáticos están corriendo.
+app.get('/api/admin/salud', requireAdminAuth, async (_req, res) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+    const hace15min = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const contar = async (consulta: any) => {
+      const { count, error } = await consulta;
+      if (error) throw error;
+      return count || 0;
+    };
+    const base = () => supabase.from('pedidos').select('id', { count: 'exact', head: true });
+    const [pagadosSinHD, pagadosSinEmail, transferenciasPendientes, consultasNuevas, tareas] = await Promise.all([
+      contar(base().eq('estado', 'pagado').eq('seleccion_pendiente', false).or('link_descarga_hd.is.null,link_descarga_hd.eq.').lt('updated_at', hace15min)),
+      contar(base().eq('estado', 'pagado').eq('email_enviado', false).lt('updated_at', hace15min)),
+      contar(base().eq('estado', 'pendiente_pago').eq('metodo_pago', 'transferencia').eq('archivado', false)),
+      contar(supabase.from('consultas_familias').select('id', { count: 'exact', head: true }).eq('estado', 'nueva')),
+      supabase.from('tareas_programadas_estado').select('nombre, ultima_ejecucion, resultado'),
+    ]);
+    return res.json({
+      success: true,
+      pagadosSinHD,
+      pagadosSinEmail,
+      transferenciasPendientes,
+      consultasNuevas,
+      tareas: (tareas as any).data || [],
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'No se pudo leer el estado.' });
+  }
+});
+
 // Eliminar pedido protegido
 app.delete('/api/admin/pedidos/:id', requireAdminAuth, async (req, res) => {
   try {
@@ -6486,6 +6520,7 @@ app.all('/api/cron/conciliar-pagos', async (req: Request, res: Response) => {
     }
   }
   if (pagados > 0) console.log(`[cron conciliar-pagos] ${pagados} pago(s) recuperados.`);
+  await supabase.from('tareas_programadas_estado').upsert({ nombre: 'conciliar-pagos', ultima_ejecucion: new Date().toISOString(), resultado: { revisados, pagados } });
   return res.json({ success: true, revisados, pagados });
 });
 
@@ -6498,6 +6533,7 @@ app.all('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
   if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
   const resultado = await reintentarPedidosConHDPendiente(supabase);
   console.log('[cron reintentar-hd]', resultado);
+  await supabase.from('tareas_programadas_estado').upsert({ nombre: 'reintentar-hd', ultima_ejecucion: new Date().toISOString(), resultado });
   return res.json({ success: true, ...resultado });
 });
 
@@ -7075,6 +7111,22 @@ const KITS_COMPRABLES_PORTAL = new Set(['kit-clasico', 'kit-digital']);
 // al azar, sin chequear si ya existe. Se usa para buscar el pedido, en el correo y (antes) como
 // nombre del .zip HD. Acá se garantiza que no se repita: si el propuesto ya existe (o ya se usó
 // dentro del mismo carrito) se genera otro en el servidor, y se le devuelve al navegador el final.
+// Inserta filas en "pedidos" y, si dos compras simultáneas chocaron con el mismo número amigable
+// (índice único pedidos_pedido_friendly_id_unico, error 23505), les asigna números nuevos y
+// reintenta. Las filas se modifican en el lugar, así quien llama devuelve el número definitivo.
+async function insertarPedidosConReintento(supabase: SupabaseClient, filas: Record<string, any>[], columnas = 'id') {
+  let resultado: { data: any[] | null; error: any } = { data: null, error: null };
+  for (let intento = 0; intento < 4; intento++) {
+    resultado = await supabase.from('pedidos').insert(filas).select(columnas);
+    const e = resultado.error;
+    const esChoqueNumero = e && e.code === '23505' && /friendly/i.test(`${e.message || ''} ${e.details || ''}`);
+    if (!esChoqueNumero) return resultado;
+    const usados = new Set<string>();
+    for (const fila of filas) fila.pedido_friendly_id = await asegurarFriendlyIdUnico(supabase, '', usados);
+  }
+  return resultado;
+}
+
 async function asegurarFriendlyIdUnico(supabase: SupabaseClient, propuesto: unknown, yaUsados: Set<string>): Promise<string> {
   const formato = /^IFS-\d{4}-\d{4,5}$/; // debe seguir matcheando FORMATO_PEDIDO_FRIENDLY_ID (buscador)
   let candidato = String(propuesto || '').trim().toUpperCase().slice(0, 40);
@@ -7279,12 +7331,9 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 *
       filaPedido.id = pedidoId;
     }
 
-    const { data: pedidoCreado, error: errorPedido } = await supabase
-      .from('pedidos')
-      .insert(filaPedido)
-      .select('id')
-      .single();
+    const { data: insertados, error: errorPedido } = await insertarPedidosConReintento(supabase, [filaPedido]);
     if (errorPedido) throw errorPedido;
+    const pedidoCreado = insertados![0];
     await cancelarReservasSinPagarDe(supabase, [filaPedido as any]);
 
     return res.json({ success: true, pedidoId: pedidoCreado.id, pedidoFriendlyId: filaPedido.pedido_friendly_id, total: totalCalculado });
@@ -7458,10 +7507,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
       filasPedido.push(fila);
     }
 
-    const { data: pedidosCreados, error: errorPedidos } = await supabase
-      .from('pedidos')
-      .insert(filasPedido)
-      .select('id');
+    const { data: pedidosCreados, error: errorPedidos } = await insertarPedidosConReintento(supabase, filasPedido);
     if (errorPedidos) throw errorPedidos;
     await cancelarReservasSinPagarDe(supabase, filasPedido as any[]);
 
@@ -7694,7 +7740,7 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 150, 10 * 60
         seleccion_pendiente: true,
       });
     }
-    const { error } = await supabase.from('pedidos').insert(filas);
+    const { error } = await insertarPedidosConReintento(supabase, filas);
     if (error) throw error;
 
     return res.json({
