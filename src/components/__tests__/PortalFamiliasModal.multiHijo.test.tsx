@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import PortalFamiliasModal from '../PortalFamiliasModal';
 import {
   CODIGO_FAMILIAR,
@@ -130,6 +130,28 @@ describe('PortalFamiliasModal — carrito multi-hijo (mellizos, misma sección)'
     await user.click(botonContinuar);
 
     // Ya en el Paso 3: aparece el selector de Kits ("Elegí tu Kit Fotográfico").
+    await screen.findByText(/elegí tu kit fotográfico/i);
+  });
+
+  it('un hermano cuyo curso todavía no tiene fotos no bloquea la compra del otro (25/9)', async () => {
+    // Mismo escenario, pero el servidor informa que el curso de Sofia todavía no tiene fotos: antes
+    // "Elegir Kit y Formato" exigía sus 3 fotos (imposible) y la familia no podía comprar nunca.
+    const fetchBase = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const implementacionBase = fetchBase.getMockImplementation() as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    fetchBase.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/reservas/pendiente') && decodeURIComponent(url).includes('Sofia')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, reserva: null, fotosDisponibles: false, tienePedidoPagado: false }) } as Response;
+      }
+      return implementacionBase(input, init);
+    });
+    const user = await abrirGaleriaConDosHijos();
+
+    await elegirFoto(user, 'grupal', /foto grupal/i);
+    await elegirFoto(user, 'individual', /foto individual/i);
+    await elegirFoto(user, 'docente', /foto.*seño|foto docente/i);
+
+    await user.click(screen.getByRole('button', { name: /elegir kit y formato/i }));
     await screen.findByText(/elegí tu kit fotográfico/i);
   });
 });

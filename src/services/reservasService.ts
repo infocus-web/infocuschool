@@ -25,6 +25,8 @@ export async function crearReserva(datos: {
   tutorTelefono?: string;
   metodoPago: 'mercadopago' | 'nave' | 'transferencia';
   items: { codigoSeccion: string; alumnoNombre: string; kitId: KitReserva }[];
+  /** Sumar la reserva a una compra ya registrada (mismo pago), en vez de crear un pago aparte. */
+  grupoPagoId?: string;
 }): Promise<{ success: boolean; grupoPagoId?: string; total?: number; pedidoFriendlyIds?: string[]; error?: string }> {
   try {
     const res = await fetch('/api/reservas/crear', {
@@ -44,16 +46,21 @@ export async function crearReserva(datos: {
 export async function obtenerEstadoReserva(
   codigoSeccion: string,
   alumnoNombre: string
-): Promise<{ reserva: ReservaPendiente | null; fotosDisponibles: boolean }> {
-  if (!codigoSeccion || !alumnoNombre) return { reserva: null, fotosDisponibles: false };
+): Promise<{ ok: boolean; reserva: ReservaPendiente | null; fotosDisponibles: boolean; tienePedidoPagado: boolean }> {
+  if (!codigoSeccion || !alumnoNombre) return { ok: false, reserva: null, fotosDisponibles: false, tienePedidoPagado: false };
   try {
     const params = new URLSearchParams({ codigo: codigoSeccion, alumnoNombre });
     const res = await fetch(`/api/reservas/pendiente?${params.toString()}`);
     const data = await res.json();
-    if (!res.ok || !data.success) return { reserva: null, fotosDisponibles: false };
-    return { reserva: (data.reserva as ReservaPendiente) || null, fotosDisponibles: Boolean(data.fotosDisponibles) };
+    if (!res.ok || !data.success) return { ok: false, reserva: null, fotosDisponibles: false, tienePedidoPagado: false };
+    return {
+      ok: true,
+      reserva: (data.reserva as ReservaPendiente) || null,
+      fotosDisponibles: Boolean(data.fotosDisponibles),
+      tienePedidoPagado: Boolean(data.tienePedidoPagado),
+    };
   } catch {
-    return { reserva: null, fotosDisponibles: false };
+    return { ok: false, reserva: null, fotosDisponibles: false, tienePedidoPagado: false };
   }
 }
 
@@ -78,4 +85,14 @@ export async function elegirFotosDeReserva(
   } catch {
     return { success: false, error: 'Error de conexión. Revisá tu internet e intentá de nuevo.' };
   }
+}
+
+/** Kit reservado que se suma a la compra de un hermano con fotos (se paga todo junto). */
+export interface ReservaParaSumar {
+  hijoId: string;
+  nombreCompleto: string;
+  codigoSeccion: string;
+  kitId: KitReserva;
+  kitNombre: string;
+  precio: number;
 }
