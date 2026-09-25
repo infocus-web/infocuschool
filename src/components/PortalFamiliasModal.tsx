@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { sugerirCorreccionEmail } from '../utils/emailSugerencia';
+import { volvioSinPagar } from '../utils/pagoRetorno';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import {
@@ -522,6 +523,9 @@ export default function PortalFamiliasModal({
             prev ? { ...prev, estadoPago: 'rechazado' } : null
           );
           setMensajeEstadoPago('El pago fue rechazado o cancelado.');
+        } else if (volvioSinPagar(window.location.search)) {
+          // Volvió de Mercado Pago sin pagar ("Volver a la tienda"): no es un pago en proceso.
+          setMensajeEstadoPago('No completaste el pago: no se te cobró nada. Podés volver a intentarlo cuando quieras.');
         } else {
           setMensajeEstadoPago('El pago aún se encuentra en procesamiento.');
         }

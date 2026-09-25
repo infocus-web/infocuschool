@@ -158,18 +158,24 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
             <div key={h.id} className="rounded-xl border border-slate-200 p-3">
               <p className="mb-2 text-xs font-bold text-slate-800">{h.nombreCompleto}</p>
               <div className="grid gap-2 sm:grid-cols-3">
+                {/* Pedido de Pablo (25/9): "Ahora no" elegido casi no se distinguía del fondo. Toda
+                    opción elegida lleva ahora borde grueso de color y un ✓ arriba a la derecha. */}
                 {KITS_RESERVA.map((kit) => (
-                  <label key={kit.id} className={`cursor-pointer rounded-lg border p-2 text-xs ${kits[h.id] === kit.id ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-300' : 'border-slate-200 hover:bg-slate-50'}`}>
+                  <label key={kit.id} className={`relative cursor-pointer rounded-lg border-2 p-2 text-xs ${kits[h.id] === kit.id ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-200' : 'border-slate-200 hover:bg-slate-50'}`}>
                     <input type="radio" className="sr-only" name={`kit-${h.id}`} checked={kits[h.id] === kit.id} onChange={() => setKits((k) => ({ ...k, [h.id]: kit.id }))} />
+                    {kits[h.id] === kit.id && <CheckCircle2 className="absolute right-2 top-2 h-4 w-4 text-amber-600" aria-hidden="true" />}
                     <span className="block font-bold text-slate-900">{kit.nombre}</span>
                     <span className="block font-extrabold text-amber-700">${kit.precio.toLocaleString('es-AR')}</span>
                     <span className="block text-[10px] text-slate-500">{kit.detalle}</span>
                   </label>
                 ))}
-                <label className={`cursor-pointer rounded-lg border p-2 text-xs ${kits[h.id] === '' ? 'border-slate-400 bg-slate-50 ring-1 ring-slate-300' : 'border-slate-200 hover:bg-slate-50'}`}>
+                <label className={`relative cursor-pointer rounded-lg border-2 p-2 text-xs ${kits[h.id] === '' ? 'border-slate-700 bg-slate-100 ring-2 ring-slate-300' : 'border-slate-200 hover:bg-slate-50'}`}>
                   <input type="radio" className="sr-only" name={`kit-${h.id}`} checked={kits[h.id] === ''} onChange={() => setKits((k) => ({ ...k, [h.id]: '' }))} />
-                  <span className="block font-bold text-slate-700">Ahora no</span>
-                  <span className="block text-[10px] text-slate-500">Elijo y pago cuando estén las fotos</span>
+                  {kits[h.id] === '' && <CheckCircle2 className="absolute right-2 top-2 h-4 w-4 text-slate-700" aria-hidden="true" />}
+                  <span className={`block font-bold ${kits[h.id] === '' ? 'text-slate-900' : 'text-slate-700'}`}>Ahora no</span>
+                  <span className="block text-[10px] text-slate-500">
+                    {kits[h.id] === '' ? 'Elegido: pagás cuando estén las fotos' : 'Elijo y pago cuando estén las fotos'}
+                  </span>
                 </label>
               </div>
             </div>
