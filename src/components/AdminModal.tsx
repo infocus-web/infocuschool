@@ -281,6 +281,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   // con checkboxes en la tabla de "Pedidos" y un botón para eliminarlos todos juntos, reusando el
   // mismo endpoint de borrado (uno por uno, en secuencia) porque el servidor no tiene un endpoint
   // de borrado masivo.
+  const firmaPedidosResumen = useMemo(
+    () => pedidosCompletos.map((p) => `${p.id}:${p.estadoPago}`).sort().join('|'),
+    [pedidosCompletos]
+  );
   const [pedidosSeleccionados, setPedidosSeleccionados] = useState<Set<string>>(new Set());
   const [eliminandoSeleccionados, setEliminandoSeleccionados] = useState(false);
 
@@ -1619,7 +1623,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
             {/* TAB 1: PEDIDOS */}
             {activeTab === 'pedidos' && (
               <div className="space-y-4">
-                <AdminResumenKitsSection />
+                <AdminResumenKitsSection firmaPedidos={firmaPedidosResumen} />
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     {/* Pedido de Pablo (25/9): que el título diga en qué lista se está parado. */}

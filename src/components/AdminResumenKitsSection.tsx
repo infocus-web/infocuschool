@@ -12,9 +12,11 @@ import { formatearNumeroVisual } from '../services/configuracionService';
 
 interface Props {
   className?: string;
+  /** Cambia cuando la lista de pedidos cambia (eliminar, aprobar, archivar…): el resumen se recalcula. */
+  firmaPedidos?: string;
 }
 
-export default function AdminResumenKitsSection({ className = '' }: Props) {
+export default function AdminResumenKitsSection({ className = '', firmaPedidos }: Props) {
   const [kits, setKits] = useState<KitResumenData[]>([]);
   const [totalFamilias, setTotalFamilias] = useState(0);
   const [totalPedidos, setTotalPedidos] = useState(0);
@@ -50,9 +52,10 @@ export default function AdminResumenKitsSection({ className = '' }: Props) {
     }
   };
 
+  // Antes se calculaba solo al abrir el panel: tras eliminar pedidos seguía mostrando los viejos (caso real 25/9).
   useEffect(() => {
     cargarDatos();
-  }, []);
+  }, [firmaPedidos]);
 
   const getKitIcon = (icono: string) => {
     switch (icono) {
