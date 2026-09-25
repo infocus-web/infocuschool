@@ -3126,6 +3126,7 @@ export default function PortalFamiliasModal({
                     tutorNombre={tutorNombre || familiaActiva?.padreNombre || ''}
                     tutorEmail={tutorEmail || familiaActiva?.email || ''}
                     tutorTelefono={tutorWhatsapp || familiaActiva?.telefonoWhatsApp || ''}
+                    onVerFotosHijo={hijosFamilia.length > 1 ? (id) => seleccionarHijo(id) : undefined}
                   />
                 </div>
               ) : (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CreditCard, Loader2, Sparkles } from 'lucide-react';
-import { crearReserva, KITS_RESERVA, obtenerReservaPendiente, type KitReserva, type ReservaPendiente } from '../services/reservasService';
+import { crearReserva, KITS_RESERVA, obtenerEstadoReserva, type KitReserva, type ReservaPendiente } from '../services/reservasService';
 import { crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
 import { crearIntencionPagoNaveMultiple } from '../services/naveService';
 
@@ -15,6 +15,8 @@ interface Props {
   tutorNombre: string;
   tutorEmail: string;
   tutorTelefono?: string;
+  /** Pasar a la galería de un hijo cuyo curso ya tiene fotos (ahí se elige y se compra normal). */
+  onVerFotosHijo?: (hijoId: string) => void;
 }
 
 type Metodo = 'mercadopago' | 'nave' | 'transferencia';
@@ -24,9 +26,12 @@ type Metodo = 'mercadopago' | 'nave' | 'transferencia';
  * adelantado"). Se muestra mientras el curso todavía no tiene fotos: la familia elige el kit de
  * cada hijo y lo paga ya; cuando se suben las fotos, las elige sin volver a pagar.
  */
-export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, tutorTelefono }: Props) {
+export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, tutorTelefono, onVerFotosHijo }: Props) {
   const [kits, setKits] = useState<Record<string, KitReserva | ''>>({});
   const [reservas, setReservas] = useState<Record<string, ReservaPendiente | null>>({});
+  // Hijos cuyo curso YA tiene fotos: no se reservan (caso real 25/9, se cobraba igual por adelantado).
+  const [conFotos, setConFotos] = useState<Record<string, boolean>>({});
+  const [cargando, setCargando] = useState(true);
   const [email, setEmail] = useState(tutorEmail);
   const [metodo, setMetodo] = useState<Metodo>('mercadopago');
   const [enviando, setEnviando] = useState(false);
@@ -39,14 +44,17 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
   const claveHijos = hijos.map((h) => `${h.id}|${h.codigoSeccion}|${h.nombreCompleto}`).join(';');
   useEffect(() => {
     let cancelado = false;
-    Promise.all(hijos.map(async (h) => [h.id, await obtenerReservaPendiente(h.codigoSeccion, h.nombreCompleto)] as const)).then((pares) => {
+    setCargando(true);
+    Promise.all(hijos.map(async (h) => [h.id, await obtenerEstadoReserva(h.codigoSeccion, h.nombreCompleto)] as const)).then((pares) => {
       if (cancelado) return;
-      setReservas(Object.fromEntries(pares));
+      setReservas(Object.fromEntries(pares.map(([id, e]) => [id, e.reserva])));
+      setConFotos(Object.fromEntries(pares.map(([id, e]) => [id, e.fotosDisponibles])));
       setKits((prev) => {
         const nuevo = { ...prev };
-        for (const [id, reserva] of pares) if (!reserva?.pagada && nuevo[id] === undefined) nuevo[id] = 'kit-clasico';
+        for (const [id, e] of pares) if (!e.reserva?.pagada && !e.fotosDisponibles && nuevo[id] === undefined) nuevo[id] = 'kit-clasico';
         return nuevo;
       });
+      setCargando(false);
     });
     return () => {
       cancelado = true;
@@ -61,7 +69,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
     const r = reservas[id];
     return Boolean(r && !r.pagada && r.metodoPago === 'transferencia' && !reabiertos[id]);
   };
-  const hijosSinReservaPagada = hijos.filter((h) => !reservas[h.id]?.pagada && !esperandoTransferencia(h.id));
+  const hijosSinReservaPagada = hijos.filter((h) => !conFotos[h.id] && !reservas[h.id]?.pagada && !esperandoTransferencia(h.id));
   const elegidos = hijosSinReservaPagada.filter((h) => kits[h.id]);
   const total = useMemo(
     () => elegidos.reduce((acc, h) => acc + (KITS_RESERVA.find((k) => k.id === kits[h.id])?.precio || 0), 0),
@@ -130,8 +138,21 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
       </p>
 
       <div className="mt-4 space-y-3">
-        {hijos.map((h) => {
+        {cargando && <p className="text-xs text-slate-500">Cargando…</p>}
+        {!cargando && hijos.map((h) => {
           const reserva = reservas[h.id];
+          if (conFotos[h.id] && !reserva?.pagada) {
+            return (
+              <div key={h.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950">
+                <span><strong>{h.nombreCompleto}:</strong> sus fotos ya están online, así que no hace falta reservar. Elegilas en su galería y comprá desde ahí.</span>
+                {onVerFotosHijo && (
+                  <button type="button" onClick={() => onVerFotosHijo(h.id)} className="shrink-0 rounded-lg bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500">
+                    Ver sus fotos
+                  </button>
+                )}
+              </div>
+            );
+          }
           if (reserva && esperandoTransferencia(h.id)) {
             return (
               <div key={h.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
@@ -183,7 +204,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
         })}
       </div>
 
-      {hijosSinReservaPagada.length > 0 && (
+      {!cargando && hijosSinReservaPagada.length > 0 && (
         <>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-semibold text-slate-700">
