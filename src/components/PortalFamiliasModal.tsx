@@ -3422,7 +3422,7 @@ export default function PortalFamiliasModal({
                           e.stopPropagation();
                         }}
                       >
-                        <img
+                        <img loading="lazy" decoding="async"
                           src={foto.thumbnail}
                           alt={foto.titulo}
                           draggable={false}

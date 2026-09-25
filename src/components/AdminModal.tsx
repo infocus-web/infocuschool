@@ -50,6 +50,7 @@ import {
 } from '../services/cierreAnioService';
 import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminCampanaPagoAnticipado from './AdminCampanaPagoAnticipado';
+import AdminEstadoSistema from './AdminEstadoSistema';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
 import {
   loginAdminConServidor,
@@ -1563,6 +1564,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                 recibe por prop) y Colegios se le pasa como nueva prop `totalColegios`. Si en el
                 futuro hace falta volver a mostrar estos datos en otras pestañas, `colegiosList`
                 sigue disponible acá en AdminModal.tsx para recalcularlos. */}
+
+            <AdminEstadoSistema onIrA={(tab) => setActiveTab(tab)} />
 
             {/* TAB: INSCRIPTOS & GESTIÓN DE ACCESOS */}
             {activeTab === 'inscriptos' && (
