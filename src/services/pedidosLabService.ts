@@ -838,7 +838,9 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
   // como lectura de compatibilidad por si alguna fila vieja lo tuviera (hoy ninguna la tiene).
   // "estadoEntrega" es una vista derivada de estado_lab para las pantallas que ya existían antes
   // de esta auditoría (portal de familias, seguimiento) — estado_lab es la fuente de verdad.
-  let estadoPago: 'aprobado' | 'pendiente' = 'pendiente';
+  // "cancelado" se muestra como tal (antes caía en "Pendiente" y el panel ofrecía "Aprobar Pago"
+  // sobre intentos de pago abandonados — caso real 25/9, 9 de 13 pedidos de prueba).
+  let estadoPago: 'aprobado' | 'pendiente' | 'rechazado' = fila.estado === 'cancelado' ? 'rechazado' : 'pendiente';
   let estadoEntrega: PedidoEscolarCompleto['estadoEntrega'] = 'en_espera';
   // El pago lo define sólo `estado` (un pedido retirado sin pagar no se muestra como "Aprobado").
   if (fila.estado === 'entregado' || (fila.estado_lab === 'entregado' && fila.estado === 'pagado')) {

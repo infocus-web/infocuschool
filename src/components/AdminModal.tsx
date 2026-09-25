@@ -272,6 +272,8 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   const [eliminandoPedidoId, setEliminandoPedidoId] = useState<string | null>(null);
   // Pedido de Pablo (25/9): los archivados no se muestran salvo que se pida verlos.
   const [verArchivados, setVerArchivados] = useState(false);
+  // Pedidos cancelados (intentos de pago abandonados / reservas reemplazadas): ocultos por defecto.
+  const [verCancelados, setVerCancelados] = useState(false);
   const [organizandoPedidoId, setOrganizandoPedidoId] = useState<string | null>(null);
   // Pedido 2026-09-21 de Pablo: "no tengo la opción de seleccionar varios pedidos para archivar o
   // eliminar" — antes sólo existía borrar de a uno. Estos dos estados habilitan selección múltiple
@@ -432,7 +434,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
     const hermanosPendientes = pedido.grupoPagoId
       ? pedidosCompletos.filter(
           // "rechazado" también: un intento de pago con tarjeta que rebotó antes de pagar en efectivo.
+          // Menos las reservas canceladas porque se reemplazaron por otra (nunca se cobran).
           (item) => item.grupoPagoId === pedido.grupoPagoId && item.id !== pedido.id && item.estadoPago !== 'aprobado'
+            && !(item.estadoPago === 'rechazado' && item.seleccionPendiente)
         )
       : [];
     await aprobarPagoPedido(pedido);
@@ -492,9 +496,12 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   };
 
   const pedidosVisiblesTabla = useMemo(
-    () => pedidosCompletos.filter((p) => Boolean(p.archivado) === verArchivados),
-    [pedidosCompletos, verArchivados]
+    () => pedidosCompletos.filter((p) =>
+      verCancelados ? p.estadoPago === 'rechazado' && !p.archivado : Boolean(p.archivado) === verArchivados && p.estadoPago !== 'rechazado'
+    ),
+    [pedidosCompletos, verArchivados, verCancelados]
   );
+  const cantidadCancelados = pedidosCompletos.filter((p) => p.estadoPago === 'rechazado' && !p.archivado).length;
   const cantidadArchivados = pedidosCompletos.length - pedidosCompletos.filter((p) => !p.archivado).length;
 
   // Sólo se seleccionan los pedidos visibles: "Eliminar seleccionados" nunca debe alcanzar a los
@@ -1630,10 +1637,18 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                     )}
                     <button
                       type="button"
-                      onClick={() => { setVerArchivados((v) => !v); setPedidosSeleccionados(new Set()); }}
+                      onClick={() => { setVerArchivados((v) => !v); setVerCancelados(false); setPedidosSeleccionados(new Set()); }}
                       className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition-colors cursor-pointer ${verArchivados ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                     >
                       {verArchivados ? '← Volver a los pedidos' : `Ver archivados (${cantidadArchivados})`}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setVerCancelados((v) => !v); setVerArchivados(false); setPedidosSeleccionados(new Set()); }}
+                      className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition-colors cursor-pointer ${verCancelados ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                      title="Intentos de pago abandonados y reservas reemplazadas por una nueva"
+                    >
+                      {verCancelados ? '← Volver a los pedidos' : `Ver cancelados (${cantidadCancelados})`}
                     </button>
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                       {pedidosCompletos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente && !p.enEspera && !p.archivado).length} Aprobados para Revelado
@@ -1724,9 +1739,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                             <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               p.estadoPago === 'aprobado'
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-amber-100 text-amber-800'
+                                : p.estadoPago === 'rechazado'
+                                  ? 'bg-slate-200 text-slate-600'
+                                  : 'bg-amber-100 text-amber-800'
                             }`}>
-                              {p.estadoPago === 'aprobado' ? '✓ Aprobado' : '⏳ Pendiente'}
+                              {p.estadoPago === 'aprobado' ? '✓ Aprobado' : p.estadoPago === 'rechazado' ? '✕ Cancelado' : '⏳ Pendiente'}
                             </span>
                           </td>
                           <td className="py-3 px-4">
@@ -1737,6 +1754,10 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                               >
                                 Aprobar Pago
                               </button>
+                            ) : p.estadoPago === 'rechazado' ? (
+                              <span className="text-[10px] text-slate-400" title="Intento de pago abandonado o reserva reemplazada por una nueva. No se cobró nada.">
+                                Sin cobrar
+                              </span>
                             ) : (
                               <button
                                 onClick={() => {
