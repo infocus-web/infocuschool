@@ -36,6 +36,7 @@ import { useColegiosLista, COLEGIO_POR_DEFECTO } from '../services/colegiosServi
 import { useWhatsAppConfig } from '../services/configuracionService';
 import { irAConsultasConDatos } from '../utils/consultaPrefill';
 import { copiarAlPortapapeles } from '../utils/portapapeles';
+import { sugerirCorreccionEmail } from '../utils/emailSugerencia';
 
 // Deja sólo los dígitos del DNI (acepta que la familia lo escriba con puntos, ej: "38.456.789")
 // y valida que tenga un largo razonable (los DNI argentinos tienen 7 u 8 dígitos).
@@ -883,6 +884,14 @@ export default function ModalInscripcionFamilia({
                         placeholder="Ej: mariana.gomez@gmail.com"
                         className="w-full px-3.5 py-2.5 text-sm bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-medium"
                       />
+                      {sugerirCorreccionEmail(email) && (
+                        <p className="text-[11px] text-sky-900 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1 mt-1">
+                          ¿Quisiste decir <strong>{sugerirCorreccionEmail(email)}</strong>?{' '}
+                          <button type="button" onClick={() => setEmail(sugerirCorreccionEmail(email) || email)} className="font-bold underline cursor-pointer">
+                            Corregir
+                          </button>
+                        </p>
+                      )}
                       <p className="text-[10px] text-slate-500 mt-1">
                         Usá el mismo correo que el colegio tiene registrado.
                       </p>
