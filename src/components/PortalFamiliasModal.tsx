@@ -43,6 +43,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
+import { sugerirCorreccionEmail } from '../utils/emailSugerencia';
 import { useColegiosLista } from '../services/colegiosService';
 import { useWhatsAppConfig } from '../services/configuracionService';
 import {
@@ -294,6 +295,10 @@ export default function PortalFamiliasModal({
   const [enviandoSolicitudCodigo, setEnviandoSolicitudCodigo] = useState(false);
   const [solicitudCodigoEnviada, setSolicitudCodigoEnviada] = useState(false);
   const [solicitudCodigoMensaje, setSolicitudCodigoMensaje] = useState('');
+  // false = no se encontró una inscripción con ese email (la solicitud queda para revisión manual).
+  const [solicitudCodigoEncontrada, setSolicitudCodigoEncontrada] = useState(true);
+  // Email con posible error de tipeo ("gmail.comm"): se pregunta antes de enviar.
+  const [sugerenciaEmailSolicitud, setSugerenciaEmailSolicitud] = useState<string | null>(null);
   const [solicitudCodigoError, setSolicitudCodigoError] = useState<string | null>(null);
 
   // Step 2: Gallery
@@ -1466,7 +1471,7 @@ export default function PortalFamiliasModal({
     }
   };
 
-  const handleEnviarSolicitudCodigo = async () => {
+  const handleEnviarSolicitudCodigo = async (opciones: { ignorarSugerencia?: boolean } = {}) => {
     if (!solicitudNombre.trim() || !solicitudContacto.trim()) {
       setSolicitudCodigoError('Completá tu nombre y el email con el que te registraste.');
       return;
@@ -1492,6 +1497,12 @@ export default function PortalFamiliasModal({
       setSolicitudCodigoError('Ingresá el nombre y apellido de tu hijo/a.');
       return;
     }
+    const sugerencia = opciones.ignorarSugerencia ? null : sugerirCorreccionEmail(solicitudContacto);
+    if (sugerencia) {
+      setSugerenciaEmailSolicitud(sugerencia);
+      return;
+    }
+    setSugerenciaEmailSolicitud(null);
     setEnviandoSolicitudCodigo(true);
     setSolicitudCodigoError(null);
     try {
@@ -1506,10 +1517,11 @@ export default function PortalFamiliasModal({
         turno: turno || undefined,
       });
       if (resultado.success) {
+        setSolicitudCodigoEncontrada(Boolean(resultado.envioAutomatico));
         setSolicitudCodigoMensaje(
           resultado.envioAutomatico
-            ? `Te enviamos por email a ${solicitudContacto.trim()} tu código. Si no lo encontrás, revisá la bandeja de Spam. Si aun así no aparece, comunicate con los directivos o docentes y te lo enviaremos a la brevedad.`
-            : (resultado.mensaje || 'Recibimos tu solicitud. Te contactaremos cuando podamos confirmar tus datos.')
+            ? `Te mandamos el código a ${solicitudContacto.trim()}. Si no lo ves en unos minutos, revisá la carpeta de Spam o Correo no deseado.`
+            : `No encontramos una inscripción con el email ${solicitudContacto.trim()}.`
         );
         setSolicitudCodigoEnviada(true);
       } else {
@@ -2463,7 +2475,7 @@ export default function PortalFamiliasModal({
 
                 {/* Course Code Request Action: queda guardado para el panel admin, no abre WhatsApp */}
                 <div className="pt-3 border-t border-amber-200/80 text-left">
-                  {solicitudCodigoEnviada ? (
+                  {solicitudCodigoEnviada && solicitudCodigoEncontrada ? (
                     <div className="p-4 sm:p-5 bg-emerald-50 border border-emerald-300 rounded-xl flex items-start gap-3">
                       <CheckCheck className="w-6 h-6 text-emerald-700 shrink-0 mt-0.5" />
                       <div>
@@ -2472,6 +2484,46 @@ export default function PortalFamiliasModal({
                           {solicitudCodigoMensaje}
                         </p>
                       </div>
+                    </div>
+                  ) : solicitudCodigoEnviada ? (
+                    /* Pedido de Pablo (25/9): antes decía "¡Listo! Recibimos tu solicitud" y la familia
+                       se quedaba esperando un código que no iba a llegar solo. */
+                    <div className="p-4 sm:p-5 bg-amber-50 border border-amber-300 rounded-xl space-y-3">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-base font-extrabold text-amber-950">{solicitudCodigoMensaje}</p>
+                          <p className="text-sm text-amber-900 mt-1 leading-relaxed">
+                            ¿Te inscribiste con otro email? Probá con ese. Si todavía no te inscribiste, anotate gratis y te mandamos el código por email.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSolicitudCodigoEnviada(false);
+                            setSolicitudContacto('');
+                            setMostrarFormSolicitudCodigo(true);
+                          }}
+                          className="px-4 py-2.5 bg-white hover:bg-amber-100 border border-amber-300 text-amber-900 font-bold text-xs rounded-xl cursor-pointer"
+                        >
+                          Probar con otro email
+                        </button>
+                        {onOpenInscripcion && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenInscripcion()}
+                            className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <UserPlus className="w-4 h-4" />
+                            Anotarme gratis
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-amber-800">
+                        Igual dejamos tu pedido guardado: si el colegio te tiene en su lista, el fotógrafo lo revisa y te escribe.
+                      </p>
                     </div>
                   ) : !mostrarFormSolicitudCodigo ? (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2511,7 +2563,10 @@ export default function PortalFamiliasModal({
                         <input
                           type="email"
                           value={solicitudContacto}
-                          onChange={(e) => setSolicitudContacto(e.target.value)}
+                          onChange={(e) => {
+                            setSolicitudContacto(e.target.value);
+                            setSugerenciaEmailSolicitud(null);
+                          }}
                           placeholder="Email usado al registrarte"
                           autoComplete="email"
                           className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
@@ -2543,6 +2598,30 @@ export default function PortalFamiliasModal({
                           className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 shadow-xs"
                         />
                       </div>
+                      {sugerenciaEmailSolicitud && (
+                        <div className="p-3 rounded-xl bg-sky-50 border border-sky-300 text-xs text-sky-950 space-y-2">
+                          <p>¿Quisiste decir <strong>{sugerenciaEmailSolicitud}</strong>?</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSolicitudContacto(sugerenciaEmailSolicitud);
+                                setSugerenciaEmailSolicitud(null);
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold cursor-pointer"
+                            >
+                              Sí, corregir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleEnviarSolicitudCodigo({ ignorarSugerencia: true })}
+                              className="px-3 py-1.5 rounded-lg bg-white border border-sky-300 text-sky-800 font-bold cursor-pointer"
+                            >
+                              No, está bien así
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {solicitudCodigoError && (
                         <p className="text-[11px] text-rose-700 font-bold flex items-center gap-1">
                           <AlertCircle className="w-3.5 h-3.5 shrink-0" />
@@ -2553,7 +2632,7 @@ export default function PortalFamiliasModal({
                         <button
                           type="button"
                           disabled={enviandoSolicitudCodigo}
-                          onClick={handleEnviarSolicitudCodigo}
+                          onClick={() => void handleEnviarSolicitudCodigo()}
                           className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                         >
                           <Send className="w-3.5 h-3.5" />

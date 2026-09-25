@@ -5503,7 +5503,7 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 20, 
         return res.json({
           success: true,
           envioAutomatico: true,
-          mensaje: 'Te enviamos tu Código Familiar al correo registrado. Revisá también la carpeta Spam o Correo no deseado.',
+          mensaje: 'Te enviamos tu código de acceso al correo registrado. Revisá también la carpeta Spam o Correo no deseado.',
         });
       }
     }
@@ -5529,7 +5529,7 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 20, 
       success: true,
       solicitud: data,
       envioAutomatico: false,
-      mensaje: 'Recibimos tu solicitud. Revisaremos los datos y te contactaremos a la brevedad.',
+      mensaje: 'No encontramos una inscripción con ese email. Dejamos tu pedido guardado para que el fotógrafo lo revise.',
     });
   } catch (err: any) {
     console.error('Error al guardar solicitud de código:', err);
