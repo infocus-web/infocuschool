@@ -649,6 +649,16 @@ export default function ModalInscripcionFamilia({
                       </button>
                     </div>
                   )}
+                  {/* Pedido de Pablo (25/9): contarle las dos formas de pago justo cuando recibe su código. */}
+                  <div className="p-3.5 rounded-2xl bg-white border border-amber-200 text-xs text-slate-600 leading-relaxed">
+                    <p className="font-bold text-slate-900">¿Cómo se paga?</p>
+                    <p className="mt-1">
+                      <strong>Al elegir las fotos:</strong> cuando las fotos del curso estén online, entrás, elegís tus 3 favoritas y pagás ahí.
+                    </p>
+                    <p className="mt-1">
+                      <strong>Por adelantado:</strong> si las fotos todavía no están, entrá con tu código y vas a ver <em>"Reservá tu kit ahora"</em>: lo dejás pago y, cuando se suban, elegís tus fotos sin volver a pagar.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <div className="bg-gradient-to-b from-amber-50/90 via-white to-amber-50/50 border-2 border-amber-400/90 rounded-3xl p-5 sm:p-6 space-y-4 shadow-sm">

@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { Search, ShieldCheck, CheckCircle, ArrowRight, Sparkles, School, UserPlus, CheckCircle2, User, LogOut } from 'lucide-react';
+import { Search, ShieldCheck, CheckCircle, ArrowRight, Sparkles, School, UserPlus, CheckCircle2, User, LogOut, Images, CalendarCheck } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
 import { obtenerFamiliaActiva, cerrarSesionFamilia, InscripcionFamilia } from '../services/inscripcionesService';
@@ -150,7 +150,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       ¿Tenés hijos en la institución?
                     </h3>
                     <p className="text-xs text-slate-600">
-                      ¡Un solo registro para toda tu familia, sin costo! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>Código Familiar único</strong>. Vas a pagar recién más adelante, cuando entres a elegir las fotos de tu hijo/a — inscribirte acá no tiene ningún cargo.
+                      ¡Un solo registro para toda tu familia, sin costo! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>Código Familiar único</strong>. Inscribirte no tiene ningún cargo: después elegís si pagás cuando elegís las fotos o si preferís dejar el kit pago por adelantado.
                     </p>
                   </div>
                   {onOpenInscripcion && (
@@ -221,6 +221,45 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
               </div>
             )}
 
+            {/* Pedido de Pablo (25/9): las dos formas de pago tienen que quedar claras de entrada —
+                pagar al elegir las fotos, o dejar el kit pago por adelantado cuando las fotos del
+                curso todavía no están (ver ReservaKitAnticipada en el portal). */}
+            <div id="como-se-paga" className="max-w-2xl rounded-2xl border border-slate-200 bg-white/90 p-4 sm:p-5 shadow-xs">
+              <p className="text-sm font-extrabold text-slate-900 font-['Outfit']">¿Cómo se paga? Elegí lo que te quede más cómodo</p>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3.5">
+                  <p className="flex items-center gap-2 text-xs font-bold text-sky-950">
+                    <Images className="w-4 h-4 text-sky-600 shrink-0" />
+                    Pagás al elegir las fotos
+                  </p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                    Cuando las fotos de tu curso están online, entrás, elegís tus 3 favoritas y pagás en ese momento. La descarga en alta resolución te llega al instante.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-amber-300 bg-amber-50/80 p-3.5">
+                  <p className="flex items-center gap-2 text-xs font-bold text-amber-950">
+                    <CalendarCheck className="w-4 h-4 text-amber-600 shrink-0" />
+                    Pagás por adelantado
+                    <span className="rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-slate-950">Nuevo</span>
+                  </p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                    ¿Las fotos de tu curso todavía no están? Entrá con tu código, reservá el kit y dejalo pago. Cuando se suban, elegís tus fotos <strong>sin volver a pagar</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => (familiaActiva ? onOpenFamilias(familiaActiva.colegioId) : onOpenFamilias())}
+                    className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+                  >
+                    Reservar mi kit
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-slate-500">
+                En los dos casos la inscripción es gratis y el precio es el mismo. Podés pagar con Mercado Pago, Nave o transferencia bancaria.
+              </p>
+            </div>
+
             {/* Micro value props */}
             <div className="pt-2 flex flex-wrap items-center gap-y-2 gap-x-6 text-xs text-slate-600">
               {/* Pedido de Pablo: tiene que quedar muy claro que inscribirse no cuesta nada — se
@@ -228,7 +267,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                   (no sólo en el texto chico de arriba) para que se vea de entrada. */}
               <div className="flex items-center gap-2 font-bold text-emerald-700">
                 <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Inscribirte es gratis — pagás recién al elegir las fotos</span>
+                <span>Inscribirte es gratis — pagás al elegir las fotos o por adelantado</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -236,7 +275,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Mercado Pago y Transferencia</span>
+                <span>Mercado Pago, Nave y Transferencia</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />

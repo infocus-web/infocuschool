@@ -5156,6 +5156,127 @@ function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T | null
   return Promise.race([promesa, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
 }
 
+// ==============================================================================
+// CAMPAÑA "PAGO ANTICIPADO" (pedido de Pablo, 25/9): un único email a las familias ya inscriptas
+// cuyos hijos están en cursos que todavía no tienen fotos, contándoles que pueden dejar el kit
+// pago por adelantado. El panel muestra primero cuántas familias lo recibirían y la vista previa;
+// sólo se envía cuando el fotógrafo confirma. Cada email enviado queda registrado en
+// envios_campana_familias, así un segundo clic (o un reintento) nunca repite a nadie.
+// ==============================================================================
+const CAMPANA_PAGO_ANTICIPADO = 'pago-anticipado-2026';
+
+type DestinatarioCampana = { email: string; tutor: string; alumnos: string[]; colegio: string };
+
+async function armarDestinatariosPagoAnticipado(supabase: SupabaseClient): Promise<DestinatarioCampana[]> {
+  const [inscripciones, fotos, reservas, yaEnviados] = await Promise.all([
+    traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('inscripciones').select('id,email,padre_nombre,alumno_nombre,alumno_apellido,colegio_id,colegio_nombre,grado,turno,division,hermanos').eq('estado', 'aceptado').order('id').range(desde, hasta)
+    ),
+    traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('fotos').select('colegio_id,grado,turno,division').order('id').range(desde, hasta)
+    ),
+    traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('pedidos').select('colegio_id,alumno_nombre').eq('seleccion_pendiente', true).eq('estado', 'pagado').order('id').range(desde, hasta)
+    ),
+    traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('envios_campana_familias').select('email').eq('campana', CAMPANA_PAGO_ANTICIPADO).order('email').range(desde, hasta)
+    ),
+  ]);
+  const seccionesConFotos = fotos.map((f: any) => f);
+  const tieneFotos = (colegioId: string, a: { grado: string; turno: string; division: string }) =>
+    seccionesConFotos.some((f: any) => f.colegio_id === colegioId && mismoDatoSeccion(f.grado, a.grado) && mismoDatoSeccion(f.turno, a.turno) && mismoDatoSeccion(f.division, a.division));
+  const reservados = new Set(reservas.map((r: any) => `${r.colegio_id}|${normalizarNombrePorPalabras(r.alumno_nombre)}`));
+  const enviados = new Set(yaEnviados.map((e: any) => String(e.email).toLowerCase()));
+
+  const porEmail = new Map<string, DestinatarioCampana>();
+  for (const insc of inscripciones) {
+    const email = String(insc.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || enviados.has(email)) continue;
+    const alumnos = [
+      { nombre: `${insc.alumno_nombre || ''} ${insc.alumno_apellido || ''}`.trim(), colegioId: insc.colegio_id, grado: insc.grado, turno: insc.turno, division: insc.division },
+      ...(Array.isArray(insc.hermanos) ? insc.hermanos.map((h: any) => ({
+        nombre: `${h.alumnoNombre || h.alumno_nombre || ''} ${h.alumnoApellido || h.alumno_apellido || ''}`.trim(),
+        colegioId: h.colegioId || insc.colegio_id,
+        grado: h.grado, turno: h.turno, division: h.division,
+      })) : []),
+    ].filter((a) => a.nombre && !tieneFotos(a.colegioId, a) && !reservados.has(`${a.colegioId}|${normalizarNombrePorPalabras(a.nombre)}`));
+    if (alumnos.length === 0) continue;
+    const previo = porEmail.get(email);
+    const nombres = alumnos.map((a) => {
+      const primero = a.nombre.split(' ')[0].toLowerCase();
+      return primero.charAt(0).toUpperCase() + primero.slice(1);
+    });
+    if (previo) {
+      for (const n of nombres) if (!previo.alumnos.includes(n)) previo.alumnos.push(n);
+    } else {
+      porEmail.set(email, { email, tutor: insc.padre_nombre || 'Familia', alumnos: nombres, colegio: insc.colegio_nombre || 'tu colegio' });
+    }
+  }
+  return Array.from(porEmail.values());
+}
+
+function correoCampanaPagoAnticipado(d: DestinatarioCampana) {
+  const hijos = d.alumnos.length > 1 ? `${d.alumnos.slice(0, -1).join(', ')} y ${d.alumnos[d.alumnos.length - 1]}` : d.alumnos[0];
+  const asunto = `Novedad: ya podés dejar pago el kit de fotos de ${hijos}`;
+  const html = `<!doctype html><html lang="es"><body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#1e293b"><div style="max-width:600px;margin:24px auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;overflow:hidden"><div style="background:#0f172a;padding:28px 24px;text-align:center;border-bottom:3px solid #f59e0b"><div style="color:#f59e0b;font-size:11px;font-weight:800;letter-spacing:2px">RETRATO ESCOLAR</div><h1 style="color:#fff;font-size:22px;margin:8px 0 0">Ahora podés pagar por adelantado</h1></div><div style="padding:28px 24px;line-height:1.6"><p>Hola <strong>${escapeHtml(d.tutor)}</strong>,</p><p>Las fotos de <strong>${escapeHtml(hijos)}</strong> en ${escapeHtml(d.colegio)} todavía no están online, y muchas familias nos pidieron poder dejar el kit pago antes. Ahora se puede, y tenés dos opciones:</p><div style="margin:16px 0;padding:14px 16px;background:#fffbeb;border:1px solid #fcd34d;border-radius:12px"><p style="margin:0 0 6px"><strong>1. Pagar por adelantado:</strong> entrá a la web con tu código de acceso y vas a ver <em>"Reservá tu kit ahora"</em>. Elegís el kit, lo pagás con Mercado Pago, Nave o transferencia, y cuando se suban las fotos sólo elegís tus 3 favoritas, <strong>sin volver a pagar</strong>.</p><p style="margin:0"><strong>2. Pagar al elegir las fotos:</strong> si preferís, esperás a que estén online (te avisamos por email), elegís y pagás en ese momento.</p></div><p>El precio es el mismo en los dos casos, y comprar sigue siendo opcional.</p><div style="margin:24px 0;text-align:center"><a href="https://retratoescolar.com.ar" style="display:inline-block;background:#fbbf24;color:#0f172a;text-decoration:none;font-weight:800;padding:13px 22px;border-radius:10px">Reservar mi kit</a></div><p style="font-size:12px;color:#64748b">Entrá con el mismo código de acceso que recibiste al aprobarse tu inscripción. Si tenés dudas, respondé este correo.</p></div></div></body></html>`;
+  return { asunto, html };
+}
+
+app.get('/api/admin/campanas/pago-anticipado', requireAdminAuth, async (_req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    const destinatarios = await armarDestinatariosPagoAnticipado(supabase);
+    const { count: yaEnviados } = await supabase.from('envios_campana_familias').select('email', { count: 'exact', head: true }).eq('campana', CAMPANA_PAGO_ANTICIPADO);
+    const ejemplo = correoCampanaPagoAnticipado(destinatarios[0] || { email: '', tutor: 'Nombre del tutor', alumnos: ['Nombre del alumno'], colegio: 'el colegio' });
+    return res.json({ success: true, pendientes: destinatarios.length, yaEnviados: yaEnviados || 0, asunto: ejemplo.asunto, html: ejemplo.html });
+  } catch (err: any) {
+    console.error('[Campaña pago anticipado] Error al armar la vista previa:', err);
+    return res.status(500).json({ success: false, error: 'No se pudo armar la lista de familias.' });
+  }
+});
+
+app.post('/api/admin/campanas/pago-anticipado/enviar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    if (req.body?.confirmar !== true) return res.status(400).json({ success: false, error: 'Falta confirmar el envío.' });
+    const supabase = getServerSupabase();
+    const resend = getResendClient();
+    if (!supabase || !resend) return res.status(500).json({ success: false, error: 'El servicio de email no está configurado.' });
+    const destinatarios = await armarDestinatariosPagoAnticipado(supabase);
+    let enviados = 0;
+    let fallidos = 0;
+    const TAMANO_LOTE = 100;
+    for (let i = 0; i < destinatarios.length; i += TAMANO_LOTE) {
+      const lote = destinatarios.slice(i, i + TAMANO_LOTE);
+      const resultado = await resend.batch.send(
+        lote.map((d) => {
+          const { asunto, html } = correoCampanaPagoAnticipado(d);
+          return { from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>', replyTo: resendReplyTo, to: [d.email], subject: asunto, html };
+        }),
+        { idempotencyKey: `${CAMPANA_PAGO_ANTICIPADO}-${crypto.createHash('sha256').update(lote.map((d) => d.email).join(',')).digest('hex')}`, batchValidation: 'permissive' }
+      );
+      if (resultado.error) {
+        console.error('[Campaña pago anticipado] Falló un lote:', resultado.error);
+        fallidos += lote.length;
+        continue;
+      }
+      const rechazados = new Set<number>(((resultado.data as any)?.errors || []).map((e: any) => Number(e.index)));
+      const ok = lote.filter((_, idx) => !rechazados.has(idx));
+      fallidos += lote.length - ok.length;
+      enviados += ok.length;
+      if (ok.length > 0) {
+        const { error } = await supabase.from('envios_campana_familias').upsert(ok.map((d) => ({ campana: CAMPANA_PAGO_ANTICIPADO, email: d.email })));
+        if (error) console.error('[Campaña pago anticipado] Se envió pero no se registró el lote:', error);
+      }
+      if (i + TAMANO_LOTE < destinatarios.length) await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+    return res.json({ success: true, enviados, fallidos });
+  } catch (err: any) {
+    console.error('[Campaña pago anticipado] Error al enviar:', err);
+    return res.status(500).json({ success: false, error: 'No se pudo completar el envío.' });
+  }
+});
+
 // "Escribir a esta familia" (pedido de Pablo, 25/9): el fotógrafo le escribe a una familia desde
 // el buscador de alumnos sin que ella haya consultado antes. Se crea una conversación en Consultas
 // (origen "panel") y el email sale igual que una respuesta: desde el dominio, con reply-to a la

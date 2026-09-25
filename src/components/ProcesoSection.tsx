@@ -130,7 +130,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
       titulo: 'Recibís en digital y en papel',
       bajada: 'Descarga al instante + carpeta',
       descripcion:
-        'Abonás seguro con Mercado Pago, Nave o Transferencia. Descargás las fotos digitales en tu compu o celular y recibís las copias impresas en la escuela — te avisamos por email en cada etapa.',
+        'Abonás seguro con Mercado Pago, Nave o Transferencia (o, si lo dejaste pago por adelantado, sólo confirmás tus fotos). Descargás las fotos digitales en tu compu o celular y recibís las copias impresas en la escuela — te avisamos por email en cada etapa.',
       miniGrafico: (
         <div className="mt-3 p-2.5 bg-linear-to-br from-amber-50 to-amber-100/60 rounded-xl border border-amber-300 text-left space-y-1 shadow-2xs">
           <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-950">

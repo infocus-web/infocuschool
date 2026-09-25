@@ -18,7 +18,7 @@ export default function TrustStats() {
       icon: ShieldCheck,
       valor: '100% Digital',
       etiqueta: 'Pago Seguro Online',
-      descripcion: 'Aboná con Mercado Pago o Transferencia desde tu celular, sin efectivo ni sobres.',
+      descripcion: 'Aboná con Mercado Pago, Nave o Transferencia desde tu celular, al elegir las fotos o por adelantado. Sin efectivo ni sobres.',
     },
     {
       icon: Zap,
