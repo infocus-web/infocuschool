@@ -303,7 +303,16 @@ export default function PortalFamiliasModal({
   const [solicitudCodigoError, setSolicitudCodigoError] = useState<string | null>(null);
 
   // Step 2: Gallery
-  const [categoriaActiva, setCategoriaActiva] = useState<'individual' | 'grupal' | 'docente' | 'patio'>('individual');
+  // Pedido de Pablo (25/9): el recorrido empieza en 1/3 Grupal (antes arrancaba en el Retrato, el
+  // paso del medio) y avanza solo al siguiente paso pendiente al elegir cada foto.
+  const [categoriaActiva, setCategoriaActiva] = useState<'individual' | 'grupal' | 'docente' | 'patio'>('grupal');
+  const [avisoAvancePack, setAvisoAvancePack] = useState('');
+  const panelPackRef = useRef<HTMLDivElement>(null);
+  const botonContinuarPackRef = useRef<HTMLDivElement>(null);
+  const timerAvancePackRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (timerAvancePackRef.current) window.clearTimeout(timerAvancePackRef.current);
+  }, []);
   const [fotoSeleccionadaIndividual, setFotoSeleccionadaIndividual] = useState<string>('');
   const [fotoSeleccionadaGrupal, setFotoSeleccionadaGrupal] = useState<string>('');
   const [fotoSeleccionadaDocente, setFotoSeleccionadaDocente] = useState<string>('');
@@ -354,7 +363,11 @@ export default function PortalFamiliasModal({
     setFotoSeleccionadaGrupal((actual) => grups.some((f) => f.id === actual) ? actual : '');
     setFotoSeleccionadaDocente((actual) => docs.some((f) => f.id === actual) ? actual : '');
     setFotosSueltasSeleccionadas((actuales) => actuales.filter((id) => fotosDisponibles.some((f) => f.id === id && f.categoria === 'patio')));
-    if (!fotosDisponibles.some((f) => f.categoria === 'patio')) setCategoriaActiva('individual');
+    if (!fotosDisponibles.some((f) => f.categoria === 'patio')) {
+      const primeraConFotos = (['grupal', 'individual', 'docente'] as const).find((c) => fotosDisponibles.some((f) => f.categoria === c));
+      setCategoriaActiva(primeraConFotos || 'grupal');
+    }
+    setAvisoAvancePack('');
     setErrorSeleccionFotos('');
   }, [fotosDisponibles]);
 
@@ -1297,6 +1310,48 @@ export default function PortalFamiliasModal({
   const fotoIndividualSeleccionadaValida = Boolean(fotoIndividualSeleccionada);
   const fotoDocenteSeleccionadaValida = Boolean(fotoDocenteSeleccionada);
   const hayFotosDeEventos = fotosDisponibles.some((f) => f.categoria === 'patio');
+
+  // Elige una foto del pack (grupal / retrato / con seño) y, medio segundo después, pasa solo al
+  // siguiente paso que TODAVÍA falte — nunca a uno ya elegido, así corregir una foto no te saca de
+  // donde estás. Con las 3 elegidas se queda y lleva la vista al botón para continuar.
+  const elegirFotoDelPack = (foto: { id: string; categoria: string }) => {
+    const categoria = foto.categoria as 'grupal' | 'individual' | 'docente';
+    if (categoria === 'individual') setFotoSeleccionadaIndividual(foto.id);
+    if (categoria === 'grupal') setFotoSeleccionadaGrupal(foto.id);
+    if (categoria === 'docente') setFotoSeleccionadaDocente(foto.id);
+    setErrorSeleccionFotos('');
+    const elegidas: Record<string, string> = {
+      grupal: fotoSeleccionadaGrupal,
+      individual: fotoSeleccionadaIndividual,
+      docente: fotoSeleccionadaDocente,
+      [categoria]: foto.id,
+    };
+    const pasos = (['grupal', 'individual', 'docente'] as const).filter((c) => fotosDisponibles.some((f) => f.categoria === c));
+    const idx = pasos.indexOf(categoria);
+    const siguiente = [...pasos.slice(idx + 1), ...pasos.slice(0, Math.max(idx, 0))].find((c) => !elegidas[c]);
+    const nombreElegida = { grupal: 'Foto grupal elegida', individual: 'Retrato elegido', docente: 'Foto con la seño elegida' }[categoria];
+    if (timerAvancePackRef.current) window.clearTimeout(timerAvancePackRef.current);
+    if (siguiente) {
+      const nombreSiguiente = { grupal: 'la foto grupal', individual: 'el retrato', docente: 'la foto con la seño' }[siguiente];
+      setAvisoAvancePack(`¡${nombreElegida}! Ahora elegí ${nombreSiguiente}.`);
+      timerAvancePackRef.current = window.setTimeout(() => {
+        setCategoriaActiva(siguiente);
+        panelPackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 700);
+    } else {
+      setAvisoAvancePack(`¡Listo, ya elegiste las 3 fotos! Tocá "${reservaActiva?.pagada ? 'Confirmar mis fotos' : 'Elegir Kit y Formato'}" para seguir.`);
+      timerAvancePackRef.current = window.setTimeout(() => {
+        botonContinuarPackRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 700);
+    }
+  };
+
+  // Tocar una pestaña a mano cancela un salto automático pendiente.
+  const irAPasoPack = (categoria: 'individual' | 'grupal' | 'docente' | 'patio') => {
+    if (timerAvancePackRef.current) window.clearTimeout(timerAvancePackRef.current);
+    setAvisoAvancePack('');
+    setCategoriaActiva(categoria);
+  };
   const cantidadFotosPackSeleccionadas = [fotoGrupalSeleccionadaValida, fotoIndividualSeleccionadaValida, fotoDocenteSeleccionadaValida].filter(Boolean).length;
 
   // Auditoría 2026-09-21 (pedido de Pablo): antes, la carpeta extra para abuelos/familiares se
@@ -3080,7 +3135,7 @@ export default function PortalFamiliasModal({
                   p-4 sm:p-5 / mb-3, y de nuevo achicado ese mismo día — antes p-3 sm:p-4 / mb-2 —
                   como parte del mismo pedido de Pablo de necesitar menos scroll) para dejar más
                   alto libre para las fotos y el botón "Elegir" sin scrollear. */}
-              <div className="bg-slate-900 text-white rounded-2xl p-2.5 sm:p-3 shadow-md border border-slate-800">
+              <div ref={panelPackRef} className="scroll-mt-4 bg-slate-900 text-white rounded-2xl p-2.5 sm:p-3 shadow-md border border-slate-800">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
                   <div>
                     <div className="flex items-center gap-2">
@@ -3110,7 +3165,7 @@ export default function PortalFamiliasModal({
                   {/* Slot 1: Grupal — tarjetas achicadas ~50% el 22/9 (pedido de Pablo) y texto
                       recortado a lo esencial para que entre sin desbordar en el tamaño nuevo. */}
                   <div
-                    onClick={() => setCategoriaActiva('grupal')}
+                    onClick={() => irAPasoPack('grupal')}
                     className={`rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border ${
                       fotoGrupalSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
@@ -3134,7 +3189,7 @@ export default function PortalFamiliasModal({
 
                   {/* Slot 2: Retrato Individual */}
                   <div
-                    onClick={() => setCategoriaActiva('individual')}
+                    onClick={() => irAPasoPack('individual')}
                     className={`rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border ${
                       fotoIndividualSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
@@ -3158,7 +3213,7 @@ export default function PortalFamiliasModal({
 
                   {/* Slot 3: Con Docente */}
                   <div
-                    onClick={() => setCategoriaActiva('docente')}
+                    onClick={() => irAPasoPack('docente')}
                     className={`rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border ${
                       fotoDocenteSeleccionada
                         ? 'bg-emerald-900/40 hover:bg-emerald-900/60 border-emerald-400 ring-1 ring-emerald-400/40'
@@ -3184,7 +3239,7 @@ export default function PortalFamiliasModal({
                       botón aparte, más chico y menos visible), pero con estilo distinto (punteado,
                       sin check) para que se note que NO forma parte de las 3 fotos incluidas. */}
                   {hayFotosDeEventos && <div
-                    onClick={() => setCategoriaActiva('patio')}
+                    onClick={() => irAPasoPack('patio')}
                     className={`bg-slate-800/40 hover:bg-slate-800/70 rounded-lg p-1.5 flex items-center gap-1.5 transition-all cursor-pointer group border border-dashed ${
                       categoriaActiva === 'patio' ? 'border-amber-400 ring-1 ring-amber-400/40 bg-slate-800/70' : 'border-slate-600 hover:border-slate-500'
                     }`}
@@ -3213,6 +3268,12 @@ export default function PortalFamiliasModal({
                     ? 'Otras Fotos (no incluidas en el paquete)'
                     : 'Elegí tu toma tocando una foto'}
                 </h5>
+                {avisoAvancePack && categoriaActiva !== 'patio' && (
+                  <span role="status" className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full flex items-center gap-1.5 animate-in fade-in duration-200">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    {avisoAvancePack}
+                  </span>
+                )}
 
                 {extraCarpetas > 0 && (
                   <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-1.5 shadow-2xs">
@@ -3246,9 +3307,10 @@ export default function PortalFamiliasModal({
                     fotosSueltasSeleccionadas.includes(foto.id);
 
                   const handleSelectThisFoto = () => {
-                    if (foto.categoria === 'individual') setFotoSeleccionadaIndividual(foto.id);
-                    if (foto.categoria === 'grupal') setFotoSeleccionadaGrupal(foto.id);
-                    if (foto.categoria === 'docente') setFotoSeleccionadaDocente(foto.id);
+                    if (foto.categoria !== 'patio') {
+                      elegirFotoDelPack(foto);
+                      return;
+                    }
                     if (foto.categoria === 'patio') {
                       setFotosSueltasSeleccionadas((actuales) =>
                         actuales.includes(foto.id)
@@ -3470,7 +3532,7 @@ export default function PortalFamiliasModal({
                   )}
                 </div>
 
-                <div className="flex gap-3">
+                <div ref={botonContinuarPackRef} className="flex gap-3">
                   <button
                     onClick={() => setStep(1)}
                     className="px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
@@ -4615,9 +4677,7 @@ export default function PortalFamiliasModal({
                   <button
                     type="button"
                     onClick={() => {
-                      if (modalFotoPreview.categoria === 'individual') setFotoSeleccionadaIndividual(modalFotoPreview.id);
-                      if (modalFotoPreview.categoria === 'grupal') setFotoSeleccionadaGrupal(modalFotoPreview.id);
-                      if (modalFotoPreview.categoria === 'docente') setFotoSeleccionadaDocente(modalFotoPreview.id);
+                      elegirFotoDelPack(modalFotoPreview);
                       setModalFotoPreview(null);
                     }}
                     className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs rounded-lg font-bold cursor-pointer"
