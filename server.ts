@@ -6572,6 +6572,14 @@ async function autorizarTareaProgramada(req: Request): Promise<boolean> {
   return Boolean(data?.secreto) && compararTimingSafe(autorizacion, `Bearer ${data!.secreto}`);
 }
 
+// Medios de pago habilitados para las familias. Nave se ofrece solo en producción: en sandbox
+// rechaza toda tarjeta real (caso real 25/9) y la familia se frustraba. Al cargar las credenciales
+// de producción y NAVE_ENVIRONMENT=production vuelve a aparecer solo.
+app.get('/api/pagos/medios', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'public, max-age=60');
+  res.json({ success: true, nave: getNaveEntorno() === 'production' && Boolean(getNaveCredenciales()) });
+});
+
 // Diagnóstico de Nave (25/9, para pasar de sandbox a producción): prueba las credenciales cargadas
 // contra el login de sandbox y el de producción y dice cuál acepta. No devuelve ningún secreto ni
 // token, solo los códigos de respuesta. Protegido con el mismo secreto que las tareas programadas.

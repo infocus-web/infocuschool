@@ -28,6 +28,8 @@ export default function AdminEstadoPagosTab() {
   const [pedidosSinAlumno, setPedidosSinAlumno] = useState<PedidoSinAlumnoEnNomina[]>([]);
   const [resumen, setResumen] = useState<ResumenEstadoPagos>(RESUMEN_VACIO);
   const [cargando, setCargando] = useState(true);
+  // Pedido de Pablo (25/9): separar los que pagaron de los pendientes. Las tarjetas de arriba filtran.
+  const [filtro, setFiltro] = useState<'todos' | 'pagados' | 'pendientes'>('todos');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,9 +65,11 @@ export default function AdminEstadoPagosTab() {
   const meta = precioNumerico > 0 ? resumen.totalAlumnos * precioNumerico : 0;
   const faltaParaLaMeta = Math.max(0, meta - resumen.totalRecaudado);
 
+  const alumnosVisibles = alumnos.filter((a) => (filtro === 'pagados' ? a.pagado : filtro === 'pendientes' ? !a.pagado : true));
+
   const handleExportarExcel = () => {
     const wb = XLSX.utils.book_new();
-    const data = alumnos.map((a, idx) => ({
+    const data = alumnosVisibles.map((a, idx) => ({
       'N°': a.numeroLista ?? idx + 1,
       'Apellido y Nombre': a.nombre,
       'Grado': a.grado,
@@ -157,20 +161,20 @@ export default function AdminEstadoPagosTab() {
           </div>
         )}
 
-        {/* Summary cards */}
+        {/* Summary cards: también son el filtro de la tabla */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
+          <button type="button" onClick={() => setFiltro('todos')} className={`p-3 rounded-xl border cursor-pointer transition-all ${filtro === 'todos' ? 'bg-white border-slate-900 ring-2 ring-slate-900' : 'bg-slate-50 border-slate-200 hover:border-slate-400'}`}>
             <div className="text-lg font-black text-slate-900">{resumen.totalAlumnos}</div>
-            <div className="text-[9px] text-slate-500 font-bold uppercase">Alumnos en el curso</div>
-          </div>
-          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
+            <div className="text-[9px] text-slate-500 font-bold uppercase">Alumnos en el curso · ver todos</div>
+          </button>
+          <button type="button" onClick={() => setFiltro('pagados')} className={`p-3 rounded-xl border cursor-pointer transition-all bg-emerald-50 ${filtro === 'pagados' ? 'border-emerald-600 ring-2 ring-emerald-600' : 'border-emerald-200 hover:border-emerald-400'}`}>
             <div className="text-lg font-black text-emerald-800">{resumen.alumnosPagados}</div>
-            <div className="text-[9px] text-emerald-700 font-bold uppercase">Ya pagaron</div>
-          </div>
-          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+            <div className="text-[9px] text-emerald-700 font-bold uppercase">Ya pagaron · ver solo estos</div>
+          </button>
+          <button type="button" onClick={() => setFiltro('pendientes')} className={`p-3 rounded-xl border cursor-pointer transition-all bg-amber-50 ${filtro === 'pendientes' ? 'border-amber-600 ring-2 ring-amber-600' : 'border-amber-200 hover:border-amber-400'}`}>
             <div className="text-lg font-black text-amber-800">{resumen.alumnosFaltantes}</div>
-            <div className="text-[9px] text-amber-700 font-bold uppercase">Todavía faltan</div>
-          </div>
+            <div className="text-[9px] text-amber-700 font-bold uppercase">Todavía faltan · ver solo estos</div>
+          </button>
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
             <div className="text-lg font-black text-slate-900">{formatearMonto(resumen.totalRecaudado)}</div>
             <div className="text-[9px] text-slate-500 font-bold uppercase">Recaudado</div>
@@ -221,8 +225,14 @@ export default function AdminEstadoPagosTab() {
                   Este colegio todavía no tiene alumnos cargados en la nómina.
                 </td>
               </tr>
+            ) : alumnosVisibles.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
+                  {filtro === 'pagados' ? 'Todavía no pagó ningún alumno de este colegio.' : 'No queda ningún alumno pendiente de pago.'}
+                </td>
+              </tr>
             ) : (
-              alumnos.map((a, index) => (
+              alumnosVisibles.map((a, index) => (
                 <tr key={a.id} className="hover:bg-slate-50 transition-colors">
                   <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px]">{a.numeroLista ?? index + 1}</td>
                   <td className="py-2.5 px-4 font-bold text-slate-900">{a.nombre}</td>

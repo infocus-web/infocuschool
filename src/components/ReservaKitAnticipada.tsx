@@ -3,6 +3,7 @@ import { CheckCircle2, CreditCard, Loader2, Sparkles } from 'lucide-react';
 import { crearReserva, KITS_RESERVA, obtenerEstadoReserva, type KitReserva, type ReservaParaSumar, type ReservaPendiente } from '../services/reservasService';
 import { crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
 import { crearIntencionPagoNaveMultiple } from '../services/naveService';
+import { useNaveHabilitado } from '../services/mediosPagoService';
 
 interface HijoReserva {
   id: string;
@@ -43,6 +44,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
   const [cargando, setCargando] = useState(true);
   const [email, setEmail] = useState(tutorEmail);
   const [metodo, setMetodo] = useState<Metodo>('mercadopago');
+  const naveHabilitado = useNaveHabilitado();
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
   const [transferencia, setTransferencia] = useState<{ total: number; pedidos: string[] } | null>(null);
@@ -271,7 +273,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
               Medio de pago
               <select value={metodo} onChange={(e) => setMetodo(e.target.value as Metodo)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-normal">
                 <option value="mercadopago">Mercado Pago (tarjeta, débito o dinero en cuenta)</option>
-                <option value="nave">Nave (tarjeta)</option>
+                {naveHabilitado && <option value="nave">Nave (tarjeta)</option>}
                 <option value="transferencia">Transferencia bancaria</option>
               </select>
             </label>
