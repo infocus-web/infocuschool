@@ -3853,22 +3853,31 @@ export default function PortalFamiliasModal({
               {/* Subtotal & Navigation */}
               <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="text-left">
-                  <span className="text-xs text-slate-500">
-                    {otrosHijosEnCarrito.length > 0 ? `Subtotal de ${nombreAlumno}:` : 'Total a pagar:'}
-                  </span>
+                  {/* Pedido de Pablo (25/9): el total grande tiene que incluir TODO lo que se paga junto
+                      (hermanos y kits por adelantado), con el detalle abajo — antes mostraba sólo el
+                      del hijo activo y lo demás en letra chica, sin sumar. */}
+                  <span className="text-xs text-slate-500">Total a pagar:</span>
                   <div className="text-2xl font-black text-slate-900 font-['Outfit']">
-                    ${total.toLocaleString('es-AR')}{' '}
+                    ${totalCombinadoCarrito.toLocaleString('es-AR')}{' '}
                     <span className="text-xs font-normal text-slate-500">ARS</span>
                   </div>
-                  {otrosHijosEnCarrito.length > 0 && (
-                    <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-                      + ${otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0).toLocaleString('es-AR')} de {otrosHijosEnCarrito.length === 1 ? 'tu otro hijo/a' : 'tus otros hijos/as'} — se paga todo junto en el próximo paso.
-                    </p>
-                  )}
-                  {reservasParaSumar.length > 0 && (
-                    <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-                      + ${totalReservasParaSumar.toLocaleString('es-AR')} del kit por adelantado de {reservasParaSumar.map((r) => r.nombreCompleto).join(' y ')} — se paga todo junto en el próximo paso.
-                    </p>
+                  {(otrosHijosEnCarrito.length > 0 || reservasParaSumar.length > 0) && (
+                    <div className="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                      <p>
+                        {nombreAlumno}: <strong>${total.toLocaleString('es-AR')}</strong>
+                      </p>
+                      {otrosHijosEnCarrito.map((c) => (
+                        <p key={c.hijoId}>
+                          {c.nombreCompleto}: <strong>${c.total.toLocaleString('es-AR')}</strong>
+                        </p>
+                      ))}
+                      {reservasParaSumar.map((r) => (
+                        <p key={r.hijoId}>
+                          {r.nombreCompleto} (kit por adelantado): <strong>${r.precio.toLocaleString('es-AR')}</strong>
+                        </p>
+                      ))}
+                      <p className="font-semibold text-emerald-700">Se paga todo junto en el próximo paso.</p>
+                    </div>
                   )}
                 </div>
 
