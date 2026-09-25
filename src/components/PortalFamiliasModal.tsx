@@ -74,7 +74,7 @@ import {
 } from '../services/inscripcionesService';
 import { enviarSolicitudCodigo } from '../services/solicitudesCodigoService';
 import { obtenerGaleriaPublica } from '../services/fotosSubidasService';
-import { elegirFotosDeReserva, obtenerReservaPendiente, type ReservaPendiente } from '../services/reservasService';
+import { crearReserva, elegirFotosDeReserva, obtenerEstadoReserva, obtenerReservaPendiente, type ReservaParaSumar, type ReservaPendiente } from '../services/reservasService';
 import ReservaKitAnticipada from './ReservaKitAnticipada';
 import { irAConsultasConDatos } from '../utils/consultaPrefill';
 import { Colegio, KitProducto, Foto } from '../types';
@@ -512,7 +512,9 @@ export default function PortalFamiliasModal({
       if (data.success) {
         // Pantalla de respaldo (volvió del pago sin el pedido guardado): se completa el monto real.
         if (Number(data.total) > 0) {
-          setPedidoGenerado((prev) => (prev && !(prev.total > 0) ? { ...prev, total: Number(data.total) } : prev));
+          // También si el servidor informa más (un pago que incluyó el kit por adelantado de un
+          // hermano, que no queda guardado en este navegador).
+          setPedidoGenerado((prev) => (prev && !(prev.total >= Number(data.total)) ? { ...prev, total: Number(data.total) } : prev));
         }
         if (data.estadoPago === 'aprobado') {
           // Auditoría 2026-09-18 (reporte de Pablo): "el botón de descarga inmediata no se
@@ -817,13 +819,23 @@ export default function PortalFamiliasModal({
   // Kits ya pagados por adelantado de CADA hermano: esos chicos no entran al carrito de compra
   // normal (sería cobrarles dos veces); sus fotos se confirman aparte con "Confirmar mis fotos".
   const [reservasPorHijo, setReservasPorHijo] = useState<Record<string, boolean>>({});
+  // Por hermano: ¿su curso tiene fotos? ¿ya tiene un pedido pagado? Un hermano sin fotos o con su
+  // pedido ya pago no bloquea "Elegir Kit y Formato" (antes lo exigía y la familia no podía comprar).
+  const [estadoHermanos, setEstadoHermanos] = useState<Record<string, { fotosDisponibles: boolean; tienePedidoPagado: boolean }>>({});
+  // Reservas de hermanos SIN fotos que se suman a esta compra (pedido de Pablo, 25/9: si un hermano
+  // tiene fotos, primero se eligen las suyas y todo se paga junto).
+  const [reservasParaSumar, setReservasParaSumar] = useState<ReservaParaSumar[]>([]);
   const claveHijosReserva = hijosFamilia.map((h) => `${h.id}|${h.codigoSeccion}|${h.nombreCompleto}`).join(';');
   useEffect(() => {
     let cancelado = false;
     Promise.all(
-      hijosFamilia.map(async (h) => [h.id, Boolean((await obtenerReservaPendiente(h.codigoSeccion, h.nombreCompleto))?.pagada)] as const)
+      hijosFamilia.map(async (h) => [h.id, await obtenerEstadoReserva(h.codigoSeccion, h.nombreCompleto)] as const)
     ).then((pares) => {
-      if (!cancelado) setReservasPorHijo(Object.fromEntries(pares));
+      if (cancelado) return;
+      setReservasPorHijo(Object.fromEntries(pares.map(([id, e]) => [id, Boolean(e.reserva?.pagada)])));
+      // Sólo con respuesta confirmada del servidor: si la consulta falla, el hermano sigue contando
+      // como pendiente (mejor pedir sus fotos de más que dejar pasar una compra incompleta).
+      setEstadoHermanos(Object.fromEntries(pares.filter(([, e]) => e.ok).map(([id, e]) => [id, { fotosDisponibles: e.fotosDisponibles, tienePedidoPagado: e.tienePedidoPagado }])));
     });
     return () => {
       cancelado = true;
@@ -1314,7 +1326,8 @@ export default function PortalFamiliasModal({
   const otrosHijosEnCarrito = valoresDelCarrito(carritoHijos).filter(
     (c) => c.hijoId !== hijoSeleccionadoId && c.completo && !tieneKitPagadoPorAdelantado(c.hijoId)
   );
-  const totalCombinadoCarrito = total + otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0);
+  const totalReservasParaSumar = reservasParaSumar.reduce((acc, r) => acc + r.precio, 0);
+  const totalCombinadoCarrito = total + otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0) + totalReservasParaSumar;
 
   // Cuántas de las 3 fotos del pack están realmente elegidas (es decir, la selección apunta a una
   // foto que existe de verdad en esta galería, no sólo un ID que quedó de otra galería/curso). El
@@ -1517,6 +1530,8 @@ export default function PortalFamiliasModal({
     const hermanoIncompleto = hijosFamilia.find((h) => {
       if (h.id === hijoSeleccionadoId) return false; // el activo ya se validó arriba
       if (tieneKitPagadoPorAdelantado(h.id)) return false; // ya pagado: sus fotos se confirman aparte
+      const estado = estadoHermanos[h.id];
+      if (estado && (!estado.fotosDisponibles || estado.tienePedidoPagado)) return false; // sin fotos todavía, o ya compró
       return !carritoHijosRef.current[h.id]?.completo;
     });
     if (hermanoIncompleto) {
@@ -1643,7 +1658,7 @@ export default function PortalFamiliasModal({
       (c) => c.hijoId !== hijoSeleccionadoId && c.completo && !tieneKitPagadoPorAdelantado(c.hijoId)
     );
 
-    if (otrosHijosCarrito.length > 0) {
+    if (otrosHijosCarrito.length > 0 || reservasParaSumar.length > 0) {
       await handleCompletarPagoMultiple(otrosHijosCarrito, numLista, codCurso);
       return;
     }
@@ -1856,6 +1871,27 @@ export default function PortalFamiliasModal({
         items: todosLosItems,
       });
 
+      // Reservas de hermanos sin fotos: se suman al MISMO grupo de pago (un solo checkout).
+      let friendlyIdsReservas: string[] = [];
+      if (resultadoCarrito.sincronizado && reservasParaSumar.length > 0) {
+        const reserva = await crearReserva({
+          tutorNombre: tutorNombre.trim(),
+          tutorEmail: tutorEmail.trim(),
+          tutorTelefono: tutorWhatsapp.trim(),
+          metodoPago: metodoPago === 'nave' || metodoPago === 'transferencia' ? metodoPago : 'mercadopago',
+          items: reservasParaSumar.map((r) => ({ codigoSeccion: r.codigoSeccion, alumnoNombre: r.nombreCompleto, kitId: r.kitId })),
+          grupoPagoId: resultadoCarrito.grupoPagoId,
+        });
+        if (!reserva.success) {
+          setPagoError(`No pudimos sumar el kit por adelantado a tu compra (${reserva.error || 'error desconocido'}). Intentá de nuevo en unos segundos.`);
+          setIsProcessingPayment(false);
+          setStep(5);
+          return;
+        }
+        friendlyIdsReservas = reserva.pedidoFriendlyIds || [];
+      }
+      const nombresReservas = reservasParaSumar.map((r) => r.nombreCompleto);
+
       // Un pedido "de mentira" (nunca se manda a Supabase) sólo para que la pantalla de
       // confirmación (Paso 5) tenga algo coherente que mostrar — nombre de todos los hijos,
       // total combinado — aunque en la base real sean N filas separadas en "pedidos", no una.
@@ -1871,14 +1907,14 @@ export default function PortalFamiliasModal({
         division,
         turno,
         alumnoNumeroLista: numListaActivo,
-        alumnoNombre: todosLosItems.map((it) => it.alumnoNombre).join(', '),
+        alumnoNombre: [...todosLosItems.map((it) => it.alumnoNombre), ...nombresReservas].join(', '),
         codigoAlumno: '',
         tutorNombre: tutorNombre.trim(),
         tutorTelefono: tutorWhatsapp.trim(),
         tutorEmail: tutorEmail.trim(),
         kitId: selectedKit.id,
-        kitNombre: `${todosLosItems.length} hijos/as`,
-        total: resultadoCarrito.total || total,
+        kitNombre: `${todosLosItems.length + nombresReservas.length} hijos/as`,
+        total: (resultadoCarrito.total || total) + totalReservasParaSumar,
         metodoPago,
         estadoPago: 'pendiente',
         estadoEntrega: 'en_espera',
@@ -1899,7 +1935,7 @@ export default function PortalFamiliasModal({
       // acá se mostraban los uuid crudos de la base ("43a0fbe5-0324-45c4-b699-...") pegados con
       // comas — ahora se usa un "IFS-2026-XXXX" por cada hijo, igual que en el camino de un
       // solo hijo (ver registrarCarritoMultipleDesdePortal).
-      setNumeroPedido(resultadoCarrito.pedidoFriendlyIds.join(', ') || resultadoCarrito.pedidoIds.join(', ') || pedidoSintetico.id);
+      setNumeroPedido([...resultadoCarrito.pedidoFriendlyIds, ...friendlyIdsReservas].join(', ') || resultadoCarrito.pedidoIds.join(', ') || pedidoSintetico.id);
 
       // Auditoría 2026-09-09 (mismo criterio que el camino de un solo hijo): si el carrito no se
       // pudo confirmar en el servidor, se corta acá y nunca se avanza al pago combinado.
@@ -3127,6 +3163,11 @@ export default function PortalFamiliasModal({
                     tutorEmail={tutorEmail || familiaActiva?.email || ''}
                     tutorTelefono={tutorWhatsapp || familiaActiva?.telefonoWhatsApp || ''}
                     onVerFotosHijo={hijosFamilia.length > 1 ? (id) => seleccionarHijo(id) : undefined}
+                    onSumarALaCompra={(reservas, hijoConFotosId) => {
+                      setReservasParaSumar(reservas);
+                      seleccionarHijo(hijoConFotosId);
+                    }}
+                    reservasSumadas={reservasParaSumar}
                   />
                 </div>
               ) : (
@@ -3153,7 +3194,18 @@ export default function PortalFamiliasModal({
                   p-4 sm:p-5 / mb-3, y de nuevo achicado ese mismo día — antes p-3 sm:p-4 / mb-2 —
                   como parte del mismo pedido de Pablo de necesitar menos scroll) para dejar más
                   alto libre para las fotos y el botón "Elegir" sin scrollear. */}
-              <div ref={panelPackRef} className="scroll-mt-4 bg-slate-900 text-white rounded-2xl p-2.5 sm:p-3 shadow-md border border-slate-800">
+              {reservasParaSumar.length > 0 && !reservaActiva?.pagada && (
+                <div className="mb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  <span>
+                    <CheckCircle2 className="inline w-3.5 h-3.5 mr-1 text-emerald-600 align-[-2px]" />
+                    Se suma el {reservasParaSumar.map((r) => `${r.kitNombre} de ${r.nombreCompleto}`).join(' y ')} (${totalReservasParaSumar.toLocaleString('es-AR')}). Elegí las fotos de {nombreAlumno} y pagás todo junto.
+                  </span>
+                  <button type="button" onClick={() => setReservasParaSumar([])} className="shrink-0 font-bold underline cursor-pointer">
+                    Quitar
+                  </button>
+                </div>
+              )}
+                            <div ref={panelPackRef} className="scroll-mt-4 bg-slate-900 text-white rounded-2xl p-2.5 sm:p-3 shadow-md border border-slate-800">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1.5">
                   <div>
                     <div className="flex items-center gap-2">
@@ -3813,6 +3865,11 @@ export default function PortalFamiliasModal({
                       + ${otrosHijosEnCarrito.reduce((acc, c) => acc + c.total, 0).toLocaleString('es-AR')} de {otrosHijosEnCarrito.length === 1 ? 'tu otro hijo/a' : 'tus otros hijos/as'} — se paga todo junto en el próximo paso.
                     </p>
                   )}
+                  {reservasParaSumar.length > 0 && (
+                    <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                      + ${totalReservasParaSumar.toLocaleString('es-AR')} del kit por adelantado de {reservasParaSumar.map((r) => r.nombreCompleto).join(' y ')} — se paga todo junto en el próximo paso.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-3">
@@ -3968,7 +4025,7 @@ export default function PortalFamiliasModal({
                   <div className="space-y-4">
                     <div className="border-b border-slate-800 pb-3">
                       <p className="text-[11px] uppercase tracking-wider text-amber-400 font-bold">
-                        {otrosHijosEnCarrito.length > 0 ? `Resumen del Pedido (${otrosHijosEnCarrito.length + 1} hijos/as)` : 'Resumen del Pedido'}
+                        {otrosHijosEnCarrito.length + reservasParaSumar.length > 0 ? `Resumen del Pedido (${otrosHijosEnCarrito.length + reservasParaSumar.length + 1} hijos/as)` : 'Resumen del Pedido'}
                       </p>
                       <p className="text-sm font-bold text-white mt-1">{selectedKit.nombre}</p>
                       <p className="text-xs text-slate-400">
@@ -4008,6 +4065,33 @@ export default function PortalFamiliasModal({
                         <p className="text-[10px] text-emerald-300/90">
                           Un solo pago cubre {nombreAlumno} y {otrosHijosEnCarrito.map((c) => c.nombreCompleto).join(', ')}.
                         </p>
+                      </div>
+                    )}
+
+                    {reservasParaSumar.length > 0 && (
+                      <div className="space-y-2 -mt-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                          <ShoppingCart className="w-3.5 h-3.5" />
+                          <span>Kit por adelantado (fotos todavía no cargadas)</span>
+                        </p>
+                        {reservasParaSumar.map((r) => (
+                          <div key={r.hijoId} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-800/70 p-2.5 text-xs">
+                            <div className="min-w-0">
+                              <p className="truncate font-bold text-white">{r.nombreCompleto}</p>
+                              <p className="text-[10px] text-slate-400">{r.kitNombre} · elegís sus fotos cuando estén, sin volver a pagar</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-bold text-slate-200">${r.precio.toLocaleString('es-AR')}</span>
+                              <button
+                                type="button"
+                                onClick={() => setReservasParaSumar((prev) => prev.filter((x) => x.hijoId !== r.hijoId))}
+                                className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer"
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
 

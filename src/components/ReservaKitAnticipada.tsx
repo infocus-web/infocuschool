@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, CreditCard, Loader2, Sparkles } from 'lucide-react';
-import { crearReserva, KITS_RESERVA, obtenerEstadoReserva, type KitReserva, type ReservaPendiente } from '../services/reservasService';
+import { crearReserva, KITS_RESERVA, obtenerEstadoReserva, type KitReserva, type ReservaParaSumar, type ReservaPendiente } from '../services/reservasService';
 import { crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
 import { crearIntencionPagoNaveMultiple } from '../services/naveService';
 
@@ -17,6 +17,14 @@ interface Props {
   tutorTelefono?: string;
   /** Pasar a la galería de un hijo cuyo curso ya tiene fotos (ahí se elige y se compra normal). */
   onVerFotosHijo?: (hijoId: string) => void;
+  /**
+   * Pedido de Pablo (25/9): si un hermano ya tiene fotos y todavía no las compró, la reserva no se
+   * paga sola — se suma a la compra de ese hermano (un solo pago). Recibe los kits elegidos y el
+   * hermano con fotos al que hay que ir a elegir.
+   */
+  onSumarALaCompra?: (reservas: ReservaParaSumar[], hijoConFotosId: string) => void;
+  /** Reservas que ya se sumaron a la compra (para mostrarlas como tales). */
+  reservasSumadas?: ReservaParaSumar[];
 }
 
 type Metodo = 'mercadopago' | 'nave' | 'transferencia';
@@ -26,11 +34,12 @@ type Metodo = 'mercadopago' | 'nave' | 'transferencia';
  * adelantado"). Se muestra mientras el curso todavía no tiene fotos: la familia elige el kit de
  * cada hijo y lo paga ya; cuando se suben las fotos, las elige sin volver a pagar.
  */
-export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, tutorTelefono, onVerFotosHijo }: Props) {
+export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, tutorTelefono, onVerFotosHijo, onSumarALaCompra, reservasSumadas = [] }: Props) {
   const [kits, setKits] = useState<Record<string, KitReserva | ''>>({});
   const [reservas, setReservas] = useState<Record<string, ReservaPendiente | null>>({});
   // Hijos cuyo curso YA tiene fotos: no se reservan (caso real 25/9, se cobraba igual por adelantado).
   const [conFotos, setConFotos] = useState<Record<string, boolean>>({});
+  const [conPedidoPagado, setConPedidoPagado] = useState<Record<string, boolean>>({});
   const [cargando, setCargando] = useState(true);
   const [email, setEmail] = useState(tutorEmail);
   const [metodo, setMetodo] = useState<Metodo>('mercadopago');
@@ -49,6 +58,7 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
       if (cancelado) return;
       setReservas(Object.fromEntries(pares.map(([id, e]) => [id, e.reserva])));
       setConFotos(Object.fromEntries(pares.map(([id, e]) => [id, e.fotosDisponibles])));
+      setConPedidoPagado(Object.fromEntries(pares.map(([id, e]) => [id, e.tienePedidoPagado])));
       setKits((prev) => {
         const nuevo = { ...prev };
         for (const [id, e] of pares) if (!e.reserva?.pagada && !e.fotosDisponibles && nuevo[id] === undefined) nuevo[id] = 'kit-clasico';
@@ -75,6 +85,22 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
     () => elegidos.reduce((acc, h) => acc + (KITS_RESERVA.find((k) => k.id === kits[h.id])?.precio || 0), 0),
     [elegidos, kits]
   );
+  // Hermanos con fotos online que todavía no compraron: primero se eligen sus fotos y la reserva se
+  // suma a esa compra (un solo pago). No se puede pagar la reserva sola mientras falten.
+  const hermanosConFotosPendientes = hijos.filter((h) => conFotos[h.id] && !conPedidoPagado[h.id] && !reservas[h.id]?.pagada);
+  const debeSumarseALaCompra = hermanosConFotosPendientes.length > 0 && Boolean(onSumarALaCompra);
+  const nombresPendientes = hermanosConFotosPendientes.map((h) => h.nombreCompleto).join(' y ');
+  const sumarALaCompra = () => {
+    setError('');
+    if (elegidos.length === 0) return setError('Elegí el kit de al menos uno de los chicos, o tocá directamente "Ver sus fotos".');
+    onSumarALaCompra?.(
+      elegidos.map((h) => {
+        const kit = KITS_RESERVA.find((k) => k.id === kits[h.id])!;
+        return { hijoId: h.id, nombreCompleto: h.nombreCompleto, codigoSeccion: h.codigoSeccion, kitId: kit.id, kitNombre: kit.nombre, precio: kit.precio };
+      }),
+      hermanosConFotosPendientes[0].id
+    );
+  };
 
   const pagar = async () => {
     setError('');
@@ -144,8 +170,15 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
           if (conFotos[h.id] && !reserva?.pagada) {
             return (
               <div key={h.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950">
-                <span><strong>{h.nombreCompleto}:</strong> sus fotos ya están online, así que no hace falta reservar. Elegilas en su galería y comprá desde ahí.</span>
-                {onVerFotosHijo && (
+                <span>
+                  <strong>{h.nombreCompleto}:</strong>{' '}
+                  {conPedidoPagado[h.id]
+                    ? 'sus fotos ya están online y su pedido ya está pago.'
+                    : debeSumarseALaCompra
+                    ? 'sus fotos ya están online. Primero elegí sus fotos: el kit de sus hermanos se suma a esa compra y pagás todo junto.'
+                    : 'sus fotos ya están online, así que no hace falta reservar. Elegilas en su galería y comprá desde ahí.'}
+                </span>
+                {onVerFotosHijo && !conPedidoPagado[h.id] && (
                   <button type="button" onClick={() => onVerFotosHijo(h.id)} className="shrink-0 rounded-lg bg-sky-600 px-3 py-1.5 font-bold text-white hover:bg-sky-500">
                     Ver sus fotos
                   </button>
@@ -204,7 +237,30 @@ export default function ReservaKitAnticipada({ hijos, tutorNombre, tutorEmail, t
         })}
       </div>
 
-      {!cargando && hijosSinReservaPagada.length > 0 && (
+      {!cargando && hijosSinReservaPagada.length > 0 && debeSumarseALaCompra && (
+        <div className="mt-4 space-y-2">
+          {reservasSumadas.length > 0 && (
+            <p className="text-xs font-semibold text-emerald-700">
+              Ya sumaste {reservasSumadas.map((r) => `${r.kitNombre} de ${r.nombreCompleto}`).join(' y ')} a tu compra.
+            </p>
+          )}
+          {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
+          <button
+            type="button"
+            onClick={sumarALaCompra}
+            disabled={elegidos.length === 0}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-sm font-bold text-slate-950 shadow-md hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+          >
+            <CreditCard className="h-4 w-4" />
+            {elegidos.length === 0 ? 'Elegí un kit' : `Elegir las fotos de ${nombresPendientes} y pagar todo junto`}
+          </button>
+          <p className="text-[11px] text-slate-500">
+            El kit de {elegidos.map((h) => h.nombreCompleto).join(' y ') || 'tu hijo/a'} (${total.toLocaleString('es-AR')}) se suma a la compra y se paga en el mismo pago.
+          </p>
+        </div>
+      )}
+
+      {!cargando && hijosSinReservaPagada.length > 0 && !debeSumarseALaCompra && (
         <>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="text-xs font-semibold text-slate-700">

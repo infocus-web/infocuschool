@@ -6870,7 +6870,9 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
       return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
     }
     // Pago anticipado: al volver del pago se muestra la pantalla de "reserva confirmada".
-    const sufijoReserva = cobro.filas.some((fila: any) => fila.seleccion_pendiente) ? '&reserva=1' : '';
+    // Pantalla de "reserva confirmada" sólo si TODO el pago son reservas; una compra con fotos más
+    // la reserva de un hermano vuelve a la confirmación normal de compra.
+    const sufijoReserva = cobro.filas.length > 0 && cobro.filas.every((fila: any) => fila.seleccion_pendiente) ? '&reserva=1' : '';
     const mpItems: any[] = cobro.filas.map((fila: any) => ({
       id: fila.id,
       title: `Retrato Escolar 2026 - ${fila.kit_nombre || 'Kit Fotográfico'} (${fila.alumno_nombre || 'Alumno'})`,
@@ -7156,10 +7158,12 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
   try {
     const { tutorNombre, tutorTelefono, tutorEmail, items } = req.body || {};
 
-    if (!Array.isArray(items) || items.length < 2 || items.length > 10) {
+    // Desde el 25/9 puede venir un solo hijo con fotos: la reserva de un hermano sin fotos se suma
+    // después al mismo grupo de pago (ver grupoPagoId en /api/reservas/crear).
+    if (!Array.isArray(items) || items.length < 1 || items.length > 10) {
       return res.status(400).json({
         success: false,
-        error: 'El carrito debe tener entre 2 y 10 hijos para usar el pago conjunto. Con un solo hijo, usá /api/pedidos/crear.',
+        error: 'El carrito debe tener entre 1 y 10 hijos.',
       });
     }
 
@@ -7374,7 +7378,7 @@ async function enviarCorreoReservaConfirmada(datos: {
 
 app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
-    const { tutorNombre, tutorTelefono, tutorEmail, metodoPago, items } = req.body || {};
+    const { tutorNombre, tutorTelefono, tutorEmail, metodoPago, items, grupoPagoId: grupoExistente } = req.body || {};
     if (!Array.isArray(items) || items.length < 1 || items.length > 10) {
       return res.status(400).json({ success: false, error: 'Elegí el kit de al menos un hijo/a.' });
     }
@@ -7418,6 +7422,48 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 
       resueltos.push({ seccion, colegio, alumnoNombre, kitId, cursoCodigo });
     }
 
+    // Pedido de Pablo (25/9): "sí o sí deben elegir las fotos del alumno que sí tiene fotos". Una
+    // reserva suelta (no sumada a una compra) se rechaza si algún hijo inscripto de esta familia
+    // (mismo email) tiene fotos online y todavía no las compró: primero se eligen esas fotos y la
+    // reserva se suma a esa compra (grupoPagoId). Se controla acá además de en la pantalla.
+    if (!grupoExistente) {
+      const emailParaIlike = emailTutor.replace(/[%_\\]/g, (c) => `\\${c}`);
+      const { data: inscripcionesFamilia } = await supabase
+        .from('inscripciones')
+        .select('colegio_id, alumno_nombre, alumno_apellido, grado, turno, division, hermanos')
+        .eq('estado', 'aceptado')
+        .ilike('email', emailParaIlike);
+      const reservados = new Set(resueltos.map((r) => normalizarNombrePorPalabras(r.alumnoNombre)));
+      for (const insc of inscripcionesFamilia || []) {
+        const chicos = [
+          { nombre: `${insc.alumno_nombre || ''} ${insc.alumno_apellido || ''}`.trim(), colegioId: insc.colegio_id, grado: insc.grado, turno: insc.turno, division: insc.division },
+          ...(Array.isArray(insc.hermanos) ? insc.hermanos.map((h: any) => ({
+            nombre: `${h.alumnoNombre || h.alumno_nombre || ''} ${h.alumnoApellido || h.alumno_apellido || ''}`.trim(),
+            colegioId: h.colegioId || insc.colegio_id,
+            grado: h.grado, turno: h.turno, division: h.division,
+          })) : []),
+        ];
+        for (const chico of chicos) {
+          if (!chico.nombre || !chico.grado || !chico.turno || reservados.has(normalizarNombrePorPalabras(chico.nombre))) continue;
+          const cursoChico = determinarCodigoCursoServidor(chico.grado, chico.turno, chico.division || '');
+          if (!(await cursoTieneFotosDelPack(supabase, chico.colegioId, cursoChico))) continue;
+          const { data: pagadosChico } = await supabase
+            .from('pedidos')
+            .select('alumno_nombre')
+            .eq('colegio_id', chico.colegioId)
+            .eq('curso_codigo', cursoChico)
+            .in('estado', ['pagado', 'entregado']);
+          const yaCompro = (pagadosChico || []).some((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === normalizarNombrePorPalabras(chico.nombre));
+          if (!yaCompro) {
+            return res.status(409).json({
+              success: false,
+              error: `Las fotos de ${chico.nombre} ya están online: primero elegí sus fotos y sumá esta reserva a esa compra, así pagás todo junto.`,
+            });
+          }
+        }
+      }
+    }
+
     // Si la familia había empezado una reserva y no la pagó (cerró Mercado Pago, cambió de medio,
     // etc.), esa reserva vieja se anula: queda sólo la nueva y el panel no se llena de pendientes.
     for (const r of resueltos) {
@@ -7446,7 +7492,21 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 30, 10 * 60 
       .select('id')
       .single();
 
-    const grupoPagoId = crypto.randomUUID();
+    // Pedido de Pablo (25/9): si un hermano ya tiene fotos, primero se eligen las suyas y la reserva
+    // del hermano sin fotos se SUMA a esa misma compra (un solo pago). Se acepta el grupo sólo si ya
+    // existe y está entero sin pagar, así no se puede colgar una reserva de un pago ajeno o cerrado.
+    let grupoPagoId: string = crypto.randomUUID();
+    if (grupoExistente) {
+      const { data: filasGrupo, error: errorGrupo } = await supabase
+        .from('pedidos')
+        .select('id, estado')
+        .eq('grupo_pago_id', String(grupoExistente));
+      if (errorGrupo) throw errorGrupo;
+      if (!filasGrupo || filasGrupo.length === 0 || filasGrupo.some((f: any) => f.estado !== 'pendiente_pago')) {
+        return res.status(409).json({ success: false, error: 'No pudimos sumar la reserva a tu compra. Volvé a intentarlo.' });
+      }
+      grupoPagoId = String(grupoExistente);
+    }
     const friendlyIdsUsados = new Set<string>();
     const numeroListaBasePorCurso: Record<string, number> = {};
     const filas: Record<string, any>[] = [];
@@ -7523,6 +7583,13 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
     if (!seccion) return res.json({ success: true, reserva: null });
     const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
     const fotosDisponibles = await cursoTieneFotosDelPack(supabase, seccion.colegioId, cursoCodigo);
+    const { data: pagados } = await supabase
+      .from('pedidos')
+      .select('alumno_nombre')
+      .eq('colegio_id', seccion.colegioId)
+      .eq('curso_codigo', cursoCodigo)
+      .in('estado', ['pagado', 'entregado']);
+    const tienePedidoPagado = (pagados || []).some((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === normalizarNombrePorPalabras(alumnoNombre));
     const { data, error } = await supabase
       .from('pedidos')
       .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, metodo_pago')
@@ -7537,10 +7604,11 @@ app.get('/api/reservas/pendiente', limitarFrecuencia('reservas-pendiente', 200, 
     const propias = (data || []).filter((p: any) => normalizarNombrePorPalabras(p.alumno_nombre) === buscado);
     const pagada = propias.find((p: any) => p.estado === 'pagado');
     const elegida = pagada || propias[0];
-    if (!elegida) return res.json({ success: true, reserva: null, fotosDisponibles });
+    if (!elegida) return res.json({ success: true, reserva: null, fotosDisponibles, tienePedidoPagado });
     return res.json({
       success: true,
       fotosDisponibles,
+      tienePedidoPagado,
       reserva: {
         id: elegida.id,
         pedidoFriendlyId: elegida.pedido_friendly_id,
@@ -7869,7 +7937,9 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
       return res.status(cobro.status || 400).json({ success: false, error: cobro.error });
     }
     // Pago anticipado: al volver del pago se muestra la pantalla de "reserva confirmada".
-    const sufijoReserva = cobro.filas.some((fila: any) => fila.seleccion_pendiente) ? '&reserva=1' : '';
+    // Pantalla de "reserva confirmada" sólo si TODO el pago son reservas; una compra con fotos más
+    // la reserva de un hermano vuelve a la confirmación normal de compra.
+    const sufijoReserva = cobro.filas.length > 0 && cobro.filas.every((fila: any) => fila.seleccion_pendiente) ? '&reserva=1' : '';
     let totalGrupo = 0;
     const products: any[] = cobro.filas.map((fila: any) => {
       const totalItem = Number(fila.total);

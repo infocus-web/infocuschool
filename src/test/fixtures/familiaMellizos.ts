@@ -98,6 +98,14 @@ export function mockearFetchFamiliaYGaleria() {
         json: async () => ({ success: true, hijos: hijosMellizos }),
       } as Response;
     }
+    if (url.includes('/api/reservas/pendiente')) {
+      // Los mellizos comparten una sección que YA tiene fotos, sin pedidos pagados.
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, reserva: null, fotosDisponibles: true, tienePedidoPagado: false }),
+      } as Response;
+    }
     if (url.includes('/api/fotos')) {
       return {
         ok: true,
