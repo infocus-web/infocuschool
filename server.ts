@@ -6572,6 +6572,39 @@ async function autorizarTareaProgramada(req: Request): Promise<boolean> {
   return Boolean(data?.secreto) && compararTimingSafe(autorizacion, `Bearer ${data!.secreto}`);
 }
 
+// Diagnóstico de Nave (25/9, para pasar de sandbox a producción): prueba las credenciales cargadas
+// contra el login de sandbox y el de producción y dice cuál acepta. No devuelve ningún secreto ni
+// token, solo los códigos de respuesta. Protegido con el mismo secreto que las tareas programadas.
+app.all('/api/cron/nave-diagnostico', async (req: Request, res: Response) => {
+  if (!(await autorizarTareaProgramada(req))) return res.status(401).json({ success: false, error: 'No autorizado.' });
+  const credenciales = getNaveCredenciales();
+  if (!credenciales) return res.json({ success: false, error: 'Faltan NAVE_CLIENT_ID / NAVE_CLIENT_SECRET / NAVE_POS_ID.' });
+  const probar = async (url: string) => {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: credenciales.clientId, client_secret: credenciales.clientSecret, audience: NAVE_AUTH_AUDIENCE }),
+      });
+      const texto = await resp.text().catch(() => '');
+      let tieneToken = false;
+      try {
+        tieneToken = Boolean(JSON.parse(texto)?.access_token);
+      } catch {
+        /* no era JSON */
+      }
+      return { status: resp.status, acepta: resp.ok && tieneToken, detalle: tieneToken ? 'token OK' : texto.slice(0, 200) };
+    } catch (err: any) {
+      return { status: 0, acepta: false, detalle: err?.message || 'error de red' };
+    }
+  };
+  const [sandbox, produccion] = await Promise.all([
+    probar('https://homoservices.apinaranja.com/security-ms/api/security/auth0/b2b/m2msPrivate'),
+    probar('https://services.apinaranja.com/security-ms/api/security/auth0/b2b/m2msPrivate'),
+  ]);
+  return res.json({ success: true, entornoActual: getNaveEntorno(), sandbox, produccion });
+});
+
 // Control automático de pagos (cada 10 minutos, vía pg_cron): reconsulta a Mercado Pago / Nave
 // los pedidos con link de pago generado que siguen sin pagar (o cancelados) en los últimos 3 días.
 // Así un pago acreditado cuyo aviso se perdió se registra solo, con su correo y su .zip, aunque la
