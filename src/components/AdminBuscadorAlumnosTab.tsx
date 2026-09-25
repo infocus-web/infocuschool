@@ -1,6 +1,103 @@
 import { useEffect, useState } from 'react';
-import { Search, Loader2, CheckCircle2, AlertCircle, KeyRound, School, Phone, Mail, X } from 'lucide-react';
+import { Search, Loader2, CheckCircle2, AlertCircle, KeyRound, School, Phone, Mail, X, Send, Sparkles } from 'lucide-react';
 import { buscarAlumnosAdmin, AlumnoBusqueda, PedidoPorTelefonoBusqueda } from '../services/buscadorAlumnosService';
+import { iniciarConversacionFamiliaAdmin, sugerirMensajeFamiliaAdmin } from '../services/consultasFamiliasService';
+
+interface DestinatarioFamilia {
+  nombre: string;
+  email: string;
+  telefono?: string;
+  colegio?: string;
+  numeroPedido?: string;
+  alumno: string;
+}
+
+/**
+ * "Escribir a esta familia" (pedido de Pablo, 25/9): manda un email desde el dominio de Retrato
+ * Escolar y lo deja como conversación en la pestaña Consultas, donde también llega la respuesta.
+ */
+function ModalEscribirFamilia({ destino, onCerrar }: { destino: DestinatarioFamilia; onCerrar: (enviado: boolean) => void }) {
+  const [asunto, setAsunto] = useState('');
+  const [mensaje, setMensaje] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [redactando, setRedactando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pedirBorrador = async () => {
+    setError(null);
+    if (asunto.trim().length < 3) return setError('Escribí primero el asunto: la IA arma el borrador a partir de él.');
+    setRedactando(true);
+    try {
+      const texto = await sugerirMensajeFamiliaAdmin({ nombre: destino.nombre, email: destino.email, alumno: destino.alumno, numeroPedido: destino.numeroPedido, motivo: asunto.trim() });
+      if (texto) setMensaje(texto);
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo generar el borrador.');
+    } finally {
+      setRedactando(false);
+    }
+  };
+
+  const enviar = async () => {
+    setError(null);
+    if (asunto.trim().length < 2) return setError('Escribí un asunto.');
+    if (mensaje.trim().length < 5) return setError('Escribí el mensaje.');
+    setEnviando(true);
+    try {
+      await iniciarConversacionFamiliaAdmin({
+        nombre: destino.nombre,
+        email: destino.email,
+        telefono: destino.telefono,
+        colegio: destino.colegio,
+        numeroPedido: destino.numeroPedido,
+        asunto: asunto.trim(),
+        mensaje: mensaje.trim(),
+      });
+      onCerrar(true);
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo enviar el email.');
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => !enviando && onCerrar(false)}>
+      <div role="dialog" aria-label="Escribir a la familia" className="bg-white rounded-2xl p-5 w-full max-w-lg shadow-xl space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="font-bold text-slate-900 text-sm">Escribir a {destino.nombre}</p>
+            <p className="text-[11px] text-slate-500 truncate">{destino.email} · {destino.alumno}</p>
+          </div>
+          <button type="button" onClick={() => onCerrar(false)} disabled={enviando} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer" aria-label="Cerrar">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <label className="block text-[11px] font-semibold text-slate-700">
+          Asunto
+          <input value={asunto} onChange={(e) => setAsunto(e.target.value)} maxLength={160} placeholder="Ej: Tu kit ya está pago" className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-xs font-normal" />
+        </label>
+        <div className="text-[11px] font-semibold text-slate-700">
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="mensaje-familia">Mensaje</label>
+            <button type="button" onClick={() => void pedirBorrador()} disabled={redactando || enviando} className="inline-flex items-center gap-1 text-[11px] font-bold text-violet-700 hover:text-violet-900 disabled:opacity-50 cursor-pointer">
+              {redactando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+              Borrador con IA
+            </button>
+          </div>
+          <textarea id="mensaje-familia" value={mensaje} onChange={(e) => setMensaje(e.target.value)} maxLength={3000} rows={8} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-xs font-normal" placeholder="Sólo el cuerpo: el email ya empieza con “Hola {nombre},” y termina con la firma de Retrato Escolar." />
+        </div>
+        <p className="text-[10px] text-slate-500">Sale desde el email de Retrato Escolar. Si la familia responde, la respuesta te llega a la pestaña Consultas, en esta misma conversación.</p>
+        {error && <p className="text-[11px] font-semibold text-rose-700">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={() => onCerrar(false)} disabled={enviando} className="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">Cancelar</button>
+          <button type="button" onClick={() => void enviar()} disabled={enviando} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer">
+            {enviando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Enviar email
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function formatearMonto(valor: number): string {
   return `$${Math.round(valor).toLocaleString('es-AR')}`;
@@ -18,6 +115,8 @@ export default function AdminBuscadorAlumnosTab() {
   const [query, setQuery] = useState('');
   const [buscando, setBuscando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [escribiendoA, setEscribiendoA] = useState<DestinatarioFamilia | null>(null);
+  const [avisoEnvio, setAvisoEnvio] = useState<string | null>(null);
   const [alumnos, setAlumnos] = useState<AlumnoBusqueda[]>([]);
   const [pedidosPorTelefono, setPedidosPorTelefono] = useState<PedidoPorTelefonoBusqueda[]>([]);
   const [buscoAlgunaVez, setBuscoAlgunaVez] = useState(false);
@@ -90,6 +189,23 @@ export default function AdminBuscadorAlumnosTab() {
           <Loader2 className="absolute right-10 top-1/2 -translate-y-1/2 w-4 h-4 text-sky-500 animate-spin" />
         )}
       </div>
+
+      {avisoEnvio && (
+        <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+          <span>{avisoEnvio}</span>
+        </div>
+      )}
+
+      {escribiendoA && (
+        <ModalEscribirFamilia
+          destino={escribiendoA}
+          onCerrar={(enviado) => {
+            if (enviado) setAvisoEnvio(`Email enviado a ${escribiendoA.email}. La conversación quedó en la pestaña Consultas.`);
+            setEscribiendoA(null);
+          }}
+        />
+      )}
 
       {error && (
         <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold flex items-center gap-1.5">
@@ -170,6 +286,25 @@ export default function AdminBuscadorAlumnosTab() {
                     <span className="flex items-center gap-1">
                       <Mail className="w-3 h-3 text-sky-500" /> {a.pedido.tutorEmail}
                     </span>
+                  )}
+                  {a.pedido.tutorEmail && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAvisoEnvio(null);
+                        setEscribiendoA({
+                          nombre: a.pedido?.tutorNombre || 'Familia',
+                          email: a.pedido?.tutorEmail || '',
+                          telefono: a.pedido?.tutorTelefono || undefined,
+                          colegio: a.colegioNombre || undefined,
+                          numeroPedido: a.pedido?.numero || undefined,
+                          alumno: a.nombre,
+                        });
+                      }}
+                      className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold text-[11px] cursor-pointer"
+                    >
+                      <Send className="w-3 h-3" /> Escribir a esta familia
+                    </button>
                   )}
                 </div>
               )}

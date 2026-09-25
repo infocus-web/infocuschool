@@ -12,7 +12,7 @@ export interface ConsultaFamilia {
   asunto: string;
   mensaje: string;
   estado: EstadoConsultaFamilia;
-  origen: 'web' | 'email';
+  origen: 'web' | 'email' | 'panel';
   createdAt: string;
   updatedAt: string;
   mensajes: MensajeConsultaFamilia[];
@@ -146,4 +146,36 @@ export async function sugerirRespuestaConsultaFamiliaAdmin(id: string): Promise<
   const data = await response.json();
   if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo generar una sugerencia.');
   return { sugerencia: String(data.sugerencia || ''), aviso: data.aviso ? String(data.aviso) : undefined };
+}
+
+// "Escribir a esta familia": el fotógrafo inicia la conversación desde el panel. Se envía el email
+// y queda como conversación en Consultas, así lo que conteste la familia vuelve al mismo hilo.
+export async function iniciarConversacionFamiliaAdmin(datos: {
+  nombre: string;
+  email: string;
+  telefono?: string;
+  colegio?: string;
+  numeroPedido?: string;
+  asunto: string;
+  mensaje: string;
+}): Promise<void> {
+  const response = await fetchAdminAutenticado('/api/admin/consultas-familias/iniciar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(datos),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo enviar el email.');
+}
+
+// Borrador con IA para un mensaje nuevo a la familia — nunca envía nada.
+export async function sugerirMensajeFamiliaAdmin(datos: { nombre: string; email: string; alumno?: string; numeroPedido?: string; motivo: string }): Promise<string> {
+  const response = await fetchAdminAutenticado('/api/admin/consultas-familias/sugerir-mensaje', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(datos),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo generar un borrador.');
+  return String(data.sugerencia || '');
 }
