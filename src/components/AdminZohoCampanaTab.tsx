@@ -314,6 +314,7 @@ export default function AdminZohoCampanaTab() {
                   {enviandoReal ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   {enviandoReal ? `Enviando... (${progreso?.procesados || 0}/${progreso?.total || destinatarios.length})` : `Enviar campaña real a ${destinatarios.length} colegio(s)`}
                 </button>
+                <p className="text-[10px] text-amber-800">Sale despacio a propósito (1 correo cada 15 segundos, hasta 20 por hora y 80 por día) para que Zoho no vuelva a bloquear la cuenta. Si llega al tope, se frena solo: retomalo más tarde y no se repite a quien ya le llegó.</p>
                 {!pruebaOk && <p className="text-[10px] text-slate-400">Se habilita después de un correo de prueba exitoso.</p>}
                 {resultadosReales && (
                   <div className="text-[11px] mt-1 space-y-1">
