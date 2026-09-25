@@ -40,6 +40,7 @@ import {
   Images,
   ShoppingCart,
   Loader2,
+  UserPlus,
 } from 'lucide-react';
 import { KITS_DISPONIBLES } from '../data/colegiosData';
 import { useColegiosLista } from '../services/colegiosService';
@@ -1003,7 +1004,7 @@ export default function PortalFamiliasModal({
         if (fam.division) setDivision(fam.division);
         if (fam.codigoFamiliar) {
           setCodigoAcceso(fam.codigoFamiliar);
-          setCodigoValidadoMsg(`Código Familiar activo: ${fam.codigoFamiliar}`);
+          setCodigoValidadoMsg(`Código de acceso activo: ${fam.codigoFamiliar}`);
           // Al reabrir el portal, restaurar también la llave usada por la consulta de
           // galería. Antes sólo se completaba el campo visible y la pantalla quedaba
           // falsamente en "Esperando fotos" aunque el curso ya tuviera imágenes.
@@ -1154,7 +1155,7 @@ export default function PortalFamiliasModal({
       ].join(', ');
 
       setCodigoValidadoMsg(
-        `¡Código Familiar verificado (${famFound.codigoFamiliar})! Familia ${famFound.padreNombre} · ${totalHijos} hijo${totalHijos > 1 ? 's' : ''} (${nombresHijos})`
+        `¡Código de acceso verificado (${famFound.codigoFamiliar})! Familia ${famFound.padreNombre} · ${totalHijos} hijo${totalHijos > 1 ? 's' : ''} (${nombresHijos})`
       );
       setCodigoErrorMsg(null);
       setCodigoSeccionValidado(famFound.codigoAsignado);
@@ -2319,11 +2320,11 @@ export default function PortalFamiliasModal({
                     ya está hecho. El título y el subtítulo de "buscar/ingresar" quedan sólo para
                     cuando todavía no hay una familia validada. */}
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit']">
-                  {familiaActiva ? 'Acceso validado' : 'Buscá tu colegio o ingresá tu código'}
+                  {familiaActiva ? 'Acceso validado' : 'Entrá a las fotos de tu hijo/a'}
                 </h3>
                 {!familiaActiva && (
                   <p className="text-xs sm:text-sm text-slate-600">
-                    Ingresá con los datos de tu hijo/a para abrir su galería protegida con marca de agua.
+                    Con tu nombre, tu DNI y el código de acceso del curso.
                   </p>
                 )}
               </div>
@@ -2347,7 +2348,7 @@ export default function PortalFamiliasModal({
                       Acceso para Familias
                     </span>
                     <h4 className="text-base sm:text-lg font-extrabold text-slate-900 font-['Outfit']">
-                      Ingresá con tus datos y el código de tu curso
+                      Ingresá con tus datos y el código de acceso
                     </h4>
                     <p className="text-xs text-slate-600 mt-0.5">
                       {/* Auditoría 2026-09-22 (pedido de Pablo): el código lo comparte todo el
@@ -2383,7 +2384,8 @@ export default function PortalFamiliasModal({
                     />
                   </div>
 
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="flex items-start gap-2 w-full sm:w-auto">
+                    <div className="w-full sm:w-56">
                     <input
                       type="text"
                       value={codigoAcceso}
@@ -2396,9 +2398,12 @@ export default function PortalFamiliasModal({
                           handleIngresarCodigo();
                         }
                       }}
-                      placeholder="Código del curso (Ej: 88BU-M8TF)"
-                      className="px-3.5 py-2.5 text-xs sm:text-sm uppercase font-mono font-bold tracking-wider bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full sm:w-48 shadow-xs"
+                      placeholder="Código de acceso"
+                      aria-label="Código de acceso del curso"
+                      className="px-3.5 py-2.5 text-xs sm:text-sm uppercase placeholder:normal-case font-mono placeholder:font-sans font-bold placeholder:font-normal tracking-wider placeholder:tracking-normal bg-white border-2 border-amber-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 w-full shadow-xs"
                     />
+                    <p className="mt-1 pl-1 text-[10px] text-slate-500">Te llegó por email al inscribirte (ej: 88BU-M8TF)</p>
+                    </div>
                     <button
                       type="button"
                       onClick={handleIngresarCodigo}
@@ -2450,7 +2455,7 @@ export default function PortalFamiliasModal({
                     <div>
                       <p className="font-bold">{codigoErrorMsg}</p>
                       <p className="text-[11px] text-rose-700 mt-0.5">
-                        Si no recordás tu código, solicitá el reenvío por email con el formulario de abajo.
+                        Si no lo tenés a mano, tocá "Pedir mi código" acá abajo y te lo mandamos por email.
                       </p>
                     </div>
                   </div>
@@ -2473,10 +2478,10 @@ export default function PortalFamiliasModal({
                       <div className="text-slate-700 text-xs space-y-0.5">
                         <p className="font-bold text-slate-900 flex items-center gap-1.5">
                           <Mail className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>¿Aún no tenés tu Código de Curso?</span>
+                          <span>¿No tenés el código? Te lo mandamos por email</span>
                         </p>
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          Ingresá el email con el que te registraste y te enviaremos nuevamente tu código.
+                          Completá tus datos y te lo enviamos al email con el que te inscribiste.
                         </p>
                       </div>
                       <button
@@ -2485,15 +2490,16 @@ export default function PortalFamiliasModal({
                         className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer shrink-0 active:scale-98"
                       >
                         <Mail className="w-4 h-4" />
-                        <span>Solicitar mi Código</span>
+                        <span>Pedir mi código</span>
                       </button>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
                       <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
                         <Mail className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span>Recibí tu código por email</span>
+                        <span>¿No tenés el código? Te lo mandamos por email</span>
                       </p>
+                      <p className="text-[11px] text-slate-600 -mt-1">Completá tus datos y te lo enviamos al email con el que te inscribiste.</p>
                       <div className="flex flex-col sm:flex-row gap-2">
                         <input
                           type="text"
@@ -2551,7 +2557,7 @@ export default function PortalFamiliasModal({
                           className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed text-amber-300 hover:text-white font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-98"
                         >
                           <Send className="w-3.5 h-3.5" />
-                          <span>{enviandoSolicitudCodigo ? 'Enviando...' : 'Enviar mi código'}</span>
+                          <span>{enviandoSolicitudCodigo ? 'Enviando...' : 'Enviarme el código'}</span>
                         </button>
                         <button
                           type="button"
@@ -2573,13 +2579,21 @@ export default function PortalFamiliasModal({
                   de institución) — recién ahí aparece el formulario de abajo para confirmar
                   los datos del alumno/a. */}
               {!(selectedColegio && codigoValidadoMsg) && (
-                <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-5 text-center space-y-1">
-                  <p className="text-xs font-bold text-amber-950">
-                    Ingresá tu código de curso, familiar o de institución arriba para continuar
-                  </p>
-                  <p className="text-[11px] text-amber-800">
-                    Si no tenés tu código, usá "Solicitar mi Código" más arriba y te lo facilitamos.
-                  </p>
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900">¿Todavía no te inscribiste?</p>
+                    <p className="text-[11px] text-slate-600">Anotate gratis con tus hijos y te mandamos el código de acceso por email.</p>
+                  </div>
+                  {onOpenInscripcion && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenInscripcion()}
+                      className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                      <span>Anotarme gratis</span>
+                    </button>
+                  )}
                 </div>
               )}
               </>
