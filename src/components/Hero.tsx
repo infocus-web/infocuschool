@@ -42,7 +42,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
     e.preventDefault();
     const term = searchTerm.trim();
     if (!term) {
-      setSearchError('Ingresá tu Código Familiar o código de curso para ver las fotos.');
+      setSearchError('Ingresá el código de acceso que te llegó por email para ver las fotos.');
       return;
     }
     setSearchError('');
@@ -150,7 +150,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                       ¿Tenés hijos en la institución?
                     </h3>
                     <p className="text-xs text-slate-600">
-                      ¡Un solo registro para toda tu familia, sin costo! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>Código Familiar único</strong>. Inscribirte no tiene ningún cargo: después elegís si pagás cuando elegís las fotos o si preferís dejar el kit pago por adelantado.
+                      ¡Un solo registro para toda tu familia, sin costo! Inscribite con tu WhatsApp y sumá a tus hijos para recibir tu <strong>código de acceso</strong>. Inscribirte no tiene ningún cargo: después elegís si pagás cuando elegís las fotos o si preferís dejar el kit pago por adelantado.
                     </p>
                   </div>
                   {onOpenInscripcion && (
@@ -191,7 +191,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                         setSearchTerm(e.target.value);
                         if (searchError) setSearchError('');
                       }}
-                      placeholder="Ingresá tu Código Familiar (ej: FAM-4821) o código de curso..."
+                      placeholder="Ingresá el código de acceso (ej: 88BU-M8TF)"
                       className="w-full pl-11 pr-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 bg-transparent border-0 focus:outline-hidden focus:ring-0"
                     />
                     {searchTerm && (

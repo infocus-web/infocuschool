@@ -49,10 +49,10 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
     {
       numero: '2',
       icono: KeyRound,
-      titulo: 'Recibís 1 Código Familiar',
+      titulo: 'Recibís tu código de acceso',
       bajada: 'Directo a tu Email',
       descripcion:
-        'El sistema te genera una clave única y fácil de recordar (ej: FAM-4821). Con ese solo código accedés a las fotos de todos tus hijos.',
+        'Te llega por email el código de acceso del curso (ej: 88BU-M8TF). Entrás con ese código, tu nombre y tu DNI, y ves las fotos de todos tus hijos.',
       miniGrafico: (
         <div className="mt-3 p-2.5 bg-sky-50 rounded-xl border border-sky-300/80 text-left space-y-1.5 shadow-2xs">
           <div className="flex items-center gap-1 text-[10px] font-bold text-sky-800">
@@ -61,10 +61,10 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
           </div>
           <div className="bg-white p-2 rounded-lg border border-sky-200 shadow-2xs">
             <p className="text-[11px] text-slate-700 leading-tight">
-              ¡Hola! Tu <strong>Código Familiar</strong> es:
+              ¡Hola! Tu <strong>código de acceso</strong> es:
             </p>
             <p className="text-sm font-black font-mono text-sky-800 tracking-wider my-0.5">
-              FAM-4821
+              88BU-M8TF
             </p>
             <p className="text-[10px] text-slate-500">
               Válido para Mateo y Sofía
@@ -214,7 +214,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
                 Para familias con varios hijos
               </span>
               <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit']">
-                ¿Tenés 2 o más hijos en el colegio? Con 1 solo Código Familiar los ves a todos juntos
+                ¿Tenés 2 o más hijos en el colegio? Con un solo registro y tu código de acceso los ves a todos juntos
               </h3>
               <p className="text-sm sm:text-base text-slate-600 max-w-2xl mx-auto">
                 Anotá a tus hijos juntos en un solo registro y te mandamos un único código para ver las fotos de todos, sin importar en qué sala, grado o turno estén.
@@ -226,7 +226,7 @@ export default function ProcesoSection({ onOpenFamilias, onOpenInscripcion }: Pr
               <ul className="space-y-2.5 text-sm text-slate-700 font-medium">
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <span><strong>1 solo Código Familiar (ej: FAM-4821)</strong> que te llega directo a tu email.</span>
+                  <span><strong>Un solo registro para toda la familia:</strong> el código de acceso te llega directo a tu email.</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />

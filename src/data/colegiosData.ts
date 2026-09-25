@@ -141,7 +141,7 @@ export const PREGUNTAS_FRECUENTES = [
   {
     pregunta: '¿Cómo accedo a las fotos de mi hijo/a?',
     respuesta:
-      'Te anotás una sola vez completando el formulario de inscripción online del colegio con tus datos de contacto (email y WhatsApp) y los de tu hijo/a. El sistema compara automáticamente esos datos con el padrón oficial que cargó el colegio: si tu nombre, email o teléfono coinciden con lo registrado, la inscripción se aprueba al instante y te llega por email tu Código Familiar para ver las fotos protegidas. Por eso es clave anotarte con los mismos datos (nombre completo, email y WhatsApp) que el colegio tiene en su padrón — si no coinciden, la inscripción queda pendiente de revisión manual y el fotógrafo te envía el código a la brevedad.',
+      'Te anotás una sola vez completando el formulario de inscripción online del colegio con tus datos de contacto (email y WhatsApp) y los de tu hijo/a. El sistema compara automáticamente esos datos con el padrón oficial que cargó el colegio: si tu nombre, email o teléfono coinciden con lo registrado, la inscripción se aprueba al instante y te llega por email tu código de acceso para ver las fotos protegidas (al entrar se pide junto con tu nombre y tu DNI). Por eso es clave anotarte con los mismos datos (nombre completo, email y WhatsApp) que el colegio tiene en su padrón — si no coinciden, la inscripción queda pendiente de revisión manual y el fotógrafo te envía el código a la brevedad.',
   },
   {
     pregunta: '¿Puedo comprar solo la versión digital HD sin imprimir?',
@@ -176,7 +176,7 @@ export const PREGUNTAS_FRECUENTES = [
   {
     pregunta: '¿Qué pasa si tengo más de un hijo en el colegio? ¿Tengo que hacer todo doble?',
     respuesta:
-      '¡No, para nada! Ahora funciona con 1 solo Código Familiar para todos tus hijos. Al anotarte en la web, cargás a tu primer hijo/a y hacés clic en "Agregar Hermano/a" para sumar a los demás (sin importar si van a distintas salas, turnos o grados). El sistema te entrega un único código familiar (ej: FAM-4821) que te llega por email. Al entrar a la web con ese código podés ver las fotos de todos tus hijos en la misma pantalla y alternar entre ellos con un solo toque. Además, podés pedir la toma de foto de hermanos juntos.',
+      '¡No, para nada! Te inscribís una sola vez para toda la familia: cargás a tu primer hijo/a y hacés clic en "Agregar Hermano/a" para sumar a los demás (sin importar si van a distintas salas, turnos o grados). Te llega por email el código de acceso, y al entrar con ese código, tu nombre y tu DNI ves las fotos de todos tus hijos en la misma pantalla y pasás de uno a otro con un solo toque. Además, podés pedir la toma de foto de hermanos juntos.',
   },
   {
     pregunta: '¿Es obligatorio comprar las fotos?',
