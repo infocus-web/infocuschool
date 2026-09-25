@@ -8622,7 +8622,8 @@ app.post('/api/admin/zoho/enviar', requireAdminAuth, limitarFrecuencia('zoho-env
       });
       resultados.push({ email, estado: resultado.ok ? 'enviado' : 'error', error: resultado.error });
       // Si Zoho empieza a rechazar por volumen/bloqueo, se corta enseguida: insistir agrava el bloqueo.
-      if (!resultado.ok && /block|bloque|limit|exceed|spam|suspend|too many|rate/i.test(String(resultado.error || ''))) {
+      // Texto real del 22/9: "550 5.4.6 Unusual sending activity detected. Please try after sometime."
+      if (!resultado.ok && /block|bloque|limit|exceed|spam|suspend|too many|rate|unusual|5\.4\.6|usage.policy/i.test(String(resultado.error || ''))) {
         return res.status(429).json({
           success: false,
           resultados,
