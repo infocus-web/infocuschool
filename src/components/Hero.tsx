@@ -296,7 +296,7 @@ export default function Hero({ onOpenFamilias, onOpenInscripcion }: HeroProps) {
                 }}
               >
                 <img
-                  src="/alumna_instituto.jpg"
+                  src="/alumna_instituto.webp"
                   alt="Muestra de fotografía escolar oficial - Retrato Escolar"
                   referrerPolicy="no-referrer"
                   draggable={false}

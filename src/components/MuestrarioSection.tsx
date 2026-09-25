@@ -20,7 +20,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
       titulo: 'Retratos profesionales con iluminación de estudio',
       descripcion:
         'Trabajamos con flashes profesionales de estudio para garantizar una iluminación perfecta, nítida y constante que nunca falla. Realizamos varias tomas para capturar la sonrisa auténtica de cada alumno y que la familia elija su foto favorita.',
-      imagen: '/egresadita_escolar.jpg',
+      imagen: '/egresadita_escolar.webp',
       specs: [
         'Iluminación profesional con flashes de estudio: nitidez y colorimetría impecables',
         'Múltiples tomas para elegir en la galería online',
@@ -33,7 +33,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
       titulo: 'Foto grupal en formato ampliado 20x30 cm',
       descripcion:
         'El recuerdo imborrable de todo el grupo de compañeros. Ordenados por estatura, con nombre del colegio, grado, división y año lectivo.',
-      imagen: '/foto_grupal_grado.jpg',
+      imagen: '/foto_grupal_grado.webp',
       specs: [
         'Formato ampliado 20x30 cm de máxima visibilidad y detalle',
         'Diseño con nombre del curso, división y año lectivo',
@@ -45,7 +45,7 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
       titulo: 'La foto que atesoran maestras y familias',
       descripcion:
         'Un momento de ternura y complicidad con las maestras de grado o profesores que acompañan a los chicos durante todo el año.',
-      imagen: '/foto_con_seno.jpg',
+      imagen: '/foto_con_seno.webp',
       specs: [
         'Formato 15x21 cm conmemorativo con la seño / docente',
         'Tomas en el aula, pizarrón o biblioteca escolar',
@@ -102,6 +102,8 @@ export default function MuestrarioSection({ onSelectKit }: MuestrarioSectionProp
               <img
                 src={current.imagen}
                 alt={current.titulo}
+                loading="lazy"
+                decoding="async"
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover object-center group-hover:scale-102 transition-transform duration-500"
               />

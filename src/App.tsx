@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import Header from './components/Header';
 import Hero from './components/Hero';
 import ProcesoSection from './components/ProcesoSection';
@@ -8,8 +8,11 @@ import ContactoSection from './components/ContactoSection';
 import Footer from './components/Footer';
 import PortalFamiliasModal from './components/PortalFamiliasModal';
 import ModalInscripcionFamilia from './components/ModalInscripcionFamilia';
-import AdminModal from './components/AdminModal';
-import EscaneoPedidoModal from './components/EscaneoPedidoModal';
+// Preparación temporada (25/9): el panel de administración (planillas Excel, laboratorio, etc.) y
+// la pantalla de escaneo de QR se cargan sólo cuando se abren. Antes viajaban dentro del mismo
+// archivo que descarga cada familia (~1,5 MB), lo que demoraba la carga en celulares con poca señal.
+const AdminModal = lazy(() => import('./components/AdminModal'));
+const EscaneoPedidoModal = lazy(() => import('./components/EscaneoPedidoModal'));
 import ErrorBoundary from './components/ErrorBoundary';
 import ReservaRetorno from './components/ReservaRetorno';
 import { InscripcionFamilia } from './services/inscripcionesService';
@@ -189,7 +192,9 @@ export default function App() {
       </ErrorBoundary>
 
       {/* Photographer Admin Panel Modal */}
+      {adminModalOpen && (
       <ErrorBoundary variante="modal" onCerrar={() => setAdminModalOpen(false)}>
+        <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 text-sm font-bold text-white">Cargando panel…</div>}>
         <AdminModal
           isOpen={adminModalOpen}
           onClose={() => setAdminModalOpen(false)}
@@ -199,13 +204,17 @@ export default function App() {
           }}
           tabInicial={typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('zoho') ? 'zoho' : undefined}
         />
+        </Suspense>
       </ErrorBoundary>
+      )}
 
       {/* Pantalla de un solo pedido para cuando se escanea el QR pegado en el sobre físico del
           laboratorio (ver AdminLaboratorioTab.tsx, botón QR) — no reemplaza al panel completo. */}
       {escaneoModalOpen && escaneoPedidoId && (
         <ErrorBoundary variante="modal" onCerrar={() => setEscaneoModalOpen(false)}>
-          <EscaneoPedidoModal pedidoId={escaneoPedidoId} onClose={() => setEscaneoModalOpen(false)} />
+          <Suspense fallback={null}>
+            <EscaneoPedidoModal pedidoId={escaneoPedidoId} onClose={() => setEscaneoModalOpen(false)} />
+          </Suspense>
         </ErrorBoundary>
       )}
     </div>
