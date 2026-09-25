@@ -1619,8 +1619,17 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                 <AdminResumenKitsSection />
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Listado de Pedidos de Familias</h3>
-                    <span className="text-xs text-slate-500">Sincronizados en tiempo real con el portal de familias</span>
+                    {/* Pedido de Pablo (25/9): que el título diga en qué lista se está parado. */}
+                    <h3 className="text-base font-bold text-slate-900">
+                      {verCancelados ? `Pedidos cancelados (${cantidadCancelados})` : verArchivados ? `Pedidos archivados (${cantidadArchivados})` : 'Listado de Pedidos de Familias'}
+                    </h3>
+                    <span className="text-xs text-slate-500">
+                      {verCancelados
+                        ? 'Intentos de pago abandonados y reservas reemplazadas por una nueva. No se cobró nada.'
+                        : verArchivados
+                          ? 'Pedidos que sacaste de la lista sin borrarlos. Podés desarchivarlos cuando quieras.'
+                          : 'Sincronizados en tiempo real con el portal de familias'}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     {pedidosSeleccionados.size > 0 && (
@@ -1635,21 +1644,21 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                           : `Eliminar seleccionados (${pedidosSeleccionados.size})`}
                       </button>
                     )}
-                    <button
+                    {!verCancelados && <button
                       type="button"
                       onClick={() => { setVerArchivados((v) => !v); setVerCancelados(false); setPedidosSeleccionados(new Set()); }}
                       className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition-colors cursor-pointer ${verArchivados ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                     >
                       {verArchivados ? '← Volver a los pedidos' : `Ver archivados (${cantidadArchivados})`}
-                    </button>
-                    <button
+                    </button>}
+                    {!verArchivados && <button
                       type="button"
                       onClick={() => { setVerCancelados((v) => !v); setVerArchivados(false); setPedidosSeleccionados(new Set()); }}
                       className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition-colors cursor-pointer ${verCancelados ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
                       title="Intentos de pago abandonados y reservas reemplazadas por una nueva"
                     >
                       {verCancelados ? '← Volver a los pedidos' : `Ver cancelados (${cantidadCancelados})`}
-                    </button>
+                    </button>}
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
                       {pedidosCompletos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente && !p.enEspera && !p.archivado).length} Aprobados para Revelado
                     </span>
