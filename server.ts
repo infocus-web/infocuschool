@@ -7016,6 +7016,29 @@ async function asegurarFriendlyIdUnico(supabase: SupabaseClient, propuesto: unkn
 // mandado por el cliente) y el pedido SIEMPRE nace en estado "pendiente_pago" — ningún cliente
 // puede crear un pedido ya marcado como pagado. Las políticas públicas de escritura/lectura de
 // 'familias' y 'pedidos' se cerraron del lado de Supabase (ver migración de la auditoría).
+// Cuando un chico pasa a tener un pedido normal (con sus fotos elegidas), sus reservas de pago
+// anticipado que quedaron SIN pagar ya no sirven: se cancelan para que no queden colgadas en el
+// panel (caso real 25/9: IFS-2026-1756). Nunca toca reservas pagadas.
+async function cancelarReservasSinPagarDe(supabase: SupabaseClient, filas: { colegio_id?: string; curso_codigo?: string; alumno_nombre?: string | null }[]) {
+  for (const fila of filas) {
+    if (!fila.colegio_id || !fila.curso_codigo || !fila.alumno_nombre) continue;
+    const { data: reservas } = await supabase
+      .from('pedidos')
+      .select('id, alumno_nombre')
+      .eq('colegio_id', fila.colegio_id)
+      .eq('curso_codigo', fila.curso_codigo)
+      .eq('seleccion_pendiente', true)
+      .eq('estado', 'pendiente_pago');
+    const ids = (reservas || [])
+      .filter((r: any) => normalizarNombrePorPalabras(r.alumno_nombre) === normalizarNombrePorPalabras(fila.alumno_nombre))
+      .map((r: any) => r.id);
+    if (ids.length > 0) {
+      const { error } = await supabase.from('pedidos').update({ estado: 'cancelado', updated_at: new Date().toISOString() }).in('id', ids);
+      if (error) console.error('[Pedidos] No se pudieron cancelar reservas sin pagar:', error);
+    }
+  }
+}
+
 app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 60, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
@@ -7167,6 +7190,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 60, 10 * 60 * 
       .select('id')
       .single();
     if (errorPedido) throw errorPedido;
+    await cancelarReservasSinPagarDe(supabase, [filaPedido as any]);
 
     return res.json({ success: true, pedidoId: pedidoCreado.id, pedidoFriendlyId: filaPedido.pedido_friendly_id, total: totalCalculado });
   } catch (err: any) {
@@ -7344,6 +7368,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
       .insert(filasPedido)
       .select('id');
     if (errorPedidos) throw errorPedidos;
+    await cancelarReservasSinPagarDe(supabase, filasPedido as any[]);
 
     return res.json({
       success: true,
