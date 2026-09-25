@@ -86,6 +86,8 @@ interface PortalFamiliasModalProps {
   preselectedKitId?: string;
   preselectedCodigo?: string;
   onOpenInscripcion?: () => void;
+  /** Abrir directo en la galería (p. ej. "Elegir otro medio de pago" de una reserva sin pagar). */
+  abrirEnGaleria?: boolean;
 }
 
 /**
@@ -238,6 +240,7 @@ export default function PortalFamiliasModal({
   preselectedKitId,
   preselectedCodigo,
   onOpenInscripcion,
+  abrirEnGaleria,
 }: PortalFamiliasModalProps) {
   // Navigation Steps
   // 1: Colegio y Alumno
@@ -1268,6 +1271,20 @@ export default function PortalFamiliasModal({
       cancelado = true;
     };
   }, [codigoSeccionValidado, nombreAlumno, selectedColegio?.id, grado, turno, division]);
+
+  // "Elegir otro medio de pago" (vuelta de una reserva sin pagar): con la familia ya identificada,
+  // se pasa solo a la galería, donde está "Reservá tu kit ahora" con los medios de pago.
+  const abrirEnGaleriaUsadoRef = useRef(false);
+  useEffect(() => {
+    if (!isOpen) {
+      abrirEnGaleriaUsadoRef.current = false;
+      return;
+    }
+    if (!abrirEnGaleria || abrirEnGaleriaUsadoRef.current || step !== 1) return;
+    if (!codigoSeccionValidado || !selectedColegio?.id || verificandoPedidoExistente) return;
+    abrirEnGaleriaUsadoRef.current = true;
+    setStep(2);
+  }, [isOpen, abrirEnGaleria, step, codigoSeccionValidado, selectedColegio?.id, verificandoPedidoExistente]);
 
   if (!isOpen) return null;
 

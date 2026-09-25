@@ -45,6 +45,7 @@ export default function App() {
     return search.get('reserva') === '1' ? search.get('grupo_pago_id') : null;
   });
   const [inscripcionModalOpen, setInscripcionModalOpen] = useState(false);
+  const [portalEnGaleria, setPortalEnGaleria] = useState(false);
   // Auditoría 2026-09-22 (pedido de Pablo: el link "¿Ya te inscribiste? Consultar código" de
   // Hero.tsx abría el modal siempre en la pestaña "Inscribirme", igual que el botón de alta
   // "Anotarme con mis hijos" — quien ya se había inscripto terminaba en el formulario equivocado).
@@ -121,6 +122,7 @@ export default function App() {
           onElegirOtroMedio={() => {
             setReservaRetornoId(null);
             window.history.replaceState({}, '', window.location.pathname);
+            setPortalEnGaleria(true);
             setFamiliasModalOpen(true);
           }}
         />
@@ -164,7 +166,11 @@ export default function App() {
       <ErrorBoundary variante="modal" onCerrar={() => setFamiliasModalOpen(false)}>
         <PortalFamiliasModal
           isOpen={familiasModalOpen}
-          onClose={() => setFamiliasModalOpen(false)}
+          onClose={() => {
+            setFamiliasModalOpen(false);
+            setPortalEnGaleria(false);
+          }}
+          abrirEnGaleria={portalEnGaleria}
           preselectedColegioId={selectedColegioId}
           preselectedKitId={selectedKitId}
           preselectedCodigo={selectedCodigo}
