@@ -392,6 +392,29 @@ export default function PortalFamiliasModal({
   const [mpRedirectUrl, setMpRedirectUrl] = useState<string | null>(null);
   const [naveRedirectUrl, setNaveRedirectUrl] = useState<string | null>(null);
   const [pagoError, setPagoError] = useState<string | null>(null);
+  // Caso real 25/9: el pedido guardado en este navegador (o el de la URL de vuelta del pago) ya no
+  // existe en la base — lo borró el admin o se anuló. Antes quedaba la pantalla de "Pendiente de
+  // pago" con botones para pagar y un aviso rojo confuso; ahora se descarta y se ofrece armar otro.
+  const [pedidoYaNoExiste, setPedidoYaNoExiste] = useState(false);
+  const descartarPedidoInexistente = (referencia?: string | null) => {
+    setPedidoYaNoExiste(true);
+    setPagoError(null);
+    setMensajeEstadoPago(null);
+    setMpRedirectUrl(null);
+    setNaveRedirectUrl(null);
+    try {
+      const ref = referencia || '';
+      guardarPedidosEnStorage(
+        obtenerPedidosGuardados().filter((p) => !ref || (p.supabaseId !== ref && p.id !== ref && p.grupoPagoId !== ref))
+      );
+      const url = new URL(window.location.href);
+      ['mp_status', 'nave_status', 'pedido_id', 'grupo_pago_id', 'status', 'payment_id', 'collection_status'].forEach((k) => url.searchParams.delete(k));
+      window.history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+    } catch {
+      /* sin storage: igual se muestra el aviso */
+    }
+  };
+  const esErrorPedidoInexistente = (error?: string) => /No encontramos el pedido registrado/i.test(error || '');
   const [verificandoPago, setVerificandoPago] = useState(false);
   const [mensajeEstadoPago, setMensajeEstadoPago] = useState<string | null>(null);
   const [generandoLinkPago, setGenerandoLinkPago] = useState(false);
@@ -444,7 +467,8 @@ export default function PortalFamiliasModal({
           window.location.href = res.initPoint;
         }
       } else {
-        setPagoError(res.error || 'No se pudo generar el link de pago de Mercado Pago.');
+        if (esErrorPedidoInexistente(res.error)) descartarPedidoInexistente(pedido.grupoPagoId || pedido.supabaseId || pedido.id);
+        else setPagoError(res.error || 'No se pudo generar el link de pago de Mercado Pago.');
       }
     } catch (err: any) {
       setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
@@ -491,7 +515,8 @@ export default function PortalFamiliasModal({
           window.location.href = res.checkoutUrl;
         }
       } else {
-        setPagoError(res.error || 'No se pudo generar el link de pago de Nave.');
+        if (esErrorPedidoInexistente(res.error)) descartarPedidoInexistente(pedido.grupoPagoId || pedido.supabaseId || pedido.id);
+        else setPagoError(res.error || 'No se pudo generar el link de pago de Nave.');
       }
     } catch (err: any) {
       setPagoError(err?.message || 'Error de conexión con el servidor de pagos.');
@@ -508,6 +533,10 @@ export default function PortalFamiliasModal({
     setMensajeEstadoPago(null);
     try {
       const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/status`);
+      if (res.status === 404) {
+        descartarPedidoInexistente(id);
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         // Pantalla de respaldo (volvió del pago sin el pedido guardado): se completa el monto real.
@@ -4242,7 +4271,31 @@ export default function PortalFamiliasModal({
           )}
 
           {/* STEP 5: Success & Download */}
-          {step === 5 && (
+          {step === 5 && pedidoYaNoExiste && (
+            <div className="max-w-md mx-auto py-8 text-center space-y-4">
+              <div className="w-14 h-14 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-xl font-extrabold text-slate-900 font-['Outfit']">Este pedido ya no está disponible</h3>
+              <p className="text-sm text-slate-600">
+                Fue anulado y no se te cobró nada. Podés armar un pedido nuevo cuando quieras.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setPedidoYaNoExiste(false);
+                  setPedidoGenerado(null);
+                  setNumeroPedido('');
+                  setStep(1);
+                }}
+                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-slate-950 hover:bg-slate-800 text-white text-sm font-bold cursor-pointer"
+              >
+                Armar un pedido nuevo
+              </button>
+            </div>
+          )}
+
+          {step === 5 && !pedidoYaNoExiste && (
             <div className="max-w-xl mx-auto py-4 text-center space-y-6 animate-in zoom-in-95 duration-200">
               {pedidoGenerado?.estadoPago === 'aprobado' && pedidoGenerado.linkDescargaHD ? (
                 <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-md">
