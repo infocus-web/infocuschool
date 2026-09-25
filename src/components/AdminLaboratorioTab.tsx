@@ -3,14 +3,15 @@ import * as XLSX from 'xlsx';
 import {
   Printer, Download, Mail, CheckCircle2, FolderDown, FileCode,
   Search, RefreshCw, FileText, Check, Sparkles, AlertCircle, AlertTriangle, FileSpreadsheet,
-  Globe, ShieldCheck, Send, ExternalLink, ChevronDown, ChevronUp, QrCode, X
+  Globe, ShieldCheck, Send, ExternalLink, ChevronDown, ChevronUp, QrCode, X, Archive, ArchiveRestore, PauseCircle, PlayCircle
 } from 'lucide-react';
 import {
   PedidoEscolarCompleto,
   descargarLoteLaboratorioZip,
   formatearCodigoCliente,
   generarZipHDAdmin,
-  marcarPedidoRetirado
+  marcarPedidoRetirado,
+  organizarPedidoAdmin
 } from '../services/pedidosLabService';
 import { fetchAdminAutenticado } from '../services/adminAuthService';
 import { 
@@ -357,18 +358,96 @@ export default function AdminLaboratorioTab({
     }
   };
 
-  const pedidosAprobados = useMemo(() => {
+  // Pedido de Pablo (25/9): archivar pedidos (salen de la lista sin borrarse) y ponerlos "en
+  // espera" (siguen visibles con etiqueta, pero no pasan a producción ni entran al lote del lab).
+  const [vista, setVista] = useState<'activos' | 'espera' | 'archivados'>('activos');
+  const [organizandoId, setOrganizandoId] = useState<string | null>(null);
+
+  const pedidosAprobadosTodos = useMemo(() => {
     // Los kits pagados por adelantado entran recién cuando la familia elige sus fotos.
     return pedidos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente);
   }, [pedidos]);
+  const pedidosAprobados = useMemo(() => pedidosAprobadosTodos.filter((p) => !p.archivado), [pedidosAprobadosTodos]);
+  const cantidadEnEspera = useMemo(() => pedidosAprobados.filter((p) => p.enEspera).length, [pedidosAprobados]);
+  const cantidadArchivados = pedidosAprobadosTodos.length - pedidosAprobados.length;
+  const pedidosDeLaVista = useMemo(
+    () => vista === 'archivados'
+      ? pedidosAprobadosTodos.filter((p) => p.archivado)
+      : vista === 'espera' ? pedidosAprobados.filter((p) => p.enEspera) : pedidosAprobados,
+    [vista, pedidosAprobadosTodos, pedidosAprobados]
+  );
+  const pedidoBloqueadoParaLab = (p: PedidoEscolarCompleto) => Boolean(p.enEspera || p.archivado);
+
+  const handleOrganizar = async (pedido: PedidoEscolarCompleto, cambios: { archivado?: boolean; enEspera?: boolean }) => {
+    if (!pedido.supabaseId) return window.alert('Este pedido no está registrado en el servidor.');
+    let notaEspera: string | undefined;
+    if (cambios.enEspera === true) {
+      const nota = window.prompt(`Poner en espera el pedido de ${pedido.alumnoNombre}.\n\nNota opcional (ej: "esperando comprobante", "reclamo de la familia"):`, pedido.notaEspera || '');
+      if (nota === null) return;
+      notaEspera = nota;
+    }
+    if (cambios.archivado === true && !window.confirm(`¿Archivar el pedido ${pedido.id} de ${pedido.alumnoNombre}?\n\nSale de esta lista y del laboratorio, pero no se borra: lo encontrás en "Archivados" y lo podés desarchivar cuando quieras.`)) return;
+    setOrganizandoId(pedido.id);
+    const resultado = await organizarPedidoAdmin(pedido.supabaseId, { ...cambios, notaEspera });
+    setOrganizandoId(null);
+    if (!resultado.success) return window.alert(resultado.error || 'No se pudo actualizar el pedido.');
+    onActualizarPedidos((actuales) => actuales.map((p) => p.id === pedido.id
+      ? { ...p, archivado: Boolean(resultado.archivado), enEspera: Boolean(resultado.enEspera), notaEspera: resultado.notaEspera || '' }
+      : p));
+    setPedidosSeleccionados((prev) => {
+      if (!prev.has(pedido.id)) return prev;
+      const siguiente = new Set(prev);
+      siguiente.delete(pedido.id);
+      return siguiente;
+    });
+  };
+
+  const renderAccionesOrganizar = (pedido: PedidoEscolarCompleto) => (
+    <>
+      {!pedido.archivado && (
+        <button
+          type="button"
+          onClick={() => void handleOrganizar(pedido, { enEspera: !pedido.enEspera })}
+          disabled={organizandoId === pedido.id}
+          className={`p-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-40 ${pedido.enEspera ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700' : 'bg-orange-50 hover:bg-orange-100 text-orange-700'}`}
+          title={pedido.enEspera ? 'Sacar de espera (vuelve al circuito normal)' : 'Poner en espera: queda visible pero no pasa a producción'}
+        >
+          {pedido.enEspera ? <PlayCircle className="w-4 h-4" /> : <PauseCircle className="w-4 h-4" />}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => void handleOrganizar(pedido, { archivado: !pedido.archivado })}
+        disabled={organizandoId === pedido.id}
+        className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer disabled:opacity-40"
+        title={pedido.archivado ? 'Desarchivar (vuelve a la lista)' : 'Archivar: sale de la lista sin borrarse'}
+      >
+        {pedido.archivado ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
+      </button>
+    </>
+  );
+
+  const etiquetaOrganizacion = (pedido: PedidoEscolarCompleto) =>
+    pedido.enEspera || pedido.archivado ? (
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {pedido.archivado && (
+          <span className="text-[10px] font-bold text-slate-700 bg-slate-200 px-1.5 py-0.5 rounded">Archivado</span>
+        )}
+        {pedido.enEspera && (
+          <span className="text-[10px] font-bold text-orange-800 bg-orange-100 border border-orange-200 px-1.5 py-0.5 rounded" title={pedido.notaEspera || undefined}>
+            En espera{pedido.notaEspera ? ` · ${pedido.notaEspera}` : ''}
+          </span>
+        )}
+      </div>
+    ) : null;
 
   // Auditoría 2026-09-22 (pedido de Pablo): recaudación total, para la fila de métricas de acá
   // abajo — misma fórmula que usaba la barra "Recaudación/Pedidos/Colegios" de AdminModal.tsx
   // (que Pablo pidió eliminar), aplicada sobre `pedidos` (la lista completa sin filtrar por
   // curso/búsqueda que llega por prop), no sobre `pedidosFiltrados`.
   const totalRecaudado = useMemo(
-    () => pedidosAprobados.reduce((acc, p) => acc + p.total, 0),
-    [pedidosAprobados]
+    () => pedidosAprobadosTodos.reduce((acc, p) => acc + p.total, 0),
+    [pedidosAprobadosTodos]
   );
 
   // Auditoría 2026-09-20 (bug real reportado por Pablo): antes, si el .zip HD fallaba al momento
@@ -406,7 +485,7 @@ export default function AdminLaboratorioTab({
   }, [pedidosAprobados]);
 
   const pedidosFiltrados = useMemo(() => {
-    return pedidosAprobados.filter(p => {
+    return pedidosDeLaVista.filter(p => {
       const matchCurso = cursoFiltro === 'todos' || p.cursoCodigo === cursoFiltro;
       const q = busquedaAlumno.toLowerCase().trim();
       const matchBusqueda = !q || 
@@ -415,10 +494,11 @@ export default function AdminLaboratorioTab({
         p.tutorEmail.toLowerCase().includes(q);
       return matchCurso && matchBusqueda;
     });
-  }, [pedidosAprobados, cursoFiltro, busquedaAlumno]);
+  }, [pedidosDeLaVista, cursoFiltro, busquedaAlumno]);
 
   const pedidosFiltradosConEmail = useMemo(
-    () => pedidosFiltrados.filter((pedido) => pedido.tutorEmail?.includes('@')),
+    () => pedidosFiltrados.filter((pedido) => pedido.tutorEmail?.includes('@') && !pedidoBloqueadoParaLab(pedido)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [pedidosFiltrados]
   );
   const todosSeleccionados = pedidosFiltradosConEmail.length > 0
@@ -1127,6 +1207,27 @@ export default function AdminLaboratorioTab({
           ))}
         </div>
 
+        <div className="flex items-center gap-1 shrink-0">
+          {([
+            ['activos', 'Activos', pedidosAprobados.length],
+            ['espera', 'En espera', cantidadEnEspera],
+            ['archivados', 'Archivados', cantidadArchivados],
+          ] as const).map(([id, etiqueta, cantidad]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => { setVista(id); setPedidosSeleccionados(new Set()); }}
+              className={`px-2 py-1 rounded-lg font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                vista === id
+                  ? id === 'espera' ? 'bg-orange-500 text-white' : id === 'archivados' ? 'bg-slate-600 text-white' : 'bg-slate-900 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              {etiqueta} ({cantidad})
+            </button>
+          ))}
+        </div>
+
         <div className="relative w-36 shrink-0">
           <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
@@ -1211,7 +1312,7 @@ export default function AdminLaboratorioTab({
               <TarjetaPedidoLaboratorio
                 pedido={pedido}
                 seleccionado={pedidosSeleccionados.has(pedido.id)}
-                seleccionable={Boolean(pedido.tutorEmail?.includes('@'))}
+                seleccionable={Boolean(pedido.tutorEmail?.includes('@')) && !pedidoBloqueadoParaLab(pedido)}
                 bloqueadoPorEnvio={Boolean(enviandoActualizacion)}
                 marcandoRetirado={marcandoRetiradoId === pedido.id}
                 modoEstructuraCarpetas={modoEstructuraCarpetas}
@@ -1221,6 +1322,10 @@ export default function AdminLaboratorioTab({
                 onAbrirQr={() => handleAbrirQr(pedido)}
                 onMarcarRetirado={() => handleMarcarRetirado(pedido)}
               />
+              <div className="flex items-center justify-between gap-2 px-2 pt-1">
+                <div>{etiquetaOrganizacion(pedido)}</div>
+                <div className="flex items-center gap-1.5">{renderAccionesOrganizar(pedido)}</div>
+              </div>
             </div>
           ))
         )}
@@ -1252,8 +1357,8 @@ export default function AdminLaboratorioTab({
               ) : (
                 pedidosFiltrados.map((pedido) => {
                   return (
-                    <tr key={pedido.id} className={`hover:bg-slate-50/80 transition-colors ${pedidosSeleccionados.has(pedido.id) ? 'bg-sky-50/70' : ''}`}>
-                      <td className="py-3.5 px-3 text-center"><input type="checkbox" checked={pedidosSeleccionados.has(pedido.id)} onChange={() => alternarSeleccionPedido(pedido.id)} disabled={!pedido.tutorEmail?.includes('@') || Boolean(enviandoActualizacion)} aria-label={`Seleccionar a ${pedido.alumnoNombre}`} title={pedido.tutorEmail?.includes('@') ? 'Seleccionar cliente' : 'Este pedido no tiene un email válido'} className="w-4 h-4 accent-sky-600 cursor-pointer disabled:cursor-not-allowed" /></td>
+                    <tr key={pedido.id} className={`hover:bg-slate-50/80 transition-colors ${pedidosSeleccionados.has(pedido.id) ? 'bg-sky-50/70' : ''} ${pedido.enEspera ? 'bg-orange-50/40' : ''}`}>
+                      <td className="py-3.5 px-3 text-center"><input type="checkbox" checked={pedidosSeleccionados.has(pedido.id)} onChange={() => alternarSeleccionPedido(pedido.id)} disabled={!pedido.tutorEmail?.includes('@') || Boolean(enviandoActualizacion) || pedidoBloqueadoParaLab(pedido)} aria-label={`Seleccionar a ${pedido.alumnoNombre}`} title={pedidoBloqueadoParaLab(pedido) ? 'Pedido en espera o archivado: no recibe avisos de laboratorio' : pedido.tutorEmail?.includes('@') ? 'Seleccionar cliente' : 'Este pedido no tiene un email válido'} className="w-4 h-4 accent-sky-600 cursor-pointer disabled:cursor-not-allowed" /></td>
                       <td className="py-3.5 px-3 text-center font-mono font-bold text-slate-400">
                         #{String(pedido.alumnoNumeroLista).padStart(2, '0')}
                       </td>
@@ -1267,6 +1372,7 @@ export default function AdminLaboratorioTab({
                             {pedido.codigoAlumno}
                           </span>
                         </div>
+                        {etiquetaOrganizacion(pedido)}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -1418,6 +1524,7 @@ export default function AdminLaboratorioTab({
                           >
                             <QrCode className="w-4 h-4" />
                           </button>
+                          {renderAccionesOrganizar(pedido)}
                         </div>
                       </td>
                     </tr>

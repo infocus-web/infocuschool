@@ -28,6 +28,7 @@ import {
   guardarPedidosEnStorage,
   PedidoEscolarCompleto,
   obtenerPedidosAdminDesdeSupabase,
+  organizarPedidoAdmin,
   combinarPedidosConLocal
 } from '../services/pedidosLabService';
 import {
@@ -268,6 +269,9 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   const [pedidosCompletos, setPedidosCompletos] = useState<PedidoEscolarCompleto[]>(() => obtenerPedidosGuardados());
   // Id del pedido que se está eliminando (para deshabilitar el botón mientras se procesa)
   const [eliminandoPedidoId, setEliminandoPedidoId] = useState<string | null>(null);
+  // Pedido de Pablo (25/9): los archivados no se muestran salvo que se pida verlos.
+  const [verArchivados, setVerArchivados] = useState(false);
+  const [organizandoPedidoId, setOrganizandoPedidoId] = useState<string | null>(null);
   // Pedido 2026-09-21 de Pablo: "no tengo la opción de seleccionar varios pedidos para archivar o
   // eliminar" — antes sólo existía borrar de a uno. Estos dos estados habilitan selección múltiple
   // con checkboxes en la tabla de "Pedidos" y un botón para eliminarlos todos juntos, reusando el
@@ -486,10 +490,45 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
     });
   };
 
+  const pedidosVisiblesTabla = useMemo(
+    () => pedidosCompletos.filter((p) => Boolean(p.archivado) === verArchivados),
+    [pedidosCompletos, verArchivados]
+  );
+  const cantidadArchivados = pedidosCompletos.length - pedidosCompletos.filter((p) => !p.archivado).length;
+
+  // Sólo se seleccionan los pedidos visibles: "Eliminar seleccionados" nunca debe alcanzar a los
+  // archivados que están ocultos.
   const toggleSeleccionarTodosPedidos = () => {
     setPedidosSeleccionados((prev) =>
-      prev.size === pedidosCompletos.length ? new Set<string>() : new Set(pedidosCompletos.map((p) => p.id))
+      prev.size === pedidosVisiblesTabla.length ? new Set<string>() : new Set(pedidosVisiblesTabla.map((p) => p.id))
     );
+  };
+
+  const handleOrganizarPedido = async (pedido: PedidoEscolarCompleto, cambios: { archivado?: boolean; enEspera?: boolean }) => {
+    if (!pedido.supabaseId) return window.alert('Este pedido no está registrado en el servidor.');
+    let notaEspera: string | undefined;
+    if (cambios.enEspera === true) {
+      const nota = window.prompt(`Poner en espera el pedido de ${pedido.alumnoNombre}.\n\nNota opcional (ej: "esperando comprobante", "reclamo de la familia"):`, pedido.notaEspera || '');
+      if (nota === null) return;
+      notaEspera = nota;
+    }
+    setOrganizandoPedidoId(pedido.id);
+    const resultado = await organizarPedidoAdmin(pedido.supabaseId, { ...cambios, notaEspera });
+    setOrganizandoPedidoId(null);
+    if (!resultado.success) return window.alert(resultado.error || 'No se pudo actualizar el pedido.');
+    setPedidosCompletos((prev) => {
+      const actualizados = prev.map((item) => item.id === pedido.id
+        ? { ...item, archivado: Boolean(resultado.archivado), enEspera: Boolean(resultado.enEspera), notaEspera: resultado.notaEspera || '' }
+        : item);
+      guardarPedidosEnStorage(actualizados);
+      return actualizados;
+    });
+    setPedidosSeleccionados((prev) => {
+      if (!prev.has(pedido.id)) return prev;
+      const siguiente = new Set(prev);
+      siguiente.delete(pedido.id);
+      return siguiente;
+    });
   };
 
   const handleEliminarSeleccionados = async () => {
@@ -1585,8 +1624,15 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                           : `Eliminar seleccionados (${pedidosSeleccionados.size})`}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => { setVerArchivados((v) => !v); setPedidosSeleccionados(new Set()); }}
+                      className={`px-2.5 py-1 rounded-lg border font-bold text-[11px] transition-colors cursor-pointer ${verArchivados ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                    >
+                      {verArchivados ? '← Volver a los pedidos' : `Ver archivados (${cantidadArchivados})`}
+                    </button>
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                      {pedidosCompletos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente).length} Aprobados para Revelado
+                      {pedidosCompletos.filter(p => p.estadoPago === 'aprobado' && !p.seleccionPendiente && !p.enEspera && !p.archivado).length} Aprobados para Revelado
                     </span>
                   </div>
                 </div>
@@ -1599,7 +1645,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                           <input
                             type="checkbox"
                             aria-label="Seleccionar todos los pedidos"
-                            checked={pedidosCompletos.length > 0 && pedidosSeleccionados.size === pedidosCompletos.length}
+                            checked={pedidosVisiblesTabla.length > 0 && pedidosSeleccionados.size === pedidosVisiblesTabla.length}
                             onChange={toggleSeleccionarTodosPedidos}
                             className="h-3.5 w-3.5 cursor-pointer accent-amber-500"
                           />
@@ -1615,14 +1661,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {pedidosCompletos.length === 0 ? (
+                      {pedidosVisiblesTabla.length === 0 ? (
                         <tr>
                           <td colSpan={9} className="py-8 text-center text-slate-400 text-xs">
-                            Aún no se han registrado pedidos de familias en el sistema.
+                            {verArchivados ? 'No hay pedidos archivados.' : 'Aún no se han registrado pedidos de familias en el sistema.'}
                           </td>
                         </tr>
                       ) : (
-                        pedidosCompletos.map(p => (
+                        pedidosVisiblesTabla.map(p => (
                         <tr key={p.id} className={`hover:bg-slate-50 transition-colors ${pedidosSeleccionados.has(p.id) ? 'bg-amber-50/60' : ''}`}>
                           <td className="py-3 px-4">
                             <input
@@ -1640,6 +1686,14 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                           <td className="py-3 px-4">
                             <span className="font-bold text-slate-900">{p.alumnoNombre}</span>
                             <span className="block text-[11px] text-slate-500">{p.colegioNombre} · {p.grado} "{p.division}"</span>
+                            {p.enEspera && (
+                              <span className="mt-0.5 inline-block text-[10px] font-bold text-orange-800 bg-orange-100 border border-orange-200 px-1.5 py-0.5 rounded">
+                                En espera{p.notaEspera ? ` · ${p.notaEspera}` : ''}
+                              </span>
+                            )}
+                            {p.archivado && (
+                              <span className="mt-0.5 ml-1 inline-block text-[10px] font-bold text-slate-700 bg-slate-200 px-1.5 py-0.5 rounded">Archivado</span>
+                            )}
                           </td>
                           <td className="py-3 px-4">
                             <span className="font-mono text-[11px] font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
@@ -1692,6 +1746,27 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                             )}
                           </td>
                           <td className="py-3 px-4">
+                            <div className="flex items-center gap-1.5">
+                            {!p.archivado && (
+                              <button
+                                type="button"
+                                onClick={() => void handleOrganizarPedido(p, { enEspera: !p.enEspera })}
+                                disabled={organizandoPedidoId === p.id}
+                                title={p.enEspera ? 'Sacar de espera' : 'Poner en espera: queda visible pero no pasa a producción'}
+                                className="px-2.5 py-1 rounded-lg bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-800 font-bold text-[10px] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {p.enEspera ? 'Reanudar' : 'En espera'}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleOrganizarPedido(p, { archivado: !p.archivado })}
+                              disabled={organizandoPedidoId === p.id}
+                              title={p.archivado ? 'Desarchivar (vuelve a la lista)' : 'Archivar: sale de las listas sin borrarse'}
+                              className="px-2.5 py-1 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold text-[10px] transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {p.archivado ? 'Desarchivar' : 'Archivar'}
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleEliminarPedido(p)}
@@ -1701,6 +1776,7 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                             >
                               {eliminandoPedidoId === p.id ? 'Eliminando...' : 'Eliminar'}
                             </button>
+                            </div>
                           </td>
                         </tr>
                       )))}

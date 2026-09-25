@@ -63,6 +63,11 @@ export interface PedidoEscolarCompleto {
   estadoEntrega: 'en_espera' | 'en_laboratorio' | 'laboratorio_listo' | 'listo_retiro' | 'listo_descarga' | 'entregado';
   /** Pago anticipado: el kit está pagado pero la familia todavía no eligió las fotos. */
   seleccionPendiente?: boolean;
+  /** Archivado: fuera de las listas del panel y del laboratorio, pero no borrado. */
+  archivado?: boolean;
+  /** En espera (standby): visible con etiqueta, pero no pasa a producción. */
+  enEspera?: boolean;
+  notaEspera?: string;
   fotosSeleccionadas: {
     individualId: string;
     grupalId: string;
@@ -872,6 +877,9 @@ export function construirPedidoCompletoDesdeFila(fila: any, fotosDisponibles: Fo
     estadoPago,
     estadoEntrega,
     seleccionPendiente: Boolean(fila.seleccion_pendiente),
+    archivado: Boolean(fila.archivado),
+    enEspera: Boolean(fila.en_espera),
+    notaEspera: fila.nota_espera || '',
     fotosSeleccionadas,
     copiasExtras,
     archivosParaLaboratorio: archivosLab,
@@ -1208,7 +1216,9 @@ export async function descargarLoteLaboratorioZip(
 
   const pedidosFiltrados = pedidos.filter(p => 
     (!opciones.filtroCurso || opciones.filtroCurso === 'todos' || p.cursoCodigo === opciones.filtroCurso) &&
-    p.estadoPago === 'aprobado'
+    p.estadoPago === 'aprobado' &&
+    // Kits pagados por adelantado sin fotos elegidas, pedidos en espera y archivados no se imprimen.
+    !p.seleccionPendiente && !p.enEspera && !p.archivado
   );
 
   // 1. Text checklist for envelope packing
@@ -1412,4 +1422,26 @@ Muchas gracias. Retrato Escolar.`;
   zip.file(`00_LEAME_OPERADOR_LABORATORIO.txt`, readmeLab);
 
   return await zip.generateAsync({ type: 'blob' });
+}
+
+/**
+ * Archivar/desarchivar un pedido o ponerlo/sacarlo "en espera" (con una nota) sin borrarlo.
+ * Ver POST /api/admin/pedidos/:id/organizar en server.ts.
+ */
+export async function organizarPedidoAdmin(
+  pedidoSupabaseId: string,
+  cambios: { archivado?: boolean; enEspera?: boolean; notaEspera?: string }
+): Promise<{ success: boolean; archivado?: boolean; enEspera?: boolean; notaEspera?: string; error?: string }> {
+  try {
+    const res = await fetchAdminAutenticado(`/api/admin/pedidos/${encodeURIComponent(pedidoSupabaseId)}/organizar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cambios),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) return { success: false, error: data.error || 'No se pudo actualizar el pedido.' };
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al actualizar el pedido.' };
+  }
 }
