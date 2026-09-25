@@ -1877,12 +1877,13 @@ app.get('/api/admin/salud', requireAdminAuth, async (_req, res) => {
       return count || 0;
     };
     const base = () => supabase.from('pedidos').select('id', { count: 'exact', head: true });
-    const [pagadosSinHD, pagadosSinEmail, transferenciasPendientes, consultasNuevas, tareas] = await Promise.all([
+    const [pagadosSinHD, pagadosSinEmail, transferenciasPendientes, consultasNuevas, tareas, erroresNuevos] = await Promise.all([
       contar(base().eq('estado', 'pagado').eq('seleccion_pendiente', false).or('link_descarga_hd.is.null,link_descarga_hd.eq.').lt('updated_at', hace15min)),
       contar(base().eq('estado', 'pagado').eq('email_enviado', false).lt('updated_at', hace15min)),
       contar(base().eq('estado', 'pendiente_pago').eq('metodo_pago', 'transferencia').eq('archivado', false)),
       contar(supabase.from('consultas_familias').select('id', { count: 'exact', head: true }).eq('estado', 'nueva')),
       supabase.from('tareas_programadas_estado').select('nombre, ultima_ejecucion, resultado'),
+      contar(supabase.from('reportes_errores').select('id', { count: 'exact', head: true }).eq('estado', 'nuevo')),
     ]);
     return res.json({
       success: true,
@@ -1891,10 +1892,98 @@ app.get('/api/admin/salud', requireAdminAuth, async (_req, res) => {
       transferenciasPendientes,
       consultasNuevas,
       tareas: (tareas as any).data || [],
+      erroresNuevos,
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'No se pudo leer el estado.' });
   }
+});
+
+// Reportes de error "Avisar al equipo técnico" (pedido de Pablo 25/9): la web junta sola el
+// contexto (pantalla, paso, pedido, últimas llamadas que fallaron con su respuesta) y con un
+// botón lo guarda acá y avisa por email. Público a propósito (lo usan las familias), con límite
+// por IP y todo truncado para que no se pueda usar para llenar la base.
+function recortarJson(valor: unknown, maxCaracteres: number): any {
+  try {
+    const texto = JSON.stringify(valor ?? {});
+    if (texto.length <= maxCaracteres) return JSON.parse(texto);
+    return { recortado: true, contenido: texto.slice(0, maxCaracteres) };
+  } catch {
+    return { invalido: true };
+  }
+}
+
+app.post('/api/errores/reportar', limitarFrecuencia('errores-reportar', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+    const body = req.body || {};
+    const mensaje = String(body.mensaje || '').trim().slice(0, 1000) || 'Error sin mensaje';
+    const origen = body.origen === 'admin' ? 'admin' : 'familia';
+    const emailCrudo = String(body.email || '').trim().toLowerCase().slice(0, 200);
+    const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailCrudo) ? emailCrudo : null;
+    const detalle = recortarJson(body.detalle, 20000);
+    const url = String(body.url || '').slice(0, 500) || null;
+    const userAgent = String(req.headers['user-agent'] || '').slice(0, 300) || null;
+    const codigo = `ERR-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+
+    const { error } = await supabase.from('reportes_errores').insert({
+      codigo,
+      origen,
+      mensaje,
+      detalle,
+      url,
+      user_agent: userAgent,
+      email_contacto: email,
+    });
+    if (error) throw error;
+
+    const resend = getResendClient();
+    if (resend) {
+      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const fallas = Array.isArray(detalle?.eventos)
+        ? detalle.eventos
+            .slice(-6)
+            .map((e: any) => `<li style="margin-bottom:6px"><code>${escapeHtml(String(e?.resumen || '').slice(0, 400))}</code></li>`)
+            .join('')
+        : '';
+      const aviso = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+        ...(email ? { replyTo: email } : {}),
+        to: [destino],
+        subject: `⚠️ Error reportado ${codigo}: ${mensaje.slice(0, 80)}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><h2>Una ${origen === 'admin' ? 'persona del panel' : 'familia'} reportó un error</h2><p><strong>Código:</strong> ${escapeHtml(codigo)}</p><p><strong>Mensaje:</strong> ${escapeHtml(mensaje)}</p>${email ? `<p><strong>Email:</strong> ${escapeHtml(email)}</p>` : ''}${url ? `<p><strong>Página:</strong> ${escapeHtml(url)}</p>` : ''}${fallas ? `<p><strong>Últimas fallas registradas:</strong></p><ul>${fallas}</ul>` : ''}<p style="font-size:12px;color:#64748b">El detalle completo está en el panel → Estado del sistema → Errores reportados. Pasale el código ${escapeHtml(codigo)} a Claude para que lo revise.</p></div>`,
+      });
+      if (aviso.error) console.error('[Errores] No se pudo enviar el aviso por email:', aviso.error);
+    }
+    console.warn(`[Errores] Reporte ${codigo} (${origen}): ${mensaje}`);
+    return res.status(201).json({ success: true, codigo });
+  } catch (err: any) {
+    console.error('[Errores] No se pudo guardar el reporte:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos enviar el reporte.' });
+  }
+});
+
+app.get('/api/admin/errores', requireAdminAuth, async (req: Request, res: Response) => {
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+  const verResueltos = req.query.resueltos === '1';
+  let consulta = supabase.from('reportes_errores').select('*').order('created_at', { ascending: false }).limit(100);
+  if (!verResueltos) consulta = consulta.eq('estado', 'nuevo');
+  const { data, error } = await consulta;
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  return res.json({ success: true, reportes: data || [] });
+});
+
+app.post('/api/admin/errores/:id/resolver', requireAdminAuth, async (req: Request, res: Response) => {
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+  const { error } = await supabase
+    .from('reportes_errores')
+    .update({ estado: 'resuelto', resuelto_at: new Date().toISOString() })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ success: false, error: error.message });
+  return res.json({ success: true });
 });
 
 // Eliminar pedido protegido

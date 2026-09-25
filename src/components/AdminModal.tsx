@@ -51,6 +51,7 @@ import {
 import AdminLaboratorioTab from './AdminLaboratorioTab';
 import AdminCampanaPagoAnticipado from './AdminCampanaPagoAnticipado';
 import AdminEstadoSistema from './AdminEstadoSistema';
+import { registrarContextoDeError } from '../services/reporteErrores';
 import AdminLoteFotosTab from './AdminLoteFotosTab';
 import {
   loginAdminConServidor,
@@ -281,6 +282,11 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   // con checkboxes en la tabla de "Pedidos" y un botón para eliminarlos todos juntos, reusando el
   // mismo endpoint de borrado (uno por uno, en secuencia) porque el servidor no tiene un endpoint
   // de borrado masivo.
+  // Con el panel abierto, un reporte de error se marca como del panel e incluye la pestaña.
+  useEffect(() => {
+    registrarContextoDeError('panelAdmin', { pestaña: activeTab });
+    return () => registrarContextoDeError('panelAdmin', null);
+  }, [activeTab]);
   const firmaPedidosResumen = useMemo(
     () => pedidosCompletos.map((p) => `${p.id}:${p.estadoPago}`).sort().join('|'),
     [pedidosCompletos]
