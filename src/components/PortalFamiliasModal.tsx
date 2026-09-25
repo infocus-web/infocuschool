@@ -396,6 +396,9 @@ export default function PortalFamiliasModal({
   // existe en la base — lo borró el admin o se anuló. Antes quedaba la pantalla de "Pendiente de
   // pago" con botones para pagar y un aviso rojo confuso; ahora se descarta y se ofrece armar otro.
   const [pedidoYaNoExiste, setPedidoYaNoExiste] = useState(false);
+  // El pedido en pantalla nunca llegó a registrarse en el servidor (falló /api/pedidos/crear): ahí
+  // el 404 del estado es esperable y NO significa "fue anulado" — se deja el aviso real del error.
+  const pedidoSinRegistrarRef = useRef(false);
   const descartarPedidoInexistente = (referencia?: string | null) => {
     setPedidoYaNoExiste(true);
     setPagoError(null);
@@ -534,7 +537,7 @@ export default function PortalFamiliasModal({
     try {
       const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/status`);
       if (res.status === 404) {
-        descartarPedidoInexistente(id);
+        if (!pedidoSinRegistrarRef.current) descartarPedidoInexistente(id);
         return;
       }
       const data = await res.json();
@@ -1736,6 +1739,8 @@ export default function PortalFamiliasModal({
       fotosDisponibles,
     });
 
+    pedidoSinRegistrarRef.current = !sincronizado;
+    setPedidoYaNoExiste(false);
     setNumeroPedido(nuevoPedido.id);
     setPedidoGenerado(nuevoPedido);
 
@@ -1980,6 +1985,8 @@ export default function PortalFamiliasModal({
 
       // Auditoría 2026-09-09 (mismo criterio que el camino de un solo hijo): si el carrito no se
       // pudo confirmar en el servidor, se corta acá y nunca se avanza al pago combinado.
+      pedidoSinRegistrarRef.current = !resultadoCarrito.sincronizado;
+      setPedidoYaNoExiste(false);
       if (!resultadoCarrito.sincronizado) {
         setPagoError(
           resultadoCarrito.errorSincronizacion
