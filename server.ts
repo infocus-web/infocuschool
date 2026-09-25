@@ -4999,7 +4999,7 @@ Consulta de una familia:
 - Colegio mencionado: ${consulta.colegio || 'no especificado'}
 - Número de pedido mencionado: ${consulta.numero_pedido || 'ninguno'}
 - Asunto: ${consulta.asunto}
-- Mensaje: ${consulta.mensaje}
+- Mensaje: ${consulta.origen === 'panel' ? '(Esta conversación la inició Retrato Escolar escribiéndole a la familia; ver la conversación de abajo.)' : consulta.mensaje}
 ${historial ? `\nConversación hasta ahora (lo último es lo más reciente y es lo que hay que contestar):\n${historial}` : ''}
 
 Datos REALES de esta familia en el sistema (revisados recién, son la única fuente válida):
@@ -5048,15 +5048,18 @@ async function enviarRespuestaConsulta(
   supabase: SupabaseClient,
   consulta: { id: string; nombre: string; email: string; asunto: string; estado: string },
   mensaje: string,
-  automatica: boolean
+  automatica: boolean,
+  opciones: { primerMensaje?: boolean } = {}
 ): Promise<void> {
   const resend = getResendClient();
   if (!resend) throw new Error('El servicio de email no está configurado.');
+  // Una conversación iniciada desde el panel lleva el asunto tal cual (sin "Re:").
+  const asuntoEmail = opciones.primerMensaje ? consulta.asunto : `Re: ${consulta.asunto}`;
   const resultado = await resend.emails.send({
     from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
     replyTo: `consulta-${consulta.id}@${process.env.RESEND_INBOUND_DOMAIN || 'respuestas.retratoescolar.com.ar'}`,
     to: [consulta.email],
-    subject: `Re: ${consulta.asunto}`,
+    subject: asuntoEmail,
     html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><p>Hola ${escapeHtml(consulta.nombre)},</p><div style="white-space:pre-wrap;line-height:1.6">${escapeHtml(mensaje)}</div><p style="margin-top:24px">Saludos,<br><strong>Retrato Escolar</strong></p><hr style="margin:24px 0;border:0;border-top:1px solid #e2e8f0"><p style="font-size:12px;color:#64748b">Podés responder directamente a este correo si necesitás continuar la conversación.</p></div>`,
   });
   if (resultado.error) throw resultado.error;
@@ -5066,7 +5069,7 @@ async function enviarRespuestaConsulta(
     direccion: 'saliente',
     remitente: process.env.RESEND_FROM_EMAIL || 'fotos@retratoescolar.com.ar',
     destinatario: consulta.email,
-    asunto: `Re: ${consulta.asunto}`,
+    asunto: asuntoEmail,
     contenido: mensaje,
     resend_email_id: resultado.data?.id || null,
     automatica,
@@ -5091,7 +5094,7 @@ async function procesarConsultaConIA(
   try {
     const { data: consulta, error } = await supabase
       .from('consultas_familias')
-      .select('id,nombre,email,colegio,numero_pedido,asunto,mensaje,estado,consultas_familias_mensajes(direccion,contenido,created_at,automatica)')
+      .select('id,nombre,email,colegio,numero_pedido,asunto,mensaje,estado,origen,consultas_familias_mensajes(direccion,contenido,created_at,automatica)')
       .eq('id', consultaId)
       .single();
     if (error || !consulta) return null;
@@ -5152,6 +5155,101 @@ async function procesarConsultaConIA(
 function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([promesa, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
 }
+
+// "Escribir a esta familia" (pedido de Pablo, 25/9): el fotógrafo le escribe a una familia desde
+// el buscador de alumnos sin que ella haya consultado antes. Se crea una conversación en Consultas
+// (origen "panel") y el email sale igual que una respuesta: desde el dominio, con reply-to a la
+// dirección de la conversación, así lo que conteste la familia vuelve al mismo hilo.
+app.post('/api/admin/consultas-familias/iniciar', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const { nombre, email, telefono, colegio, numeroPedido, asunto, mensaje } = req.body || {};
+    const datos = {
+      nombre: String(nombre || '').trim().slice(0, 120) || 'Familia',
+      email: String(email || '').trim().toLowerCase(),
+      telefono: String(telefono || '').trim().slice(0, 50),
+      colegio: String(colegio || '').trim().slice(0, 160),
+      numeroPedido: String(numeroPedido || '').trim().slice(0, 80),
+      asunto: String(asunto || '').trim(),
+      mensaje: String(mensaje || '').trim(),
+    };
+    if (datos.nombre.length < 2) datos.nombre = 'Familia';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(datos.email) || datos.email.length > 254) return res.status(400).json({ success: false, error: 'El email de la familia no es válido.' });
+    if (datos.asunto.length < 2 || datos.asunto.length > 160) return res.status(400).json({ success: false, error: 'Escribí un asunto (entre 2 y 160 caracteres).' });
+    if (datos.mensaje.length < 5 || datos.mensaje.length > 3000) return res.status(400).json({ success: false, error: 'El mensaje debe tener entre 5 y 3000 caracteres.' });
+
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+    if (!getResendClient()) return res.status(503).json({ success: false, error: 'El servicio de email no está configurado.' });
+
+    const { data: consulta, error } = await supabase.from('consultas_familias').insert({
+      nombre: datos.nombre,
+      email: datos.email,
+      telefono: datos.telefono || null,
+      colegio: datos.colegio || null,
+      numero_pedido: datos.numeroPedido || null,
+      asunto: datos.asunto,
+      mensaje: datos.mensaje,
+      estado: 'en_proceso',
+      origen: 'panel',
+    }).select('id,nombre,email,asunto,estado').single();
+    if (error || !consulta) throw error || new Error('No se pudo crear la conversación.');
+
+    try {
+      await enviarRespuestaConsulta(supabase, consulta, datos.mensaje, false, { primerMensaje: true });
+    } catch (errorEnvio) {
+      // Si el email no salió, no se deja una conversación "fantasma" que parezca enviada.
+      await supabase.from('consultas_familias').delete().eq('id', consulta.id);
+      throw errorEnvio;
+    }
+    return res.json({ success: true, consultaId: consulta.id });
+  } catch (err: any) {
+    console.error('[Consultas] Error al iniciar conversación:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos enviar el email. Intentá nuevamente.' });
+  }
+});
+
+// Borrador con IA para "Escribir a esta familia": no envía nada, sólo devuelve el texto.
+app.post(
+  '/api/admin/consultas-familias/sugerir-mensaje',
+  requireAdminAuth,
+  limitarFrecuencia('sugerir-mensaje', 20, 10 * 60 * 1000),
+  async (req: Request, res: Response) => {
+    try {
+      const gemini = getGeminiClient();
+      if (!gemini) return res.status(503).json({ success: false, error: 'La IA no está configurada (falta GEMINI_API_KEY en el servidor).' });
+      const supabase = getServerSupabase();
+      if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado.' });
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      const numeroPedido = String(req.body?.numeroPedido || '').trim() || null;
+      const motivo = String(req.body?.motivo || '').trim().slice(0, 500);
+      if (!email.includes('@')) return res.status(400).json({ success: false, error: 'Falta el email de la familia.' });
+      if (motivo.length < 3) return res.status(400).json({ success: false, error: 'Escribí en pocas palabras de qué querés hablarle (en el asunto).' });
+
+      const ficha = await armarFichaFamilia(supabase, { email, numero_pedido: numeroPedido });
+      const prompt = `
+Retrato Escolar le va a escribir un email a una familia (la familia NO escribió antes; el mensaje lo inicia el fotógrafo).
+- Tutor/a: ${String(req.body?.nombre || 'la familia').slice(0, 120)}
+- Alumno/a: ${String(req.body?.alumno || '').slice(0, 120) || 'no especificado'}
+- Tema del mensaje (lo que el fotógrafo quiere comunicar): ${motivo}
+
+Datos REALES de esta familia en el sistema (son la única fuente válida):
+${ficha.chequeos.map((c) => `${c.ok ? '[OK]' : '[PROBLEMA]'} ${c.texto}`).join('\n') || '(sin chequeos)'}
+${ficha.datos.map((d) => `- ${d}`).join('\n')}
+
+Escribí SOLO el cuerpo del email: español rioplatense ("vos"), breve, claro y cálido, sin saludo inicial ni firma (el sistema los agrega). No inventes fechas, montos ni promesas que no estén en los datos o en el tema. Nunca incluyas códigos de acceso ni DNIs.
+`.trim();
+      const resultado = await gemini.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: prompt,
+        config: { systemInstruction: CONTEXTO_NEGOCIO_CONSULTAS },
+      });
+      return res.json({ success: true, sugerencia: String(resultado.text || '').trim() });
+    } catch (err: any) {
+      console.error('[Consultas] Error al sugerir mensaje con IA:', err);
+      return res.status(500).json({ success: false, error: 'No pudimos generar un borrador. Escribilo a mano o intentá de nuevo.' });
+    }
+  }
+);
 
 app.post('/api/admin/consultas-familias/:id/responder', requireAdminAuth, async (req: Request, res: Response) => {
   try {

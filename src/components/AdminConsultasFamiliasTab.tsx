@@ -257,9 +257,9 @@ export default function AdminConsultasFamiliasTab() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={`sm:hidden px-2 py-0.5 rounded-full text-[10px] font-bold ${estilosEstado[consulta.estado]}`}>{etiquetasEstado[consulta.estado]}</span>
-                          <span className="text-[10px] text-slate-400 uppercase font-bold">{consulta.origen === 'web' ? 'Formulario web' : 'Email'}</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-bold">{consulta.origen === 'web' ? 'Formulario web' : consulta.origen === 'panel' ? 'Iniciada por vos desde el panel' : 'Email'}</span>
                         </div>
-                        <p className="text-xs text-slate-600 mt-1 whitespace-pre-wrap break-words">{consulta.mensaje}</p>
+                        {consulta.origen !== 'panel' && <p className="text-xs text-slate-600 mt-1 whitespace-pre-wrap break-words">{consulta.mensaje}</p>}
                         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-[11px] text-slate-500">
                           <a className="inline-flex items-center gap-1 hover:text-sky-700 hover:underline" href={`mailto:${consulta.email}?subject=${encodeURIComponent(asuntoRespuesta)}`}><Mail className="w-3 h-3" />{consulta.email}</a>
                           {consulta.telefono && <span>{consulta.telefono}</span>}
