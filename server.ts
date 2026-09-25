@@ -8513,6 +8513,7 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 300, 10 *
       total: totalReferencia,
       pedidoFriendlyId: data.pedido_friendly_id || undefined,
       linkDescargaHD: linkDescargaHD || undefined,
+      metodoPago: (data as any).metodo_pago || undefined,
       // Pago anticipado: el pedido está pagado pero todavía sin fotos elegidas (no hay HD que esperar).
       reservaAnticipada: Boolean((data as any).seleccion_pendiente),
     });

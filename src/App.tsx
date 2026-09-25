@@ -118,7 +118,7 @@ export default function App() {
             setReservaRetornoId(null);
             window.history.replaceState({}, '', window.location.pathname);
           }}
-          onReintentar={() => {
+          onElegirOtroMedio={() => {
             setReservaRetornoId(null);
             window.history.replaceState({}, '', window.location.pathname);
             setFamiliasModalOpen(true);

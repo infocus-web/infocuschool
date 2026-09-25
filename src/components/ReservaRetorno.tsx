@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Clock, Loader2, X, XCircle } from 'lucide-react';
 import { volvioSinPagar } from '../utils/pagoRetorno';
+import { crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
+import { crearIntencionPagoNaveMultiple } from '../services/naveService';
 
 interface Props {
   grupoPagoId: string;
   onCerrar: () => void;
-  /** Reabre el portal para volver a intentar el pago. */
-  onReintentar?: () => void;
+  /** Reabre el portal (reserva) para elegir otro medio de pago. */
+  onElegirOtroMedio?: () => void;
 }
 
 type Estado = 'consultando' | 'aprobado' | 'pendiente' | 'rechazado' | 'error';
@@ -16,13 +18,32 @@ type Estado = 'consultando' | 'aprobado' | 'pendiente' | 'rechazado' | 'error';
  * estado real del pago en el servidor (unas cuantas veces, porque la confirmación de la pasarela
  * puede demorar unos segundos) y le explica a la familia qué sigue.
  */
-export default function ReservaRetorno({ grupoPagoId, onCerrar, onReintentar }: Props) {
+export default function ReservaRetorno({ grupoPagoId, onCerrar, onElegirOtroMedio }: Props) {
   const [estado, setEstado] = useState<Estado>('consultando');
   // Volvió de Mercado Pago sin pagar ("Volver a la tienda"): se consulta una sola vez por las dudas
   // y, si no está aprobado, se dice claramente que el pago no se hizo (antes esperaba 1 minuto y
   // mostraba "Tu pago se está procesando", aunque no hubiera ningún pago).
   const [sinPago] = useState(() => (typeof window !== 'undefined' ? volvioSinPagar(window.location.search) : false));
   const [pedido, setPedido] = useState('');
+  const [metodoPago, setMetodoPago] = useState<string>('');
+  const [reintentando, setReintentando] = useState(false);
+  const [errorReintento, setErrorReintento] = useState('');
+
+  // "Volver a intentar": vuelve directo a la pasarela con el mismo medio de pago. El servidor cobra
+  // lo registrado para este grupo, así que alcanza con el grupoPagoId.
+  const reintentar = async () => {
+    setReintentando(true);
+    setErrorReintento('');
+    const datos = { grupoPagoId, items: [], tutorNombre: '', tutorEmail: '' };
+    const pago = metodoPago === 'nave' ? await crearIntencionPagoNaveMultiple(datos) : await crearPreferenciaMercadoPagoMultiple(datos);
+    const url = 'checkoutUrl' in pago ? pago.checkoutUrl : 'initPoint' in pago ? pago.initPoint : undefined;
+    if (pago.success && url) {
+      window.location.href = url;
+      return;
+    }
+    setReintentando(false);
+    setErrorReintento(pago.error || 'No se pudo volver a abrir el pago. Probá con otro medio.');
+  };
 
   useEffect(() => {
     let cancelado = false;
@@ -34,6 +55,7 @@ export default function ReservaRetorno({ grupoPagoId, onCerrar, onReintentar }: 
         const data = await res.json();
         if (cancelado) return;
         if (data?.pedidoFriendlyId) setPedido(data.pedidoFriendlyId);
+        if (data?.metodoPago) setMetodoPago(data.metodoPago);
         if (data?.estadoPago === 'aprobado') return setEstado('aprobado');
         if (data?.estadoPago === 'rechazado' || sinPago) return setEstado('rechazado');
         if (intentos >= 12) return setEstado('pendiente');
@@ -89,16 +111,34 @@ export default function ReservaRetorno({ grupoPagoId, onCerrar, onReintentar }: 
             <p className="mt-2 text-sm text-slate-600">No se te cobró nada. Podés volver a intentarlo cuando quieras, con el mismo u otro medio de pago.</p>
           </>
         )}
-        <div className="mt-5 flex flex-col-reverse sm:flex-row justify-center gap-2">
-          <button type="button" onClick={onCerrar} className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
-            {estado === 'consultando' || estado === 'aprobado' ? 'Entendido' : 'Cerrar'}
-          </button>
-          {onReintentar && (estado === 'rechazado' || estado === 'pendiente' || estado === 'error') && (
-            <button type="button" onClick={onReintentar} className="rounded-xl bg-amber-400 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-300">
-              Volver a intentar
+        {errorReintento && <p className="mt-3 text-xs font-semibold text-red-600">{errorReintento}</p>}
+        {estado === 'rechazado' || estado === 'pendiente' || estado === 'error' ? (
+          <div className="mt-5 flex flex-col gap-2">
+            {metodoPago !== 'transferencia' && (
+              <button
+                type="button"
+                onClick={() => void reintentar()}
+                disabled={reintentando}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-300 disabled:opacity-60"
+              >
+                {reintentando && <Loader2 className="h-4 w-4 animate-spin" />}
+                Volver a intentar{metodoPago === 'nave' ? ' con Nave' : metodoPago === 'mercadopago' ? ' con Mercado Pago' : ''}
+              </button>
+            )}
+            {onElegirOtroMedio && (
+              <button type="button" onClick={onElegirOtroMedio} disabled={reintentando} className="rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-bold text-slate-800 hover:bg-slate-50">
+                Elegir otro medio de pago
+              </button>
+            )}
+            <button type="button" onClick={onCerrar} disabled={reintentando} className="rounded-xl px-5 py-2 text-sm font-semibold text-slate-500 hover:text-slate-800">
+              Cerrar
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <button type="button" onClick={onCerrar} className="mt-5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
+            Entendido
+          </button>
+        )}
       </div>
     </div>
   );
