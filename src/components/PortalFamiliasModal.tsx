@@ -599,6 +599,10 @@ export default function PortalFamiliasModal({
     }
   };
 
+  // Volvió de Mercado Pago sin pagar ("Volver a la tienda"): el pedido existe pero NO está pago.
+  // Caso real (25/9): la pantalla decía "¡Gracias por tu pedido!" y seguía "verificando" 30 minutos.
+  const [volvioSinPagarAlCargar] = useState(() => (typeof window !== 'undefined' ? volvioSinPagar(window.location.search) : false));
+
   // Polling automático cuando la pantalla está en el paso 5 con pago pendiente. Auditoría
   // 2026-09-18 (reporte de Pablo): antes esto paraba apenas el pago quedaba "aprobado", así que
   // el botón de descarga inmediata se quedaba en "Preparando..." para siempre si el .zip HD
@@ -607,7 +611,7 @@ export default function PortalFamiliasModal({
   // espaciado, y con un límite de intentos para no dejarlo sondeando para siempre si algo falla).
   useEffect(() => {
     if (step !== 5 || !pedidoGenerado) return;
-    const pagoPendiente = pedidoGenerado.estadoPago !== 'aprobado' && pedidoGenerado.estadoPago !== 'rechazado';
+    const pagoPendiente = pedidoGenerado.estadoPago !== 'aprobado' && pedidoGenerado.estadoPago !== 'rechazado' && !volvioSinPagarAlCargar;
     const aprobadoSinLink = pedidoGenerado.estadoPago === 'aprobado' && !pedidoGenerado.linkDescargaHD;
     if (!pagoPendiente && !aprobadoSinLink) return;
 
@@ -625,7 +629,7 @@ export default function PortalFamiliasModal({
       if (intentos >= maxIntentos) clearInterval(interval);
     }, intervaloMs);
     return () => clearInterval(interval);
-  }, [step, pedidoGenerado?.estadoPago, pedidoGenerado?.linkDescargaHD, pedidoGenerado?.id, pedidoGenerado?.supabaseId]);
+  }, [step, pedidoGenerado?.estadoPago, pedidoGenerado?.linkDescargaHD, pedidoGenerado?.id, pedidoGenerado?.supabaseId, volvioSinPagarAlCargar]);
 
   // Si se llega al paso 5 con un pedido de Mercado Pago pendiente pero sin link de pago a mano
   // (por ejemplo, al volver de Mercado Pago con el pago rechazado/pendiente, o tras recargar la
@@ -4247,11 +4251,26 @@ export default function PortalFamiliasModal({
                   <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200 uppercase tracking-wider">
                     ¡Pago Aprobado con Éxito!
                   </span>
+                ) : volvioSinPagarAlCargar ? (
+                  <span className="text-xs font-bold text-rose-800 bg-rose-50 px-3 py-1 rounded-full border border-rose-200 uppercase tracking-wider">
+                    Pago no completado
+                  </span>
                 ) : (
                   <span className="text-xs font-bold text-amber-800 bg-amber-50 px-3 py-1 rounded-full border border-amber-200 uppercase tracking-wider">
                     Pedido Registrado · Pendiente de Acreditación
                   </span>
                 )}
+                {volvioSinPagarAlCargar && pedidoGenerado?.estadoPago !== 'aprobado' ? (
+                  <>
+                    <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit'] mt-3">
+                      Tu pedido todavía no está pago
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-600 mt-2">
+                      Volviste de Mercado Pago sin completar el pago: <strong>no se te cobró nada</strong>. Tu pedido quedó guardado, así que podés pagarlo ahora con el medio que prefieras.
+                    </p>
+                  </>
+                ) : (
+                <>
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 font-['Outfit'] mt-3">
                   {/* Al volver del pago en otro navegador (sin sesión ni pedido guardados) estos
                       datos no existen: se usan los del pedido y, si tampoco están, un texto neutro
@@ -4268,6 +4287,8 @@ export default function PortalFamiliasModal({
                     'Tu pedido ya está registrado en el sistema.'
                   )}
                 </p>
+                </>
+                )}
               </div>
 
               {/* Order Ticket Card */}
@@ -4447,10 +4468,12 @@ export default function PortalFamiliasModal({
                     <div className="text-xs text-slate-600">
                       <p className="font-semibold text-slate-800 flex items-center gap-1.5">
                         <Clock className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Verificación automática de pago activa</span>
+                        <span>{volvioSinPagarAlCargar ? '¿Ya pagaste en otra pestaña?' : 'Verificación automática de pago activa'}</span>
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        {mensajeEstadoPago || 'Sincronizando con Mercado Pago y la base de datos...'}
+                        {volvioSinPagarAlCargar
+                          ? 'Si completaste el pago por otro lado, tocá "Re-verificar Estado" para actualizarlo.'
+                          : mensajeEstadoPago || 'Sincronizando con Mercado Pago y la base de datos...'}
                       </p>
                     </div>
                     <button
