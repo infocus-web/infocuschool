@@ -103,7 +103,7 @@ export default function AdminEstadoSistema({ onIrA }: { onIrA?: (tab: 'pedidos' 
     ? [
         { etiqueta: 'Pagos sin descarga HD', valor: String(estado.pagadosSinHD), ok: estado.pagadosSinHD === 0, tab: 'laboratorio', ayuda: 'Pedidos pagados cuyo .zip HD todavía no se armó. Se reintenta solo cada hora; si persiste, revisá que estén las fotos del curso.' },
         { etiqueta: 'Emails sin enviar', valor: String(estado.pagadosSinEmail), ok: estado.pagadosSinEmail === 0, tab: 'laboratorio', ayuda: 'Pedidos pagados cuyo email con las fotos no salió. Se reintenta solo cada hora.' },
-        { etiqueta: 'Transferencias por aprobar', valor: String(estado.transferenciasPendientes), ok: estado.transferenciasPendientes === 0, tab: 'pedidos', ayuda: 'Pedidos por transferencia esperando que confirmes el comprobante con "Aprobar Pago".' },
+        { etiqueta: 'Comprobantes por revisar', valor: String(estado.transferenciasPendientes), ok: estado.transferenciasPendientes === 0, tab: 'pedidos', ayuda: 'Transferencias con comprobante subido por la familia, esperando que lo revises ("Ver comprobante") y toques "Aprobar Pago".' },
         { etiqueta: 'Errores reportados', valor: String(estado.erroresNuevos), ok: estado.erroresNuevos === 0, ayuda: 'Avisos que mandaron familias (o vos) con el botón "Avisar al equipo técnico". Tocá para ver el detalle.' },
         { etiqueta: 'Consultas nuevas', valor: String(estado.consultasNuevas), ok: estado.consultasNuevas === 0, tab: 'consultas', ayuda: 'Consultas de familias sin leer.' },
         { etiqueta: 'Control de pagos', valor: conciliacion.texto, ok: conciliacion.minutos <= 25, ayuda: 'Revisa cada 10 minutos con Mercado Pago y Nave que ningún pago se haya perdido.' },

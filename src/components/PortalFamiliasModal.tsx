@@ -1,5 +1,6 @@
 import { registrarContextoDeError } from '../services/reporteErrores';
 import { useNaveHabilitado } from '../services/mediosPagoService';
+import SubirComprobante from './SubirComprobante';
 import { useState, useEffect, useRef, FormEvent } from 'react';
 import { ViewfinderFocusIcon } from './RetratoEscolarLogo';
 import {
@@ -3074,6 +3075,9 @@ export default function PortalFamiliasModal({
                           </p>
                         </div>
                       </div>
+                      {pedidoExistente.estado === 'pendiente_pago' && pedidoExistente.metodoPago === 'transferencia' && pedidoExistente.pedidoUuid && (
+                        <SubirComprobante pedidoId={pedidoExistente.pedidoUuid} numeros={pedidoExistente.id} />
+                      )}
                       <div className="flex flex-col sm:flex-row gap-2 pt-1">
                         <button
                           type="button"
@@ -4634,10 +4638,14 @@ export default function PortalFamiliasModal({
                     <p className="text-slate-700">
                       <strong>CBU:</strong> <span className="font-mono">0070313830004052956749</span>
                     </p>
-                    <p className="text-slate-500 text-[11px] mt-1">
-                      Una vez realizada, envianos el comprobante por email a fotos@retratoescolar.com.ar con tu número de pedido ({numeroPedido}) para activar tu entrega y link de descarga HD.
-                    </p>
                   </div>
+                )}
+                {pedidoGenerado?.metodoPago === 'transferencia' && pedidoGenerado?.estadoPago !== 'aprobado' && (pedidoGenerado.grupoPagoId || pedidoGenerado.supabaseId) && (
+                  <SubirComprobante
+                    grupoPagoId={pedidoGenerado.grupoPagoId || undefined}
+                    pedidoId={pedidoGenerado.grupoPagoId ? undefined : pedidoGenerado.supabaseId}
+                    numeros={numeroPedido}
+                  />
                 )}
 
                 {/* Email Delivery Confirmation Card */}
@@ -4662,7 +4670,7 @@ export default function PortalFamiliasModal({
                         Envío automático de fotos HD por correo
                       </p>
                       <p className="text-slate-600 mt-0.5">
-                        Al confirmarse el pago en la plataforma (por webhook o verificación del fotógrafo), se enviará de inmediato el enlace de descarga en Ultra HD a{' '}
+                        Cuando se confirme tu pago te mandamos al instante el link para descargar tus fotos en alta resolución a{' '}
                         <strong>{tutorEmail || pedidoGenerado?.tutorEmail || 'tu email registrado'}</strong>.
                       </p>
                     </div>

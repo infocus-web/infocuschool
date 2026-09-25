@@ -317,8 +317,10 @@ Cómo funciona:
      el kit de cada hijo y pagarlo ya. Cuando se suben las fotos entra, elige las 3 y toca
      "Confirmar mis fotos", sin volver a pagar; ahí le llega la descarga en alta resolución.
   No es obligatorio pagar por adelantado: la familia elige la opción que prefiera.
-- Medios de pago: Mercado Pago, Nave o transferencia bancaria (en ese caso se manda el
-  comprobante por email a fotos@retratoescolar.com.ar indicando el número de pedido).
+- Medios de pago: Mercado Pago o transferencia bancaria (y Nave, cuando figura como opción en la
+  web). Si paga por transferencia, al terminar el pedido la web le pide subir una foto o captura
+  del comprobante ("Subir comprobante"); si ya cerró la página, lo puede subir entrando de nuevo
+  al portal. Cuando se confirma la transferencia le llega el email con las fotos.
 
 Tu tarea: redactar una respuesta breve, cálida y clara en español rioplatense (tratamiento
 "vos"), para la consulta de una familia que llegó por el formulario web. Contestá solo lo que
@@ -1880,7 +1882,7 @@ app.get('/api/admin/salud', requireAdminAuth, async (_req, res) => {
     const [pagadosSinHD, pagadosSinEmail, transferenciasPendientes, consultasNuevas, tareas, erroresNuevos] = await Promise.all([
       contar(base().eq('estado', 'pagado').eq('seleccion_pendiente', false).or('link_descarga_hd.is.null,link_descarga_hd.eq.').lt('updated_at', hace15min)),
       contar(base().eq('estado', 'pagado').eq('email_enviado', false).lt('updated_at', hace15min)),
-      contar(base().eq('estado', 'pendiente_pago').eq('metodo_pago', 'transferencia').eq('archivado', false)),
+      contar(base().eq('estado', 'pendiente_pago').eq('metodo_pago', 'transferencia').eq('archivado', false).not('comprobante_subido_at', 'is', null)),
       contar(supabase.from('consultas_familias').select('id', { count: 'exact', head: true }).eq('estado', 'nueva')),
       supabase.from('tareas_programadas_estado').select('nombre, ultima_ejecucion, resultado'),
       contar(supabase.from('reportes_errores').select('id', { count: 'exact', head: true }).eq('estado', 'nuevo')),
@@ -6572,6 +6574,121 @@ async function autorizarTareaProgramada(req: Request): Promise<boolean> {
   return Boolean(data?.secreto) && compararTimingSafe(autorizacion, `Bearer ${data!.secreto}`);
 }
 
+// Comprobante de transferencia (pedido de Pablo 25/9): la familia que paga por transferencia sube
+// la foto/PDF del comprobante desde la web (antes lo tenía que mandar por mail a fotos@). Se guarda
+// en el bucket privado "comprobantes", se marca en todas las filas del pago (un grupo de hermanos
+// comparte comprobante) y llega un aviso por email con el archivo adjunto.
+const COMPROBANTE_TIPOS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'application/pdf': 'pdf',
+};
+// 2,5 MB: el archivo viaja en base64 dentro del JSON y Vercel corta los cuerpos de más de 4,5 MB. Las fotos
+// se achican en el navegador antes de subir (ver SubirComprobante.tsx), así que esto alcanza de sobra.
+const COMPROBANTE_MAX_BYTES = Math.floor(2.5 * 1024 * 1024);
+
+async function filasDelPagoPorReferencia(supabase: SupabaseClient, ref: { pedidoId?: unknown; grupoPagoId?: unknown }) {
+  const esUuid = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  const columna = esUuid(ref.grupoPagoId) ? 'grupo_pago_id' : esUuid(ref.pedidoId) ? 'id' : null;
+  if (!columna) return { filas: [] as any[], referencia: '' };
+  const valor = String(columna === 'grupo_pago_id' ? ref.grupoPagoId : ref.pedidoId);
+  let { data } = await supabase
+    .from('pedidos')
+    .select('id, estado, metodo_pago, total, grupo_pago_id, pedido_friendly_id, alumno_nombre, colegio_nombre, comprobante_path, comprobante_subido_at, familias(nombre, email)')
+    .eq(columna, valor);
+  // Un pedido suelto que en realidad es parte de un grupo: se toma el grupo entero.
+  const grupo = (data || [])[0]?.grupo_pago_id;
+  if (columna === 'id' && grupo) {
+    const r = await supabase
+      .from('pedidos')
+      .select('id, estado, metodo_pago, total, grupo_pago_id, pedido_friendly_id, alumno_nombre, colegio_nombre, comprobante_path, comprobante_subido_at, familias(nombre, email)')
+      .eq('grupo_pago_id', grupo);
+    data = r.data;
+  }
+  return { filas: (data || []).filter((f: any) => f.estado !== 'cancelado'), referencia: grupo || valor };
+}
+
+app.get('/api/pagos/comprobante', limitarFrecuencia('comprobante-estado', 600, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+  const { filas } = await filasDelPagoPorReferencia(supabase, { pedidoId: req.query.pedidoId, grupoPagoId: req.query.grupoPagoId });
+  if (filas.length === 0) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+  const subido = filas.find((f: any) => f.comprobante_subido_at);
+  return res.json({ success: true, subido: Boolean(subido), fecha: subido?.comprobante_subido_at || null, pagado: filas.some((f: any) => f.estado === 'pagado') });
+});
+
+app.post('/api/pagos/comprobante', limitarFrecuencia('comprobante-subir', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+    const { pedidoId, grupoPagoId, archivo, nombreArchivo } = req.body || {};
+    const { filas, referencia } = await filasDelPagoPorReferencia(supabase, { pedidoId, grupoPagoId });
+    if (filas.length === 0) return res.status(404).json({ success: false, error: 'No encontramos el pedido. Revisá el número o escribinos.' });
+    if (filas.some((f: any) => f.estado === 'pagado' || f.estado === 'entregado')) {
+      return res.status(409).json({ success: false, error: 'Este pedido ya está pago: no hace falta subir comprobante.' });
+    }
+    if (!filas.every((f: any) => f.metodo_pago === 'transferencia')) {
+      return res.status(409).json({ success: false, error: 'Este pedido no es por transferencia.' });
+    }
+    const coincidencia = /^data:([\w/+.-]+);base64,(.+)$/s.exec(String(archivo || ''));
+    const tipo = coincidencia?.[1]?.toLowerCase() || '';
+    const extension = COMPROBANTE_TIPOS[tipo];
+    if (!coincidencia || !extension) {
+      return res.status(400).json({ success: false, error: 'Subí una foto (JPG, PNG) o un PDF del comprobante.' });
+    }
+    const buffer = Buffer.from(coincidencia[2], 'base64');
+    if (buffer.length === 0 || buffer.length > COMPROBANTE_MAX_BYTES) {
+      return res.status(400).json({ success: false, error: 'El archivo es muy grande (máximo 2,5 MB). Probá con una captura de pantalla del comprobante.' });
+    }
+    const ruta = `${referencia}/${Date.now()}.${extension}`;
+    const { error: errorSubida } = await supabase.storage.from('comprobantes').upload(ruta, buffer, { contentType: tipo, upsert: false });
+    if (errorSubida) throw errorSubida;
+    const ahora = new Date().toISOString();
+    const { error: errorUpdate } = await supabase
+      .from('pedidos')
+      .update({ comprobante_path: ruta, comprobante_subido_at: ahora })
+      .in('id', filas.map((f: any) => f.id));
+    if (errorUpdate) throw errorUpdate;
+
+    const resend = getResendClient();
+    if (resend) {
+      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const total = (filas as any[]).reduce((acc: number, f: any) => acc + (Number(f.total) || 0), 0);
+      const numeros = filas.map((f: any) => f.pedido_friendly_id).filter(Boolean).join(', ');
+      const alumnos = filas.map((f: any) => f.alumno_nombre).filter(Boolean).join(', ');
+      const familia: any = (filas[0] as any).familias || {};
+      const nombreSeguro = String(nombreArchivo || `comprobante.${extension}`).replace(/[^\w.\- ]/g, '_').slice(0, 80);
+      const aviso = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+        ...(familia.email ? { replyTo: familia.email } : {}),
+        to: [destino],
+        subject: `🧾 Comprobante de transferencia ${numeros} · $${total.toLocaleString('es-AR')}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><h2>Nuevo comprobante de transferencia</h2><p><strong>Pedido:</strong> ${escapeHtml(numeros)}</p><p><strong>Alumno/s:</strong> ${escapeHtml(alumnos)}</p><p><strong>Familia:</strong> ${escapeHtml(familia.nombre || '')} ${familia.email ? `(${escapeHtml(familia.email)})` : ''}</p><p><strong>Monto a verificar:</strong> $${total.toLocaleString('es-AR')}</p><p>El comprobante va adjunto. Si la transferencia está acreditada, aprobalo desde el panel → Pedidos → <strong>Aprobar Pago</strong>.</p></div>`,
+        attachments: [{ filename: nombreSeguro, content: buffer.toString('base64') }],
+      });
+      if (aviso.error) console.error('[Comprobantes] No se pudo enviar el aviso por email:', aviso.error);
+    }
+    return res.status(201).json({ success: true, fecha: ahora });
+  } catch (err: any) {
+    console.error('[Comprobantes] Error al subir comprobante:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos guardar el comprobante. Probá de nuevo en unos segundos.' });
+  }
+});
+
+// Link temporal (10 min) para ver el comprobante desde el panel.
+app.get('/api/admin/pedidos/:id/comprobante', requireAdminAuth, async (req: Request, res: Response) => {
+  const supabase = getServerSupabase();
+  if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+  const { data } = await supabase.from('pedidos').select('comprobante_path').eq('id', req.params.id).maybeSingle();
+  if (!data?.comprobante_path) return res.status(404).json({ success: false, error: 'Este pedido todavía no tiene comprobante.' });
+  const { data: firmado, error } = await supabase.storage.from('comprobantes').createSignedUrl(data.comprobante_path, 600);
+  if (error || !firmado?.signedUrl) return res.status(500).json({ success: false, error: error?.message || 'No se pudo abrir el comprobante.' });
+  return res.json({ success: true, url: firmado.signedUrl });
+});
+
 // Medios de pago habilitados para las familias. Nave se ofrece solo en producción: en sandbox
 // rechaza toda tarjeta real (caso real 25/9) y la familia se frustraba. Al cargar las credenciales
 // de producción y NAVE_ENVIRONMENT=production vuelve a aparecer solo.
@@ -9104,7 +9221,7 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 500, 10
     const nombreBuscado = normalizarNombrePorPalabras(alumnoNombre);
     const { data, error } = await supabase
       .from('pedidos')
-      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, created_at, seleccion_pendiente')
+      .select('id, pedido_friendly_id, alumno_nombre, kit_nombre, total, estado, created_at, seleccion_pendiente, metodo_pago')
       .eq('curso_codigo', cursoCodigo)
       .eq('colegio_id', colegioId)
       .neq('estado', 'cancelado')
@@ -9136,6 +9253,9 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 500, 10
         estado: encontrado.estado,
         fecha: encontrado.created_at,
         reservaPendiente: Boolean((encontrado as any).seleccion_pendiente) && encontrado.estado === 'pagado',
+        // Para pedir el comprobante si es una transferencia sin confirmar (ver SubirComprobante).
+        pedidoUuid: encontrado.id,
+        metodoPago: (encontrado as any).metodo_pago || null,
       },
     });
   } catch (err: any) {

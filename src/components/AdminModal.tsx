@@ -29,7 +29,8 @@ import {
   PedidoEscolarCompleto,
   obtenerPedidosAdminDesdeSupabase,
   organizarPedidoAdmin,
-  combinarPedidosConLocal
+  combinarPedidosConLocal,
+  obtenerLinkComprobanteAdmin
 } from '../services/pedidosLabService';
 import {
   obtenerInscripcionesAdmin,
@@ -441,7 +442,26 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
   // pendientes, se aprueban también en la misma acción — cada uno con su propio .zip HD y su
   // propio email (mismo criterio que ya usa el pago automático: "un carrito multi-hijo, cada hijo
   // recibe su propia confirmación con sus propios datos, aunque el pago haya sido uno solo").
+  const handleVerComprobante = async (pedido: PedidoEscolarCompleto) => {
+    // La pestaña se abre ANTES del await: si no, el navegador la bloquea como ventana emergente.
+    const ventana = window.open('', '_blank');
+    const res = await obtenerLinkComprobanteAdmin(pedido.supabaseId || pedido.id);
+    if (res.success && res.url) {
+      if (ventana) ventana.location.href = res.url;
+      else window.location.href = res.url;
+    } else {
+      ventana?.close();
+      window.alert(res.error || 'No se pudo abrir el comprobante.');
+    }
+  };
+
   const handleAprobarPago = async (pedido: PedidoEscolarCompleto) => {
+    if (pedido.metodoPago === 'transferencia' && !pedido.comprobanteSubidoAt) {
+      const seguir = window.confirm(
+        'Esta familia todavía no subió el comprobante de la transferencia.\n\n¿Verificaste en el banco que el dinero está acreditado y querés aprobar el pago igual?'
+      );
+      if (!seguir) return;
+    }
     const hermanosPendientes = pedido.grupoPagoId
       ? pedidosCompletos.filter(
           // "rechazado" también: un intento de pago con tarjeta que rebotó antes de pagar en efectivo.
@@ -1769,6 +1789,19 @@ export default function AdminModal({ isOpen, onClose, onProbarCodigo, tabInicial
                             </span>
                           </td>
                           <td className="py-3 px-4">
+                            {p.estadoPago === 'pendiente' && p.metodoPago === 'transferencia' && (
+                              p.comprobanteSubidoAt ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleVerComprobante(p)}
+                                  className="mb-1 block px-2.5 py-1 rounded-lg border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800 font-bold text-[10px] cursor-pointer"
+                                >
+                                  🧾 Ver comprobante
+                                </button>
+                              ) : (
+                                <span className="mb-1 block text-[10px] font-semibold text-slate-400">Sin comprobante todavía</span>
+                              )
+                            )}
                             {p.estadoPago === 'pendiente' ? (
                               <button
                                 onClick={() => handleAprobarPago(p)}
