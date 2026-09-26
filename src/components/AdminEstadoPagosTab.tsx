@@ -8,6 +8,7 @@ import {
   AlertCircle,
   FileSpreadsheet,
   School,
+  Info,
 } from 'lucide-react';
 import { useColegiosLista } from '../services/colegiosService';
 import { obtenerEstadoPagosColegio, AlumnoEstadoPago, PedidoSinAlumnoEnNomina, ResumenEstadoPagos } from '../services/estadoPagosService';
@@ -88,114 +89,100 @@ export default function AdminEstadoPagosTab() {
   };
 
   return (
-    <div className="space-y-5 text-slate-900 text-left">
-      <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl flex items-start gap-3">
-        <Wallet className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-        <div className="text-xs text-amber-950 leading-relaxed">
-          <p className="font-bold">Estado de Pagos por Curso</p>
-          <p className="mt-1 text-amber-900/90">
-            Pensado para cursos con una tarifa total acordada (ej. un acto de egresados): cruza la
-            nómina cargada de este colegio contra los pedidos ya pagados, para ver de un vistazo
-            quién falta y cuánto queda para llegar a la meta. El cruce se hace por nombre, así que un
-            pedido con el nombre mal escrito puede no aparecer emparejado — revisá la lista de abajo
-            "Pedidos sin alumno en la nómina" si el total recaudado no te cierra.
-          </p>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={colegioId}
-              onChange={(e) => setColegioId(e.target.value)}
-              className="px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold text-slate-800"
-            >
-              {colegios.map((col) => (
-                <option key={col.id} value={col.id}>
-                  {col.nombre} ({col.localidad})
-                </option>
-              ))}
-            </select>
-
-            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-              <span>Precio acordado por alumno</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={precioPorAlumno}
-                onChange={(e) => setPrecioPorAlumno(e.target.value)}
-                placeholder="15000"
-                className="w-24 px-2 py-1.5 text-xs bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-mono"
-              />
-            </label>
-          </div>
-
-          <div className="flex items-center gap-2">
+    <div className="space-y-3 text-slate-900 text-left">
+      {/* Auditoría 2026-09-26 (pedido de Pablo: "reducirlo a la mitad o menos"): la explicación larga
+          pasó a un tooltip (ⓘ) y las 4 tarjetas + la franja de meta quedaron en una sola fila de
+          pastillas, que siguen funcionando como filtro de la tabla. */}
+      <div className="bg-white rounded-2xl border border-slate-200 px-3 py-2 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="flex items-center gap-1.5 text-xs font-bold text-slate-800 cursor-help"
+            title={'Cruza la nómina cargada de este colegio contra los pedidos ya pagados, para ver quién falta y cuánto queda para la meta (ej. un acto de egresados con tarifa acordada). El cruce es por nombre: un pedido con el nombre mal escrito puede no emparejar — revisá "Pedidos sin alumno en la nómina" si el total no te cierra.'}
+          >
+            <Wallet className="w-3.5 h-3.5 text-amber-600" />
+            Pagos por curso
+            <Info className="w-3 h-3 text-slate-400" />
+          </span>
+          <select
+            value={colegioId}
+            onChange={(e) => setColegioId(e.target.value)}
+            className="px-2 py-1 text-[11px] bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-semibold text-slate-800 max-w-[16rem]"
+          >
+            {colegios.map((col) => (
+              <option key={col.id} value={col.id}>
+                {col.nombre} ({col.localidad})
+              </option>
+            ))}
+          </select>
+          <label className="flex items-center gap-1 text-[11px] font-semibold text-slate-600">
+            <span>$ por alumno</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={precioPorAlumno}
+              onChange={(e) => setPrecioPorAlumno(e.target.value)}
+              placeholder="15000"
+              className="w-20 px-2 py-1 text-[11px] bg-white border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-amber-400 font-mono"
+            />
+          </label>
+          <div className="ml-auto flex items-center gap-1.5">
             <button
               type="button"
               onClick={cargarEstadoPagos}
               disabled={cargando}
-              className="px-3 py-1.5 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-600 border border-slate-200 text-xs font-bold rounded-xl shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Actualizar"
+              aria-label="Actualizar"
+              className="p-1.5 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-600 border border-slate-200 rounded-lg transition-colors cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${cargando ? 'animate-spin' : ''}`} />
-              <span>Actualizar</span>
             </button>
             <button
               type="button"
               onClick={handleExportarExcel}
               disabled={alumnos.length === 0}
-              className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
               title="Exporta este listado a un archivo de Excel para compartir con el organizador"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
-              <span>Exportar a Excel</span>
+              <span>Excel</span>
             </button>
           </div>
         </div>
 
         {error && (
-          <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold flex items-center gap-1.5">
+          <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-semibold flex items-center gap-1.5">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        {/* Summary cards: también son el filtro de la tabla */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
-          <button type="button" onClick={() => setFiltro('todos')} className={`p-3 rounded-xl border cursor-pointer transition-all ${filtro === 'todos' ? 'bg-white border-slate-900 ring-2 ring-slate-900' : 'bg-slate-50 border-slate-200 hover:border-slate-400'}`}>
-            <div className="text-lg font-black text-slate-900">{resumen.totalAlumnos}</div>
-            <div className="text-[9px] text-slate-500 font-bold uppercase">Alumnos en el curso · ver todos</div>
+        {/* Resumen: las pastillas también son el filtro de la tabla */}
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <button type="button" onClick={() => setFiltro('todos')} className={`px-2.5 py-1 rounded-full border font-semibold cursor-pointer transition-all ${filtro === 'todos' ? 'bg-slate-900 border-slate-900 text-white' : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-400'}`}>
+            <span className="font-black">{resumen.totalAlumnos}</span> alumnos
           </button>
-          <button type="button" onClick={() => setFiltro('pagados')} className={`p-3 rounded-xl border cursor-pointer transition-all bg-emerald-50 ${filtro === 'pagados' ? 'border-emerald-600 ring-2 ring-emerald-600' : 'border-emerald-200 hover:border-emerald-400'}`}>
-            <div className="text-lg font-black text-emerald-800">{resumen.alumnosPagados}</div>
-            <div className="text-[9px] text-emerald-700 font-bold uppercase">Ya pagaron · ver solo estos</div>
+          <button type="button" onClick={() => setFiltro('pagados')} className={`px-2.5 py-1 rounded-full border font-semibold cursor-pointer transition-all ${filtro === 'pagados' ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-emerald-50 border-emerald-200 text-emerald-800 hover:border-emerald-400'}`}>
+            <span className="font-black">{resumen.alumnosPagados}</span> pagaron
           </button>
-          <button type="button" onClick={() => setFiltro('pendientes')} className={`p-3 rounded-xl border cursor-pointer transition-all bg-amber-50 ${filtro === 'pendientes' ? 'border-amber-600 ring-2 ring-amber-600' : 'border-amber-200 hover:border-amber-400'}`}>
-            <div className="text-lg font-black text-amber-800">{resumen.alumnosFaltantes}</div>
-            <div className="text-[9px] text-amber-700 font-bold uppercase">Todavía faltan · ver solo estos</div>
+          <button type="button" onClick={() => setFiltro('pendientes')} className={`px-2.5 py-1 rounded-full border font-semibold cursor-pointer transition-all ${filtro === 'pendientes' ? 'bg-amber-600 border-amber-600 text-white' : 'bg-amber-50 border-amber-200 text-amber-800 hover:border-amber-400'}`}>
+            <span className="font-black">{resumen.alumnosFaltantes}</span> faltan
           </button>
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200">
-            <div className="text-lg font-black text-slate-900">{formatearMonto(resumen.totalRecaudado)}</div>
-            <div className="text-[9px] text-slate-500 font-bold uppercase">Recaudado</div>
-          </div>
-        </div>
-
-        {precioNumerico > 0 && (
-          <div className="p-3.5 rounded-2xl bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="text-xs">
-              <span className="text-slate-300">Meta del curso ({resumen.totalAlumnos} alumnos × {formatearMonto(precioNumerico)}):</span>{' '}
-              <span className="font-bold">{formatearMonto(meta)}</span>
-            </div>
-            <div className="text-xs">
+          <span className="px-2.5 py-1 rounded-full border border-slate-200 bg-slate-50 font-semibold text-slate-700">
+            <span className="font-black">{formatearMonto(resumen.totalRecaudado)}</span> recaudado
+          </span>
+          {precioNumerico > 0 && (
+            <span
+              className={`px-2.5 py-1 rounded-full font-semibold ${faltaParaLaMeta > 0 ? 'bg-slate-900 text-amber-300' : 'bg-slate-900 text-emerald-300'}`}
+              title={`Meta: ${resumen.totalAlumnos} alumnos × ${formatearMonto(precioNumerico)} = ${formatearMonto(meta)}`}
+            >
               {faltaParaLaMeta > 0 ? (
-                <span className="font-bold text-amber-300">Faltan {formatearMonto(faltaParaLaMeta)} para llegar a la meta</span>
+                <>Meta {formatearMonto(meta)} · faltan {formatearMonto(faltaParaLaMeta)}</>
               ) : (
-                <span className="font-bold text-emerald-300 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Meta alcanzada</span>
+                <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Meta {formatearMonto(meta)} alcanzada</span>
               )}
-            </div>
-          </div>
-        )}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Table */}

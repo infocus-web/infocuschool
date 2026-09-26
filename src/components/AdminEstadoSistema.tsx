@@ -41,6 +41,9 @@ export default function AdminEstadoSistema({ onIrA }: { onIrA?: (tab: 'pedidos' 
   const [error, setError] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [verErrores, setVerErrores] = useState(false);
+  // Auditoría 2026-09-26 ("reducirlo al mínimo"): si todo está en orden se muestra UNA sola pastilla;
+  // las 7 se ven sólo si algo requiere atención o si se tocan para desplegarlas.
+  const [verTodo, setVerTodo] = useState(false);
   const [reportes, setReportes] = useState<ReporteError[]>([]);
   const [reporteAbierto, setReporteAbierto] = useState<string | null>(null);
 
@@ -112,13 +115,23 @@ export default function AdminEstadoSistema({ onIrA }: { onIrA?: (tab: 'pedidos' 
     : [];
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left text-[11px]">
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-left text-[11px]">
       <span className="flex items-center gap-1.5 font-bold text-slate-800">
         <Activity className="h-3.5 w-3.5 text-slate-500" />
         Estado del sistema
       </span>
       {error && <span className="font-semibold text-rose-700">No se pudo leer el estado.</span>}
-      {items.map((item) => (
+      {estado && !verTodo && items.every((item) => item.ok) && (
+        <button
+          type="button"
+          onClick={() => setVerTodo(true)}
+          title={items.map((item) => `${item.etiqueta}: ${item.valor}`).join(' · ')}
+          className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-800 cursor-pointer"
+        >
+          ✓ Todo en orden
+        </button>
+      )}
+      {items.filter((item) => verTodo || !items.every((i) => i.ok) ? verTodo || !item.ok : false).map((item) => (
         <button
           key={item.etiqueta}
           type="button"
@@ -136,6 +149,11 @@ export default function AdminEstadoSistema({ onIrA }: { onIrA?: (tab: 'pedidos' 
           {item.ok ? '✓' : '!'} {item.etiqueta}: {item.valor}
         </button>
       ))}
+      {estado && (verTodo || !items.every((item) => item.ok)) && (
+        <button type="button" onClick={() => setVerTodo((v) => !v)} className="font-semibold text-slate-400 hover:text-slate-700 hover:underline cursor-pointer">
+          {verTodo ? 'ocultar' : 'ver todo'}
+        </button>
+      )}
       <button type="button" onClick={() => { void cargar(); if (verErrores) void cargarReportes(); }} disabled={cargando} className="ml-auto rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 cursor-pointer" aria-label="Actualizar estado">
         <RefreshCw className={`h-3.5 w-3.5 ${cargando ? 'animate-spin' : ''}`} />
       </button>
