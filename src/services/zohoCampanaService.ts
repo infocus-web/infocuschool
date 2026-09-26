@@ -149,10 +149,15 @@ export function parsearCsvDestinatarios(textoCsv: string): DestinatarioCampana[]
     linea
       .split(',')
       .map((valor) => valor.trim().replace(/^"|"$/g, ''));
-  const encabezados = parsearLinea(lineas[0]).map((h) => h.toLowerCase());
-  const idxEmail = encabezados.findIndex((h) => h === 'to' || h === 'email');
-  const idxInstitucion = encabezados.indexOf('institucion');
-  const idxLocalidad = encabezados.indexOf('localidad_partido');
+  // Se aceptan también los nombres de columna más comunes (caso real 25/9: un CSV con
+  // "Nombre_Colegio,Localidad,Email" y BOM de Excel dejaba {{institucion}} vacío en cada correo).
+  const encabezados = parsearLinea(lineas[0].replace(/^\uFEFF/, '')).map((h) =>
+    h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_')
+  );
+  const buscar = (...nombres: string[]) => encabezados.findIndex((h) => nombres.includes(h));
+  const idxEmail = buscar('to', 'email', 'mail', 'correo', 'e-mail');
+  const idxInstitucion = buscar('institucion', 'nombre_colegio', 'colegio', 'nombre', 'escuela', 'nombre_institucion');
+  const idxLocalidad = buscar('localidad_partido', 'localidad', 'partido', 'ciudad', 'zona');
   const idxNivel = encabezados.indexOf('nivel');
   if (idxEmail === -1) return [];
   return lineas.slice(1).map((linea) => {
