@@ -73,6 +73,168 @@ async function reenviarCorreoEntrante(resend: Resend, lector: Resend, email: any
   if (error) throw error;
 }
 
+
+// ==============================================================================
+// Auditoría/pedido 2026-09-26: CONSULTAS DE FAMILIAS POR EMAIL
+// Los correos que las familias mandan a la dirección pública de contacto (contacto@ / familias@
+// retratoescolar.com.ar — la que muestra la web y la que figura como "responder a" en los emails
+// que les manda el sistema) ya no se reenvían a Zoho: entran como una consulta más al panel
+// (Consultas de familias), con la misma revisión de datos + borrador de la IA que el formulario.
+// Si la familia ya tiene una conversación abierta, el correo se suma a esa conversación.
+// Por defecto la IA sólo deja BORRADOR para estos correos; para que responda sola (con las mismas
+// reglas que el formulario) cargar RESPUESTAS_AUTOMATICAS_EMAIL=on en Vercel.
+// Nunca se procesan: respuestas automáticas ("fuera de la oficina"), rebotes, no-reply ni correos
+// que vengan de nuestros propios dominios (evita bucles) — esos siguen reenviándose a Zoho.
+// Excepción útil: si Pablo REENVÍA a mano a familias@ un correo que le llegó a Zoho, se toma el
+// remitente original que figura en el texto reenviado ("De: ..." / "From: ...").
+// ==============================================================================
+function direccionesFamilias(): string[] {
+  const configuradas = String(process.env.DIRECCIONES_FAMILIAS || '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  return configuradas.length > 0 ? configuradas : ['contacto@retratoescolar.com.ar', 'familias@retratoescolar.com.ar'];
+}
+
+function direccionDeCorreo(valor: unknown): string {
+  const texto = String(valor || '').trim();
+  const entre = texto.match(/<([^<>\s]+@[^<>\s]+)>/);
+  return (entre ? entre[1] : texto).trim().toLowerCase();
+}
+
+function nombreDeCorreo(valor: unknown): string {
+  const texto = String(valor || '').trim();
+  const nombre = texto.includes('<') ? texto.slice(0, texto.indexOf('<')).replace(/["']/g, '').trim() : '';
+  return nombre || direccionDeCorreo(texto).split('@')[0] || 'Familia';
+}
+
+const DOMINIOS_PROPIOS = /@(?:[a-z0-9-]+\.)*retratoescolar\.com\.ar$/i;
+
+function esCorreoAutomatico(email: any, remitente: string): boolean {
+  const encabezados: Record<string, string> = Object.fromEntries(
+    Object.entries(email?.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)])
+  );
+  return (
+    (Boolean(encabezados['auto-submitted']) && encabezados['auto-submitted'].toLowerCase() !== 'no') ||
+    Boolean(encabezados['x-autoreply'] || encabezados['x-autorespond']) ||
+    /^(bulk|junk|list)$/i.test(encabezados['precedence'] || '') ||
+    /(no-?reply|mailer-daemon|postmaster|bounce)/i.test(remitente) ||
+    /(respuesta autom|automatic reply|auto.?reply|fuera de la oficina|out of office|ausente|undeliverable|no se pudo entregar|delivery status)/i.test(String(email?.subject || ''))
+  );
+}
+
+// Cuando Pablo reenvía a mano un correo, el remitente original está en el texto reenviado.
+function remitenteOriginalReenviado(texto: string): { email: string; nombre: string } | null {
+  const lineas = texto.split(/\r?\n/);
+  for (const linea of lineas) {
+    const m = linea.match(/^\s*\**\s*(?:De|From)\s*:\s*\**\s*(.+)$/i);
+    if (!m) continue;
+    const dir = direccionDeCorreo(m[1]);
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dir) && !DOMINIOS_PROPIOS.test(dir)) {
+      return { email: dir, nombre: nombreDeCorreo(m[1]) };
+    }
+  }
+  return null;
+}
+
+async function registrarConsultaPorEmail(
+  supabase: SupabaseClient,
+  resend: Resend,
+  lector: Resend,
+  email: any
+): Promise<{ consultaId: string | null; motivo: string }> {
+  const remitenteCrudo = String(email?.from || '');
+  let remitente = direccionDeCorreo(remitenteCrudo);
+  let nombre = nombreDeCorreo(remitenteCrudo);
+  const textoCompleto = String(email?.text || '').trim() || String(email?.html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, ' ').replace(/[ \t]+/g, ' ').trim();
+
+  if (esCorreoAutomatico(email, remitente)) return { consultaId: null, motivo: 'automatico' };
+  if (DOMINIOS_PROPIOS.test(remitente)) {
+    const original = remitenteOriginalReenviado(textoCompleto);
+    if (!original) return { consultaId: null, motivo: 'propio' };
+    remitente = original.email;
+    nombre = original.nombre;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(remitente)) return { consultaId: null, motivo: 'sin-remitente' };
+
+  const contenido = (quitarMensajeCitado(textoCompleto) || textoCompleto || '(correo sin texto)').slice(0, 10000);
+  const asunto = String(email?.subject || 'Consulta por email').replace(/^\s*((re|rv|fw|fwd)\s*:\s*)+/i, '').trim().slice(0, 160) || 'Consulta por email';
+  const cantidadAdjuntos = Array.isArray(email?.attachments) ? email.attachments.length : 0;
+  const notaAdjuntos = cantidadAdjuntos > 0 ? `\n\n[Este correo trae ${cantidadAdjuntos} adjunto(s): se reenviaron a ${CASILLA_REENVIO_ENTRANTE}.]` : '';
+
+  // ¿Conversación abierta de la misma familia (últimos 14 días)? Se suma ahí.
+  const hace14Dias = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: abiertas } = await supabase
+    .from('consultas_familias')
+    .select('id')
+    .ilike('email', remitente.replace(/[%_\\]/g, (c) => `\\${c}`))
+    .neq('estado', 'archivada')
+    .gte('updated_at', hace14Dias)
+    .order('updated_at', { ascending: false })
+    .limit(1);
+
+  let consultaId: string;
+  let esNueva = false;
+  if (abiertas && abiertas.length > 0) {
+    consultaId = abiertas[0].id;
+    const { data: insertados, error } = await supabase.from('consultas_familias_mensajes').upsert({
+      consulta_id: consultaId,
+      direccion: 'entrante',
+      remitente: remitenteCrudo || remitente,
+      destinatario: (Array.isArray(email?.to) && email.to.length > 0 ? email.to.join(', ') : direccionesFamilias()[0]).slice(0, 500),
+      asunto,
+      contenido: contenido + notaAdjuntos,
+      resend_email_id: email?.id,
+      created_at: email?.created_at || new Date().toISOString(),
+    }, { onConflict: 'resend_email_id', ignoreDuplicates: true }).select('id');
+    if (error) throw error;
+    if (!insertados || insertados.length === 0) return { consultaId, motivo: 'duplicado' };
+    await supabase.from('consultas_familias').update({ estado: 'nueva', updated_at: new Date().toISOString() }).eq('id', consultaId);
+  } else {
+    const { data: creada, error } = await supabase.from('consultas_familias').insert({
+      nombre: nombre.slice(0, 120) || 'Familia',
+      email: remitente,
+      asunto,
+      mensaje: (contenido + notaAdjuntos).slice(0, 10000),
+      estado: 'nueva',
+      origen: 'email',
+      resend_email_id: email?.id || null,
+    }).select('id').single();
+    if (error) {
+      // 23505 = el mismo correo ya se registró (Resend reintentó el aviso).
+      if ((error as any).code === '23505') return { consultaId: null, motivo: 'duplicado' };
+      throw error;
+    }
+    consultaId = creada.id;
+    esNueva = true;
+  }
+
+  // Los adjuntos (comprobantes, fotos) no se guardan en el panel: se reenvía el correo a Zoho.
+  if (cantidadAdjuntos > 0) {
+    try {
+      await reenviarCorreoEntrante(resend, lector, email);
+    } catch (errAdj) {
+      console.warn('[Consultas por email] No se pudieron reenviar los adjuntos a Zoho:', errAdj);
+    }
+  }
+
+  // Aviso al fotógrafo, igual que con el formulario de la web (sólo para conversaciones nuevas).
+  if (esNueva) {
+    const aviso = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+      replyTo: remitente,
+      to: [casillaAvisosAdmin()],
+      subject: `Nueva consulta por email: ${asunto}`,
+      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><h2>Nueva consulta de una familia (por email)</h2><p><strong>De:</strong> ${escapeHtml(nombre)} (${escapeHtml(remitente)})</p><div style="padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;white-space:pre-wrap">${escapeHtml(contenido.slice(0, 3000))}</div><p style="font-size:12px;color:#64748b">Respondela desde el panel → Consultas de familias (ahí está el borrador de la IA).</p></div>`,
+    });
+    if (aviso.error) console.error('[Consultas por email] No se pudo enviar el aviso:', aviso.error);
+  }
+
+  const envioAutomaticoEmail = String(process.env.RESPUESTAS_AUTOMATICAS_EMAIL || 'off').trim().toLowerCase() === 'on';
+  await conLimiteDeTiempo(procesarConsultaConIA(supabase, consultaId, { permitirEnvio: envioAutomaticoEmail }), 11000);
+  return { consultaId, motivo: esNueva ? 'nueva' : 'agregada' };
+}
+
 // Resend firma el cuerpo exacto del webhook. Esta ruta debe procesarse como texto
 // antes del parser JSON global para poder verificar que el evento sea auténtico.
 app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json' }), async (req: Request, res: Response) => {
@@ -108,6 +270,21 @@ app.post('/api/webhooks/resend-inbound', express.text({ type: 'application/json'
     const direccionDestino = destinatarios.find((destino) => String(destino).toLowerCase().includes(`@${inboundDomain}`));
     const consultaId = direccionDestino?.match(/consulta-([0-9a-f-]{36})@/i)?.[1];
     if (!consultaId) {
+      // Correos a la dirección pública de las familias (contacto@ / familias@): entran al panel
+      // como consulta (ver registrarConsultaPorEmail). Si no corresponde procesarlos (respuesta
+      // automática, remitente propio), siguen el camino de siempre: reenvío a Zoho.
+      const direccionesDeFamilias = direccionesFamilias();
+      const aFamilias = destinatarios.some((destino) => direccionesDeFamilias.includes(direccionDeCorreo(destino)));
+      if (aFamilias && email) {
+        const supabaseFamilias = getServerSupabase();
+        if (supabaseFamilias) {
+          const resultado = await registrarConsultaPorEmail(supabaseFamilias, resend, lectorInbound, email);
+          if (resultado.consultaId || resultado.motivo === 'duplicado') {
+            return res.json({ success: true, consulta: resultado.consultaId, motivo: resultado.motivo });
+          }
+          if (resultado.motivo === 'automatico') return res.json({ success: true, ignored: true, motivo: 'automatico' });
+        }
+      }
       // Correos a direcciones del dominio principal (fotos@, colegios@, contacto@...): el MX de
       // retratoescolar.com.ar apunta a Resend, que no es una casilla que alguien lea. Se reenvían
       // a la casilla real de Zoho para que no se pierdan (p. ej. comprobantes de transferencia).
@@ -321,6 +498,8 @@ Cómo funciona:
   web). Si paga por transferencia, al terminar el pedido la web le pide subir una foto o captura
   del comprobante ("Subir comprobante"); si ya cerró la página, lo puede subir entrando de nuevo
   al portal. Cuando se confirma la transferencia le llega el email con las fotos.
+- Contacto: formulario "Consultas" de la web o email a contacto@retratoescolar.com.ar (las dos vías
+  llegan al mismo equipo). No hay atención por WhatsApp.
 
 Tu tarea: redactar una respuesta breve, cálida y clara en español rioplatense (tratamiento
 "vos"), para la consulta de una familia que llegó por el formulario web. Contestá solo lo que
@@ -331,7 +510,14 @@ confirmarle ese dato — NUNCA inventes estados de pedidos, fechas o datos que n
 Devolvé SOLO el cuerpo del mensaje, sin saludo final ni firma (eso lo agrega el sistema aparte).
 `.trim();
 
-const resendReplyTo = process.env.RESEND_REPLY_TO_EMAIL || 'infocusfotografiayvideo@gmail.com';
+// Auditoría 2026-09-26: "responder a" de los emails que reciben las familias. Antes era el Gmail
+// del negocio (las respuestas quedaban fuera del panel); ahora es la dirección pública de
+// contacto, que entra al panel como consulta (ver registrarConsultaPorEmail).
+const resendReplyTo = process.env.RESEND_REPLY_TO_EMAIL || 'contacto@retratoescolar.com.ar';
+// Casilla donde le llegan a Pablo los avisos internos (consultas nuevas, comprobantes, errores).
+function casillaAvisosAdmin(): string {
+  return process.env.CONSULTAS_EMAIL || 'infocusfotografiayvideo@gmail.com';
+}
 
 // Lazy client para Supabase con Service Role Key (Backend seguro)
 let serverSupabaseInstance: SupabaseClient | null = null;
@@ -1960,7 +2146,7 @@ app.post('/api/errores/reportar', limitarFrecuencia('errores-reportar', 30, 10 *
 
     const resend = getResendClient();
     if (resend) {
-      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const destino = casillaAvisosAdmin();
       const fallas = Array.isArray(detalle?.eventos)
         ? detalle.eventos
             .slice(-6)
@@ -5121,7 +5307,7 @@ app.post('/api/consultas-familias', limitarFrecuencia('consultas-familias', 40, 
 
     const resend = getResendClient();
     if (resend) {
-      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const destino = casillaAvisosAdmin();
       const detalle = [
         datos.colegio ? `<p><strong>Colegio:</strong> ${escapeHtml(datos.colegio)}</p>` : '',
         datos.numeroPedido ? `<p><strong>Pedido:</strong> ${escapeHtml(datos.numeroPedido)}</p>` : '',
@@ -6543,7 +6729,7 @@ async function registrarAlertaPago(supabase: SupabaseClient, clave: string, mens
     });
     const resend = getResendClient();
     if (resend) {
-      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const destino = casillaAvisosAdmin();
       await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
         to: [destino],
@@ -6945,7 +7131,7 @@ app.post('/api/pagos/comprobante', limitarFrecuencia('comprobante-subir', 30, 10
 
     const resend = getResendClient();
     if (resend) {
-      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      const destino = casillaAvisosAdmin();
       const total = (filas as any[]).reduce((acc: number, f: any) => acc + (Number(f.total) || 0), 0);
       const numeros = filas.map((f: any) => f.pedido_friendly_id).filter(Boolean).join(', ');
       const alumnos = filas.map((f: any) => f.alumno_nombre).filter(Boolean).join(', ');
@@ -8204,6 +8390,7 @@ async function enviarCorreoReservaConfirmada(datos: {
   if (!resend) return { success: false, error: 'RESEND_API_KEY no está configurada.' };
   const resultado = await resend.emails.send({
     from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+    replyTo: resendReplyTo,
     to: [datos.to],
     subject: `Retrato Escolar: ¡Reserva confirmada! ${datos.kitNombre} de ${datos.alumnoNombre} (${datos.pedidoId})`,
     html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a;line-height:1.6">
