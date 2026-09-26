@@ -148,14 +148,26 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
   // con la clave anónima, es justo el acceso que debe seguir funcionando para cualquier
   // visitante). Si la única política de lectura pública que queda ("Permitir lectura publica
   // fotos-web") se llegara a borrar por error, esto lo detecta como RLS bloqueada.
-  const { error: errWebList } = await client.storage.from('fotos-web').list('', { limit: 1 });
-  if (errWebList) {
-    if (errWebList.message?.includes('row-level security') || errWebList.message?.includes('AccessDenied')) {
-      fotosWebStatus = 'rls_blocked';
-    } else {
-      fotosWebStatus = errWebList.message?.includes('not found') ? 'not_found' : 'error';
+  // Auditoría 2026-09-26: se borró la política que permitía LISTAR el bucket con la clave pública
+  // (dejaba bajar todas las muestras de todos los cursos sin código). El bucket sigue siendo
+  // público para servir cada archivo por su URL, así que el chequeo ahora pide un archivo
+  // inexistente: "Object not found" = el bucket existe y responde; "Bucket not found" = falta.
+  try {
+    const { data: urlPrueba } = client.storage.from('fotos-web').getPublicUrl(`_diagnostico/no-existe-${Date.now()}.jpg`);
+    const resPrueba = await fetch(urlPrueba.publicUrl, { method: 'GET', cache: 'no-store' });
+    if (!resPrueba.ok) {
+      const cuerpo = await resPrueba.text().catch(() => '');
+      if (/bucket not found/i.test(cuerpo)) {
+        fotosWebStatus = 'not_found';
+        fotosWebError = 'No existe el bucket fotos-web.';
+      } else if (!/not found|object/i.test(cuerpo)) {
+        fotosWebStatus = 'error';
+        fotosWebError = cuerpo.slice(0, 200) || `HTTP ${resPrueba.status}`;
+      }
     }
-    fotosWebError = errWebList.message;
+  } catch (errWeb: any) {
+    fotosWebStatus = 'error';
+    fotosWebError = errWeb?.message || 'No se pudo consultar el bucket fotos-web.';
   }
 
   // 2. fotos-hd: auditoría 2026-09-09 — este bucket es privado (contiene las fotos originales,
@@ -186,8 +198,10 @@ export async function testSupabaseConnection(): Promise<SupabaseDiagnosticResult
 
   const ok = fotosWebStatus === 'ok' && fotosHdStatus === 'ok';
   let detalles = 'Conexión a Supabase Storage verificada.';
-  if (fotosWebStatus === 'rls_blocked') {
-    detalles = 'Falta la política de lectura pública para fotos-web en el SQL Editor de Supabase.';
+  if (fotosWebStatus === 'not_found') {
+    detalles = 'No existe el bucket fotos-web en Supabase Storage.';
+  } else if (fotosWebStatus === 'error') {
+    detalles = `No se pudo verificar el bucket fotos-web: ${fotosWebError || 'error desconocido'}`;
   } else if (fotosHdStatus === 'error') {
     detalles = 'El servidor no pudo confirmar acceso a fotos-hd — revisá que ADMIN_SESSION_SECRET y SUPABASE_SERVICE_ROLE_KEY estén configuradas, o iniciá sesión de admin de nuevo.';
   }

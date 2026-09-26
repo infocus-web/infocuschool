@@ -337,9 +337,13 @@ const resendReplyTo = process.env.RESEND_REPLY_TO_EMAIL || 'infocusfotografiayvi
 let serverSupabaseInstance: SupabaseClient | null = null;
 function getServerSupabase(): SupabaseClient | null {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://ntkqypxvrljuihbxdrtx.supabase.co';
-  // Preferir la Service Role Key si existe para saltar RLS en operaciones administrativas
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  // Auditoría 2026-09-26 (B5): antes, si faltaba la Service Role Key, se caía en silencio a la
+  // clave anónima — el servidor seguía "andando" pero cada consulta devolvía vacío o fallaba por
+  // RLS, con errores engañosos. Ahora exige la Service Role Key: sin ella, el servidor responde
+  // "Supabase no configurado" y el problema se ve de inmediato.
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
+    console.error('[Supabase] Falta SUPABASE_SERVICE_ROLE_KEY en las variables de entorno del servidor.');
     return null;
   }
   if (!serverSupabaseInstance) {
@@ -404,6 +408,15 @@ function getNaveCredenciales(): { clientId: string; clientSecret: string; posId:
   const posId = process.env.NAVE_POS_ID?.trim();
   if (!clientId || !clientSecret || !posId) return null;
   return { clientId, clientSecret, posId };
+}
+
+// Auditoría 2026-09-26 (C1, CRÍTICO): Nave sólo cobra de verdad en producción. En sandbox acepta
+// tarjetas de PRUEBA y devuelve pagos "aprobados" — antes el portal sólo escondía el botón, pero
+// los endpoints seguían vivos: alguien podía crear la intención a mano, pagar con una tarjeta de
+// prueba y el webhook/conciliación dejaba el pedido "pagado" de verdad (HD gratis + kit impreso al
+// laboratorio). Ahora TODO lo de Nave (crear intención, webhook, conciliación) exige producción.
+function naveHabilitado(): boolean {
+  return getNaveEntorno() === 'production' && Boolean(getNaveCredenciales());
 }
 
 // Cache en memoria del access_token de Nave (dura 24hs según "expires_in") — no hace falta
@@ -1800,6 +1813,11 @@ app.post('/api/admin/pedidos/:id/estado', requireAdminAuth, async (req, res) => 
     if (nuevoEstado) {
       updates.estado = nuevoEstado;
     }
+    // Auditoría 2026-09-26 (B2): queda registrado cuándo se aprobó un pago A MANO desde el panel
+    // (transferencia/efectivo), para poder distinguirlo de uno confirmado por la pasarela.
+    if (nuevoEstado === 'pagado') {
+      updates.aprobado_manual_at = new Date().toISOString();
+    }
 
     if (Object.keys(updates).length === 1) {
       // Llegó un estado intermedio que hoy no tiene columna propia en la base (ej: estados de
@@ -2143,8 +2161,8 @@ app.post('/api/admin/fotos/regenerar-miniaturas', requireAdminAuth, async (req: 
 
         const buffer = Buffer.from(await archivo.arrayBuffer());
         const miniaturaBuffer = await sharp(buffer)
-          .resize(500, 500, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 82 })
+          .resize(320, 320, { fit: 'inside', withoutEnlargement: true }) // M7 (26/9): 320 px, antes 500
+          .jpeg({ quality: 80 })
           .toBuffer();
 
         const nombreArchivo = fila.storage_path.split('/').pop() || `${fila.id}.jpg`;
@@ -2395,6 +2413,26 @@ app.get('/api/admin/fotos/:id/original', requireAdminAuth, async (req: Request, 
 });
 
 // Eliminar foto protegida
+// Ruta dentro del bucket a partir de la URL pública guardada (".../object/public/fotos-web/<ruta>?v=...").
+function rutaEnBucketDesdeUrl(valor: unknown, bucket: string): string | null {
+  const texto = String(valor || '').trim();
+  if (!texto) return null;
+  const marca = `/object/public/${bucket}/`;
+  const indice = texto.indexOf(marca);
+  const ruta = indice >= 0 ? texto.slice(indice + marca.length) : texto.startsWith('http') ? '' : texto;
+  const sinQuery = ruta.split('?')[0];
+  try {
+    return decodeURIComponent(sinQuery) || null;
+  } catch {
+    return sinQuery || null;
+  }
+}
+
+// Auditoría 2026-09-26 (M8 + M9): borrar una foto ahora borra, del lado del servidor, sus TRES
+// archivos (original HD, muestra con marca de agua y miniatura). Antes el panel borraba sólo la
+// miniatura y el HD: la muestra ampliada quedaba publicada para siempre (en la base había 669
+// archivos públicos para 18 fotos del catálogo). Además, no se deja borrar una foto que está en un
+// pedido ya cobrado (le rompía la descarga HD a esa familia), salvo que se confirme con forzar=1.
 app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2403,10 +2441,50 @@ app.delete('/api/admin/fotos/:id', requireAdminAuth, async (req, res) => {
       return res.status(500).json({ success: false, error: 'Supabase no configurado' });
     }
 
+    const { data: foto, error: errorFoto } = await supabase
+      .from('fotos')
+      .select('id, colegio_id, codigo_curso, storage_path, preview_path, thumb_path')
+      .eq('id', id)
+      .maybeSingle();
+    if (errorFoto) throw errorFoto;
+    if (!foto) return res.json({ success: true });
+
+    const forzar = req.query.forzar === '1' || (req.body && (req.body as any).forzar === true);
+    if (!forzar && foto.colegio_id && foto.codigo_curso) {
+      const { data: pedidosCurso } = await supabase
+        .from('pedidos')
+        .select('pedido_friendly_id, alumno_nombre, fotos_seleccionadas')
+        .eq('colegio_id', foto.colegio_id)
+        .eq('curso_codigo', foto.codigo_curso)
+        .in('estado', ['pagado', 'entregado']);
+      const usanLaFoto = (pedidosCurso || []).filter((p: any) => {
+        const sel = p.fotos_seleccionadas || {};
+        return [sel.individualId, sel.grupalId, sel.docenteId].includes(id) || (Array.isArray(sel.otrasIds) && sel.otrasIds.includes(id));
+      });
+      if (usanLaFoto.length > 0) {
+        return res.status(409).json({
+          success: false,
+          enUso: true,
+          error: `Esta foto está en ${usanLaFoto.length} pedido(s) ya pagado(s) (${usanLaFoto.map((p: any) => `${p.pedido_friendly_id || ''} ${p.alumno_nombre || ''}`.trim()).slice(0, 5).join(', ')}). Si la borrás, esas familias pierden la descarga HD. Reemplazala primero o confirmá el borrado forzado.`,
+        });
+      }
+    }
+
+    const rutasWeb = Array.from(new Set([foto.preview_path, foto.thumb_path].map((v) => rutaEnBucketDesdeUrl(v, 'fotos-web')).filter(Boolean))) as string[];
+    const avisos: string[] = [];
+    if (rutasWeb.length > 0) {
+      const { error: errWeb } = await supabase.storage.from('fotos-web').remove(rutasWeb);
+      if (errWeb) avisos.push(`muestras: ${errWeb.message}`);
+    }
+    if (foto.storage_path) {
+      const { error: errHd } = await supabase.storage.from('fotos-hd').remove([foto.storage_path]);
+      if (errHd) avisos.push(`original HD: ${errHd.message}`);
+    }
+
     const { error } = await supabase.from('fotos').delete().eq('id', id);
     if (error) throw error;
 
-    return res.json({ success: true });
+    return res.json({ success: true, advertencia: avisos.length > 0 ? `Foto quitada del catálogo, pero no se pudieron borrar algunos archivos (${avisos.join('; ')}).` : undefined });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al eliminar foto' });
   }
@@ -2468,6 +2546,14 @@ app.delete('/api/admin/fotos', requireAdminAuth, async (req: Request, res: Respo
 
 const BUCKETS_FOTOS_PERMITIDOS = new Set(['fotos-web', 'fotos-hd']);
 
+// Ver B6 (auditoría 2026-09-26): el panel sólo maneja archivos de fotos ("2026/colegio/curso/...")
+// y el archivo de prueba del diagnóstico. Nada de "..", ni de los .zip de pedidos.
+function rutaPermitidaParaPanel(ruta: string): boolean {
+  const limpia = String(ruta || '').trim();
+  if (!limpia || limpia.includes('..') || limpia.startsWith('/')) return false;
+  return /^\d{4}\//.test(limpia) || limpia.startsWith('_diagnostico/');
+}
+
 // Auditoría 2026-09-23 (bug real): storage.list() sólo devuelve el primer nivel de una carpeta —
 // las subcarpetas vienen como entradas sin `id`. Las fotos se guardan en "2026/<curso>/originales/
 // ...", así que listar la raíz devolvía sólo la carpeta "2026" y el vaciado de bucket terminaba
@@ -2510,6 +2596,12 @@ app.post('/api/admin/storage/signed-upload-url', requireAdminAuth, async (req: R
     if (!rutaArchivo || typeof rutaArchivo !== 'string') {
       return res.status(400).json({ success: false, error: 'Falta la ruta del archivo' });
     }
+    // Auditoría 2026-09-26 (B6): sólo se sube a carpetas de fotos (AAAA/...) o de diagnóstico. Antes
+    // se podía pisar cualquier archivo del bucket privado, incluidos los .zip de descarga de los
+    // pedidos (zips-pedidos/), que arma sólo el servidor.
+    if (!rutaPermitidaParaPanel(rutaArchivo)) {
+      return res.status(400).json({ success: false, error: 'Ruta de archivo no permitida' });
+    }
     const supabase = getServerSupabase();
     if (!supabase) {
       return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
@@ -2533,7 +2625,7 @@ app.post('/api/admin/storage/eliminar-archivos', requireAdminAuth, async (req: R
     if (!Array.isArray(paths) || paths.length === 0) {
       return res.json({ success: true, eliminados: 0 });
     }
-    const rutasValidas = paths.filter((p: any) => typeof p === 'string' && p.trim()).slice(0, 200);
+    const rutasValidas = paths.filter((p: any) => typeof p === 'string' && p.trim() && rutaPermitidaParaPanel(p)).slice(0, 200);
     if (rutasValidas.length === 0) {
       return res.json({ success: true, eliminados: 0 });
     }
@@ -2555,6 +2647,67 @@ app.post('/api/admin/storage/eliminar-archivos', requireAdminAuth, async (req: R
 // DELETE /api/admin/fotos — vacía un bucket entero (potencialmente todas las fotos HD o web del
 // negocio) sin más confirmación que la sesión de admin. Se agrega la misma frase de seguridad
 // que usa "Cerrar año", específica del bucket para evitar confundir cuál se va a vaciar.
+// Auditoría 2026-09-26 (M8): limpieza de archivos huérfanos — fotos que ya no están en el catálogo
+// (muestras públicas que siguen accesibles por URL, originales HD sueltos) y .zip de descarga de
+// pedidos que no están cobrados (pruebas, cancelados, reembolsados: su link firmado seguía
+// funcionando hasta 90 días). Por defecto SOLO cuenta (simulación); con {"aplicar": true} borra.
+app.post('/api/admin/storage/limpiar-huerfanos', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(500).json({ success: false, error: 'Supabase no configurado' });
+    const aplicar = req.body?.aplicar === true;
+
+    const fotos = await traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('fotos').select('storage_path, preview_path, thumb_path').order('id').range(desde, hasta)
+    );
+    const referenciadasWeb = new Set<string>();
+    const referenciadasHd = new Set<string>();
+    for (const f of fotos) {
+      for (const v of [f.preview_path, f.thumb_path]) {
+        const ruta = rutaEnBucketDesdeUrl(v, 'fotos-web');
+        if (ruta) referenciadasWeb.add(ruta);
+      }
+      if (f.storage_path) referenciadasHd.add(String(f.storage_path));
+    }
+    const pedidosCobrados = await traerTodasLasFilas<any>((desde, hasta) =>
+      supabase.from('pedidos').select('id, pedido_friendly_id').in('estado', ['pagado', 'entregado']).order('id').range(desde, hasta)
+    );
+    const zipsValidos = new Set<string>();
+    for (const p of pedidosCobrados) {
+      zipsValidos.add(nombreZipHDPedido(p));
+      if (p.pedido_friendly_id) zipsValidos.add(`zips-pedidos/${p.pedido_friendly_id}.zip`);
+    }
+
+    const archivosWeb = await listarArchivosDeBucket(supabase, 'fotos-web');
+    const archivosHd = await listarArchivosDeBucket(supabase, 'fotos-hd');
+    const huerfanosWeb = archivosWeb.filter((r) => /^\d{4}\//.test(r) && !referenciadasWeb.has(r));
+    const huerfanosHd = archivosHd.filter((r) => /^\d{4}\//.test(r) && !referenciadasHd.has(r));
+    const zipsHuerfanos = archivosHd.filter((r) => r.startsWith('zips-pedidos/') && !zipsValidos.has(r));
+
+    let borrados = 0;
+    if (aplicar) {
+      for (const [bucket, rutas] of [['fotos-web', huerfanosWeb], ['fotos-hd', [...huerfanosHd, ...zipsHuerfanos]]] as const) {
+        for (const lote of enLotes([...rutas], 100)) {
+          const { error } = await supabase.storage.from(bucket).remove(lote);
+          if (error) throw error;
+          borrados += lote.length;
+        }
+      }
+    }
+    return res.json({
+      success: true,
+      aplicado: aplicar,
+      muestrasPublicasHuerfanas: huerfanosWeb.length,
+      originalesHdHuerfanos: huerfanosHd.length,
+      zipsSinPedidoCobrado: zipsHuerfanos.length,
+      borrados,
+    });
+  } catch (err: any) {
+    console.error('Error al limpiar archivos huérfanos:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Error al limpiar archivos huérfanos' });
+  }
+});
+
 app.post('/api/admin/storage/limpiar-bucket', requireAdminAuth, async (req: Request, res: Response) => {
   try {
     const { bucket, prefix, confirmacion } = req.body || {};
@@ -6249,6 +6402,34 @@ async function registrarEnvioCorreoHD(
  * esta auditoría. El fotógrafo puede reintentarlo a mano una vez resuelto lo que haya fallado
  * (botón "Reenviar Email HD" en el panel de Laboratorio, que primero reintenta armar el .zip).
  */
+// Auditoría 2026-09-26 (C2, CRÍTICO): llave de acceso a un pedido para la familia que lo creó.
+// Antes, /api/pedidos/:id/status devolvía el link de descarga HD a cualquiera que tuviera el UUID
+// del pedido — y /api/pedidos/existente se lo daba a cualquiera que supiera colegio, curso y nombre
+// del chico. Ahora el link sólo sale acompañado de esta llave: un HMAC del id del pedido (o del
+// grupo de pago) con un secreto del servidor. Se le entrega únicamente a quien crea el pedido (en
+// la respuesta de /api/pedidos/crear, /crear-multiple y /api/reservas/crear, y en la URL de vuelta
+// de la pasarela), así que nadie más puede fabricarla. Si la familia la pierde (otro dispositivo),
+// el link le llega igual por email y lo puede pedir de nuevo desde "Seguimiento de pedido".
+function tokenAccesoPedido(referencia: string | null | undefined): string | null {
+  const secreto = process.env.PEDIDOS_ACCESO_SECRET?.trim() || getAdminSessionSecret();
+  if (!secreto || !referencia) return null;
+  return crypto.createHmac('sha256', secreto).update(`acceso-pedido:${referencia}`).digest('base64url').slice(0, 32);
+}
+
+function tokenAccesoValido(token: unknown, referencias: (string | null | undefined)[]): boolean {
+  if (typeof token !== 'string' || !token) return false;
+  return referencias.some((referencia) => {
+    const esperado = tokenAccesoPedido(referencia);
+    return Boolean(esperado) && compararTimingSafe(token, esperado as string);
+  });
+}
+
+// Auditoría 2026-09-26 (A4): el link de descarga HD sólo se entrega si el pedido está cobrado. Un
+// pedido cancelado (rechazo, contracargo, reembolso) o todavía sin pagar nunca lo devuelve.
+function pedidoHabilitaDescarga(estado: unknown): boolean {
+  return estado === 'pagado' || estado === 'entregado';
+}
+
 function nombreZipHDPedido(pedido: { id: string }): string {
   return `zips-pedidos/${pedido.id}.zip`;
 }
@@ -6337,23 +6518,63 @@ async function obtenerPedidosPendientesParaCobro(
 }
 
 /**
+ * Auditoría 2026-09-26 (M2): alerta de pagos para el panel. Antes, un pago con monto insuficiente
+ * o un posible pago duplicado sólo dejaba un console.error que nadie ve: la familia pagaba y no
+ * recibía nada, sin que Pablo se enterara. Ahora queda un reporte en "Estado del sistema →
+ * Errores reportados" (tabla reportes_errores) y llega un email. `clave` evita repetir la misma
+ * alerta en cada vuelta del control automático (cada 10 minutos).
+ */
+async function registrarAlertaPago(supabase: SupabaseClient, clave: string, mensaje: string, detalle: Record<string, any> = {}): Promise<void> {
+  try {
+    console.error(`[Pagos][ALERTA] ${mensaje}`, detalle);
+    const { data: existentes } = await supabase
+      .from('reportes_errores')
+      .select('id')
+      .eq('estado', 'nuevo')
+      .eq('detalle->>clave', clave)
+      .limit(1);
+    if (existentes && existentes.length > 0) return;
+    const codigo = `PAGO-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+    await supabase.from('reportes_errores').insert({
+      codigo,
+      origen: 'admin',
+      mensaje: mensaje.slice(0, 1000),
+      detalle: recortarJson({ clave, tipo: 'alerta_pago', ...detalle }, 20000),
+    });
+    const resend = getResendClient();
+    if (resend) {
+      const destino = process.env.CONSULTAS_EMAIL || resendReplyTo;
+      await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>',
+        to: [destino],
+        subject: `⚠️ Revisar pago ${codigo}: ${mensaje.slice(0, 90)}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#0f172a"><h2>Hay un pago para revisar a mano</h2><p>${escapeHtml(mensaje)}</p><pre style="white-space:pre-wrap;font-size:12px;background:#f8fafc;padding:10px;border-radius:8px">${escapeHtml(JSON.stringify(detalle, null, 2)).slice(0, 4000)}</pre><p style="font-size:12px;color:#64748b">También figura en el panel → Estado del sistema → Errores reportados (código ${escapeHtml(codigo)}).</p></div>`,
+      });
+    }
+  } catch (err) {
+    console.error('[Pagos] No se pudo registrar la alerta de pago:', err);
+  }
+}
+
+/**
  * Auditoría 2026-09-23 (defensa en profundidad): antes de dar por pagados los pedidos de una
  * referencia, se compara lo que efectivamente cobró la pasarela contra la suma de los `total`
- * guardados. Si se cobró menos (con $1 de tolerancia por redondeo), NO se marca como pagado y
- * queda un error en el log para revisarlo a mano.
+ * guardados. Si se cobró menos (con $1 de tolerancia por redondeo), NO se marca como pagado.
+ * Auditoría 2026-09-26 (C3, CRÍTICO): antes un monto ilegible (NaN) SALTEABA el control — y la
+ * conciliación de Nave pasaba siempre NaN, así que se podía pagar un carrito de $15.000, sumarle
+ * reservas al mismo grupo y quedar todo pagado. Ahora un monto ilegible nunca da el pago por
+ * bueno: queda una alerta para revisarlo a mano.
  */
 async function montoCubrePedidos(supabase: SupabaseClient, columna: 'id' | 'grupo_pago_id', valor: string, montoPagado: number): Promise<boolean> {
-  if (!Number.isFinite(montoPagado)) {
-    // La pasarela no informó el monto en el formato esperado: no se bloquea el pago (el monto de
-    // la intención/preferencia ya lo fijó el servidor desde la base), pero queda registrado.
-    console.warn(`[Pagos] No se pudo leer el monto cobrado para ${columna}=${valor}; se omite el control de monto.`);
-    return true;
-  }
   const { data } = await supabase.from('pedidos').select('total').eq(columna, valor).neq('estado', 'pagado');
   if (!data || data.length === 0) return true; // nada pendiente con esa referencia: el update posterior no toca nada
   const esperado = data.reduce((acc: number, p: any) => acc + (Number(p.total) || 0), 0);
+  if (!Number.isFinite(montoPagado)) {
+    await registrarAlertaPago(supabase, `monto-ilegible:${valor}`, `No se pudo leer el monto cobrado para ${columna}=${valor} (vale $${esperado}). No se marcó como pagado: verificá el pago en la pasarela y aprobalo a mano si corresponde.`, { referencia: valor, esperado });
+    return false;
+  }
   if (montoPagado + 1 < esperado) {
-    console.error(`[Pagos] MONTO INSUFICIENTE para ${columna}=${valor}: se cobró ${montoPagado} y el pedido vale ${esperado}. No se marca como pagado — revisar a mano.`);
+    await registrarAlertaPago(supabase, `monto-insuficiente:${valor}`, `Pago con monto insuficiente para ${columna}=${valor}: se cobró $${montoPagado} y el pedido vale $${esperado}. No se marcó como pagado — revisar a mano (¿reembolso o diferencia?).`, { referencia: valor, esperado, montoPagado });
     return false;
   }
   return true;
@@ -6364,6 +6585,10 @@ async function montoCubrePedidos(supabase: SupabaseClient, columna: 'id' | 'grup
  * grupo_pago_id de un carrito multi-hijo), sólo si el monto cobrado alcanza, y devuelve SOLO las
  * filas que pasaron a "pagado" en esta llamada (con los datos de la familia para el correo).
  * Idempotente: un segundo llamado con la misma referencia devuelve [] y no hace nada.
+ * Auditoría 2026-09-26 (A1/M1): un mismo id de pago de la pasarela no puede pagar dos pedidos
+ * distintos (se rechaza y queda alerta), y si llega un pago aprobado DISTINTO para un pedido que
+ * ya estaba pagado (pago doble: MP + Nave, o MP después de aprobar la transferencia), queda una
+ * alerta para reembolsarlo.
  */
 async function marcarReferenciaComoPagada(
   supabase: SupabaseClient,
@@ -6373,6 +6598,22 @@ async function marcarReferenciaComoPagada(
 ): Promise<any[]> {
   const { data: individual } = await supabase.from('pedidos').select('id').eq('id', referencia).limit(1);
   const columna: 'id' | 'grupo_pago_id' = individual && individual.length > 0 ? 'id' : 'grupo_pago_id';
+
+  const columnaPago = extras.mp_payment_id ? 'mp_payment_id' : extras.nave_payment_id ? 'nave_payment_id' : null;
+  const idPago = columnaPago ? String(extras[columnaPago]) : null;
+  if (columnaPago && idPago) {
+    const { data: usadoPor } = await supabase
+      .from('pedidos')
+      .select('id, grupo_pago_id')
+      .eq(columnaPago, idPago)
+      .limit(20);
+    const ajenos = (usadoPor || []).filter((p: any) => p.id !== referencia && p.grupo_pago_id !== referencia);
+    if (ajenos.length > 0) {
+      await registrarAlertaPago(supabase, `pago-reusado:${idPago}`, `El pago ${idPago} (${columnaPago}) ya está asignado a otro pedido y se intentó usar para ${referencia}. No se marcó como pagado.`, { referencia, idPago, pedidosQueYaLoTienen: ajenos.map((p: any) => p.id) });
+      return [];
+    }
+  }
+
   if (!(await montoCubrePedidos(supabase, columna, referencia, montoPagado))) return [];
   const { data, error } = await supabase
     .from('pedidos')
@@ -6385,9 +6626,41 @@ async function marcarReferenciaComoPagada(
     return [];
   }
   if (!data || data.length === 0) {
+    // ¿Pago doble? La referencia ya estaba pagada, pero con OTRO id de pago (o sin id de pasarela:
+    // transferencia/efectivo aprobados a mano) — la familia pagó dos veces.
+    if (columnaPago && idPago) {
+      const { data: yaPagadas } = await supabase
+        .from('pedidos')
+        .select('id, pedido_friendly_id, estado, metodo_pago, mp_payment_id, nave_payment_id, total')
+        .eq(columna, referencia)
+        .in('estado', ['pagado', 'entregado']);
+      const conOtroPago = (yaPagadas || []).filter((p: any) => String(p[columnaPago] || '') !== idPago);
+      if (conOtroPago.length > 0) {
+        await registrarAlertaPago(supabase, `pago-doble:${idPago}`, `Posible PAGO DOBLE: llegó el pago aprobado ${idPago} (${columnaPago}) para ${conOtroPago.map((p: any) => p.pedido_friendly_id || p.id).join(', ')}, que ya estaba pagado por otro medio. Revisá y reembolsá el pago que sobra.`, { referencia, idPago, pedidos: conOtroPago });
+      }
+    }
     console.log(`[Pagos] Referencia ${referencia}: nada para actualizar (no existe o ya estaba pagada).`);
   }
   return data || [];
+}
+
+// Lee el monto de un objeto de Nave (pago o intención). La forma exacta de la respuesta no está
+// garantizada en la documentación relevada, así que se prueban las variantes conocidas; si
+// ninguna da un número, devuelve NaN (y montoCubrePedidos NO da el pago por bueno).
+function leerMontoNave(obj: any): number {
+  const candidatos = [
+    obj?.transactions?.[0]?.amount?.value,
+    obj?.transaction?.amount?.value,
+    obj?.amount?.value,
+    obj?.amount,
+    obj?.total_amount?.value,
+    obj?.payment_request?.transactions?.[0]?.amount?.value,
+  ];
+  for (const c of candidatos) {
+    const n = typeof c === 'string' || typeof c === 'number' ? Number(c) : NaN;
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return NaN;
 }
 
 async function generarYSubirZipHDParaPedido(supabase: SupabaseClient, pedido: any): Promise<string | null> {
@@ -6643,6 +6916,23 @@ app.post('/api/pagos/comprobante', limitarFrecuencia('comprobante-subir', 30, 10
     if (buffer.length === 0 || buffer.length > COMPROBANTE_MAX_BYTES) {
       return res.status(400).json({ success: false, error: 'El archivo es muy grande (máximo 2,5 MB). Probá con una captura de pantalla del comprobante.' });
     }
+    // Auditoría 2026-09-26 (B3): el tipo lo declaraba el navegador y no se revisaba el contenido
+    // (el archivo va adjunto al email del panel). Ahora se controla la "firma" real del archivo.
+    const cabecera = buffer.subarray(0, 16);
+    const firmaValida =
+      (extension === 'jpg' && cabecera[0] === 0xff && cabecera[1] === 0xd8 && cabecera[2] === 0xff) ||
+      (extension === 'png' && cabecera.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) ||
+      (extension === 'webp' && cabecera.subarray(0, 4).toString('latin1') === 'RIFF' && cabecera.subarray(8, 12).toString('latin1') === 'WEBP') ||
+      ((extension === 'heic' || extension === 'heif') && cabecera.subarray(4, 8).toString('latin1') === 'ftyp') ||
+      (extension === 'pdf' && cabecera.subarray(0, 5).toString('latin1') === '%PDF-');
+    if (!firmaValida) {
+      return res.status(400).json({ success: false, error: 'El archivo no parece ser una imagen o PDF válido. Subí una foto o captura del comprobante.' });
+    }
+    // Un comprobante cada 2 minutos por pago: evita llenar la casilla del panel con reenvíos.
+    const ultimoSubido = filas.map((f: any) => Date.parse(f.comprobante_subido_at || '')).filter(Number.isFinite).sort((x, y) => y - x)[0];
+    if (ultimoSubido && Date.now() - ultimoSubido < 2 * 60 * 1000) {
+      return res.status(429).json({ success: false, error: 'Ya recibimos un comprobante hace un momento. Si te equivocaste de archivo, esperá 2 minutos y volvé a subirlo.' });
+    }
     const ruta = `${referencia}/${Date.now()}.${extension}`;
     const { error: errorSubida } = await supabase.storage.from('comprobantes').upload(ruta, buffer, { contentType: tipo, upsert: false });
     if (errorSubida) throw errorSubida;
@@ -6694,7 +6984,7 @@ app.get('/api/admin/pedidos/:id/comprobante', requireAdminAuth, async (req: Requ
 // de producción y NAVE_ENVIRONMENT=production vuelve a aparecer solo.
 app.get('/api/pagos/medios', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'public, max-age=60');
-  res.json({ success: true, nave: getNaveEntorno() === 'production' && Boolean(getNaveCredenciales()) });
+  res.json({ success: true, nave: naveHabilitado() });
 });
 
 // Diagnóstico de Nave (25/9, para pasar de sandbox a producción): prueba las credenciales cargadas
@@ -6759,7 +7049,7 @@ app.all('/api/cron/conciliar-pagos', async (req: Request, res: Response) => {
     vistos.add(clave);
     if (Date.now() - inicio > 45000) break; // margen dentro del límite de 60 s de la función
     try {
-      const estado = await conciliarPagoPendiente(supabase, fila);
+      const estado = await conciliarPagoPendiente(supabase, fila, { forzar: true });
       revisados += 1;
       if (estado === 'pagado' && fila.estado !== 'pagado') pagados += 1;
     } catch (err) {
@@ -6795,6 +7085,15 @@ app.all('/api/cron/reintentar-hd', async (req: Request, res: Response) => {
 // Storage por algún motivo, se devuelve tal cual el link guardado como último recurso.
 async function refirmarLinkDescargaHDSiExiste(supabase: SupabaseClient, pedido: { id: string; pedido_friendly_id?: string | null; link_descarga_hd?: string | null }): Promise<string | undefined> {
   if (!pedido?.link_descarga_hd) return undefined;
+  // Auditoría 2026-09-26 (B1): antes se firmaba un link nuevo (y se escribía la fila) en CADA
+  // consulta de estado. Ahora sólo si al link guardado le quedan menos de 30 días.
+  try {
+    const token = new URL(pedido.link_descarga_hd).searchParams.get('token') || '';
+    const payload = JSON.parse(Buffer.from(token.split('.')[1] || '', 'base64url').toString('utf8'));
+    if (Number(payload?.exp) * 1000 - Date.now() > 30 * 24 * 60 * 60 * 1000) return pedido.link_descarga_hd;
+  } catch {
+    /* link con formato inesperado: se refirma */
+  }
   try {
     // Primero el nombre nuevo (por UUID, ver nombreZipHDPedido). Los .zip generados antes del
     // 23/9/2026 quedaron con el nombre viejo (número amigable) — se usa sólo como respaldo, y
@@ -6999,6 +7298,10 @@ app.post('/api/admin/pedidos/:id/generar-zip-hd', requireAdminAuth, async (req: 
       .maybeSingle();
     if (error) throw error;
     if (!pedido) return res.status(404).json({ success: false, error: 'Pedido no encontrado' });
+    // Auditoría 2026-09-26 (A4): el .zip HD (y su link) sólo se arma para pedidos cobrados.
+    if (!pedidoHabilitaDescarga(pedido.estado)) {
+      return res.status(409).json({ success: false, error: 'Este pedido no está pagado: aprobá el pago antes de generar la descarga HD.' });
+    }
 
     const link = await generarYSubirZipHDParaPedido(supabase, pedido);
     if (!link) {
@@ -7191,6 +7494,10 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
     const protocoloFinal = esLocal ? req.protocol : 'https';
     const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
     const preference = new Preference(mpConfig);
+    // Llave de acceso del pedido (ver tokenAccesoPedido): viaja en la URL de vuelta para que el
+    // portal pueda mostrar la descarga al volver del pago.
+    const llave = tokenAccesoPedido(String(pedidoId));
+    const sufijoLlave = llave ? `&t=${llave}` : '';
 
     const preferenceData = {
       body: {
@@ -7212,14 +7519,20 @@ app.post('/api/mercadopago/crear-preferencia', limitarFrecuencia('crear-preferen
           },
         },
         back_urls: {
-          success: `${appUrl}/?mp_status=approved&pedido_id=${pedidoId}`,
-          failure: `${appUrl}/?mp_status=rejected&pedido_id=${pedidoId}`,
-          pending: `${appUrl}/?mp_status=pending&pedido_id=${pedidoId}`,
+          success: `${appUrl}/?mp_status=approved&pedido_id=${pedidoId}${sufijoLlave}`,
+          failure: `${appUrl}/?mp_status=rejected&pedido_id=${pedidoId}${sufijoLlave}`,
+          pending: `${appUrl}/?mp_status=pending&pedido_id=${pedidoId}${sufijoLlave}`,
         },
         auto_return: 'approved',
         external_reference: pedidoId,
         notification_url: `${appUrl}/api/mercadopago/webhook`,
         statement_descriptor: 'RETRATO ESCOLAR',
+        // Auditoría 2026-09-26 (M1): el link de pago vence a los 3 días. Antes no vencía nunca:
+        // la familia podía pagarlo después de haber pagado por otro medio (pago doble). Si vence,
+        // el portal genera uno nuevo con el mismo pedido.
+        expires: true,
+        expiration_date_from: new Date(Date.now() - 60 * 1000).toISOString(),
+        expiration_date_to: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
       },
     };
 
@@ -7305,6 +7618,8 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
     const protocoloFinal = esLocal ? req.protocol : 'https';
     const appUrl = (process.env.APP_URL || `${protocoloFinal}://${hostDetectado}`).replace(/\/+$/, '');
     const preference = new Preference(mpConfig);
+    const llave = tokenAccesoPedido(String(grupoPagoId));
+    const sufijoLlave = llave ? `&t=${llave}` : '';
 
     const preferenceData = {
       body: {
@@ -7315,14 +7630,20 @@ app.post('/api/mercadopago/crear-preferencia-multiple', limitarFrecuencia('crear
           phone: { number: tutorTelefono || '' },
         },
         back_urls: {
-          success: `${appUrl}/?mp_status=approved&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
-          failure: `${appUrl}/?mp_status=rejected&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
-          pending: `${appUrl}/?mp_status=pending&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
+          success: `${appUrl}/?mp_status=approved&grupo_pago_id=${grupoPagoId}${sufijoReserva}${sufijoLlave}`,
+          failure: `${appUrl}/?mp_status=rejected&grupo_pago_id=${grupoPagoId}${sufijoReserva}${sufijoLlave}`,
+          pending: `${appUrl}/?mp_status=pending&grupo_pago_id=${grupoPagoId}${sufijoReserva}${sufijoLlave}`,
         },
         auto_return: 'approved',
         external_reference: grupoPagoId,
         notification_url: `${appUrl}/api/mercadopago/webhook`,
         statement_descriptor: 'RETRATO ESCOLAR',
+        // Auditoría 2026-09-26 (M1): el link de pago vence a los 3 días. Antes no vencía nunca:
+        // la familia podía pagarlo después de haber pagado por otro medio (pago doble). Si vence,
+        // el portal genera uno nuevo con el mismo pedido.
+        expires: true,
+        expiration_date_from: new Date(Date.now() - 60 * 1000).toISOString(),
+        expiration_date_to: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
       },
     };
 
@@ -7433,6 +7754,70 @@ async function cancelarReservasSinPagarDe(supabase: SupabaseClient, filas: { col
   }
 }
 
+// Auditoría 2026-09-26 (M5 + M6): la selección de fotos se valida al registrar el pedido. Antes se
+// guardaba tal cual la mandaba el navegador: ids inexistentes, de otro curso, de otra categoría o
+// incompletos se cobraban igual y después el .zip HD fallaba (o salía incompleto) y el control
+// automático lo reintentaba para siempre. Además, una foto INDIVIDUAL etiquetada con el nombre de
+// un alumno sólo la puede comprar la familia de ese alumno (M6). Debe coincidir con
+// src/utils/nombresAlumno.ts.
+function nombresCompatibles(a: unknown, b: unknown): boolean {
+  const palabras = (n: unknown) => normalizarNombreComparable(n).split(' ').filter(Boolean);
+  const pa = palabras(a);
+  const pb = palabras(b);
+  if (pa.length === 0 || pb.length === 0) return false;
+  const [corto, largo] = pa.length <= pb.length ? [pa, new Set(pb)] : [pb, new Set(pa)];
+  return corto.every((p) => largo.has(p));
+}
+
+async function validarSeleccionFotos(
+  supabase: SupabaseClient,
+  colegioId: string,
+  cursoCodigo: string,
+  seleccionCruda: any,
+  alumnoNombre: string
+): Promise<{ ok: true; seleccion: { individualId: string; grupalId: string; docenteId?: string; otrasIds: string[] } } | { ok: false; error: string }> {
+  const sel = seleccionCruda && typeof seleccionCruda === 'object' ? seleccionCruda : {};
+  const { data: fotosCurso, error } = await supabase
+    .from('fotos')
+    .select('id, categoria, alumno_nombre')
+    .eq('colegio_id', colegioId)
+    .eq('codigo_curso', cursoCodigo);
+  if (error) throw error;
+  const porId = new Map<string, any>((fotosCurso || []).map((f: any) => [String(f.id), f]));
+  const deCategoria = (id: unknown, categoria: string) => {
+    const foto = porId.get(String(id || ''));
+    return foto && foto.categoria === categoria ? foto : null;
+  };
+  const nombreAlumno = alumnoNombre ? ` de ${alumnoNombre}` : '';
+  const individual = deCategoria(sel.individualId, 'individual');
+  const grupal = deCategoria(sel.grupalId, 'grupal');
+  if (!individual || !grupal) {
+    return { ok: false, error: `Falta elegir la foto individual y la grupal${nombreAlumno} (o alguna ya no está disponible). Volvé a elegirlas en la galería.` };
+  }
+  if (individual.alumno_nombre && !nombresCompatibles(individual.alumno_nombre, alumnoNombre)) {
+    return { ok: false, error: `La foto individual elegida${nombreAlumno} corresponde a otro alumno. Elegí la foto individual de tu hijo/a.` };
+  }
+  const cursoTieneDocente = (fotosCurso || []).some((f: any) => f.categoria === 'docente');
+  const docente = sel.docenteId ? deCategoria(sel.docenteId, 'docente') : null;
+  if ((cursoTieneDocente && !docente) || (sel.docenteId && !docente)) {
+    return { ok: false, error: `Falta elegir la foto con la seño${nombreAlumno} (o ya no está disponible). Volvé a elegirla en la galería.` };
+  }
+  const otrasCrudas: unknown[] = Array.isArray(sel.otrasIds) ? sel.otrasIds : [];
+  const otrasIds = Array.from(new Set(otrasCrudas.map((id) => String(id || '')).filter(Boolean)));
+  if (otrasIds.some((id) => !deCategoria(id, 'patio'))) {
+    return { ok: false, error: `Alguna de las fotos sueltas elegidas${nombreAlumno} ya no está disponible. Volvé a elegirlas en la galería.` };
+  }
+  return {
+    ok: true,
+    seleccion: {
+      individualId: String(individual.id),
+      grupalId: String(grupal.id),
+      ...(docente ? { docenteId: String(docente.id) } : {}),
+      otrasIds,
+    },
+  };
+}
+
 app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 * 1000), async (req, res) => {
   try {
     const {
@@ -7528,6 +7913,12 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 *
     const metodosValidos = ['mercadopago', 'transferencia', 'efectivo', 'nave'];
     const metodoPagoValido = metodosValidos.includes(metodoPago) ? metodoPago : 'mercadopago';
     const cursoCodigoServidor = determinarCodigoCursoServidor(String(grado || ''), String(turno || ''), String(division || ''));
+    const validacionFotos = await validarSeleccionFotos(supabase, colegioReal.id, cursoCodigoServidor, fotosSeleccionadas, acotar(alumnoNombre, 200));
+    if (!validacionFotos.ok) {
+      return res.status(400).json({ success: false, error: (validacionFotos as { error: string }).error });
+    }
+    // El total se recalcula con la selección ya validada (fotos sueltas sin repetir).
+    const totalFinal = calcularTotalPedido(String(kitId), carpetasExtras, validacionFotos.seleccion.otrasIds.length) as number;
     // Auditoría 2026-09-22 (Pablo: "¿por qué el código minilab no figura?"): mismo refuerzo que
     // ya se aplicó a curso_codigo — codigo_alumno y alumno_numero_lista se calculan siempre acá,
     // nunca se acepta lo que mande el navegador (ver `calcularCodigoAlumnoServidor` y
@@ -7542,7 +7933,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 *
       // Sólo el webhook de Mercado Pago o el panel de admin (con sesión) lo pueden pasar a
       // "pagado". Ver comentario de auditoría arriba de este endpoint.
       estado: 'pendiente_pago',
-      total: totalCalculado,
+      total: totalFinal,
       // Un kit sólo digital no lleva carpeta impresa.
       carpetas_impresas: kitId === 'kit-clasico' ? extrasValidados + 1 : 0,
       metodo_pago: metodoPagoValido,
@@ -7564,7 +7955,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 *
       alumno_numero_lista: numeroListaServidor,
       codigo_alumno: codigoAlumnoServidor,
       kit_nombre: acotar(kitNombre, 120) || null,
-      fotos_seleccionadas: acotarJson(fotosSeleccionadas),
+      fotos_seleccionadas: validacionFotos.seleccion,
       copias_extras: acotarJson(copiasExtras),
       // Auditoría 2026-09-23: el link de descarga HD lo genera SIEMPRE el servidor al confirmarse
       // el pago. Antes se aceptaba el que mandara el navegador: un pedido podía nacer con un link
@@ -7583,7 +7974,7 @@ app.post('/api/pedidos/crear', limitarFrecuencia('pedidos-crear', 200, 10 * 60 *
     const pedidoCreado = insertados![0];
     await cancelarReservasSinPagarDe(supabase, [filaPedido as any]);
 
-    return res.json({ success: true, pedidoId: pedidoCreado.id, pedidoFriendlyId: filaPedido.pedido_friendly_id, total: totalCalculado });
+    return res.json({ success: true, pedidoId: pedidoCreado.id, pedidoFriendlyId: filaPedido.pedido_friendly_id, total: totalFinal, accesoToken: tokenAccesoPedido(pedidoCreado.id) });
   } catch (err: any) {
     console.error('Error al registrar pedido:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al registrar el pedido' });
@@ -7711,8 +8102,20 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
     // antes de que el hermano anterior del mismo carrito quedara insertado.
     const numeroListaBasePorCurso: Record<string, number> = {};
     const friendlyIdsUsados = new Set<string>();
+    // Auditoría 2026-09-26 (M5/M6): la selección de fotos de CADA hijo se valida contra su curso
+    // antes de escribir nada; el total se recalcula con las fotos sueltas ya validadas.
+    const seleccionesValidadas: any[] = [];
     for (const item of items) {
-      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, cantidadFotosSueltasDe(item)) as number;
+      const cursoItem = determinarCodigoCursoServidor(String(item?.grado || ''), String(item?.turno || ''), String(item?.division || ''));
+      const colegioItem = colegiosReales.get(String(item?.colegioId || ''))!;
+      const validacion = await validarSeleccionFotos(supabase, colegioItem.id, cursoItem, item?.fotosSeleccionadas, acotar(item?.alumnoNombre, 200));
+      if (!validacion.ok) return res.status(400).json({ success: false, error: (validacion as { error: string }).error });
+      seleccionesValidadas.push(validacion.seleccion);
+    }
+    totalGrupo = 0;
+    for (const [indiceItem, item] of items.entries()) {
+      const totalItem = calcularTotalPedido(item?.kitId, item?.carpetasExtras, seleccionesValidadas[indiceItem].otrasIds.length) as number;
+      totalGrupo += totalItem;
       const tipoKit = item?.kitId === 'kit-digital' ? 'solo_digital' : 'impreso_digital';
       const extrasValidados = carpetasExtrasValidas(String(item?.kitId), item?.carpetasExtras);
       const metodoPagoValida = metodosValidos.includes(item?.metodoPago) ? item.metodoPago : 'mercadopago';
@@ -7744,7 +8147,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
         alumno_numero_lista: numeroListaServidor,
         codigo_alumno: codigoAlumnoServidor,
         kit_nombre: acotar(item?.kitNombre, 120) || null,
-        fotos_seleccionadas: acotarJson(item?.fotosSeleccionadas),
+        fotos_seleccionadas: seleccionesValidadas[indiceItem],
         copias_extras: acotarJson(item?.copiasExtras),
         link_descarga_hd: null, // ver /api/pedidos/crear: el link lo genera sólo el servidor
       };
@@ -7766,6 +8169,7 @@ app.post('/api/pedidos/crear-multiple', limitarFrecuencia('pedidos-crear-multipl
       // propuso el navegador si ese ya estaba usado — ver asegurarFriendlyIdUnico).
       pedidoFriendlyIds: filasPedido.map((f) => f.pedido_friendly_id),
       total: totalGrupo,
+      accesoToken: tokenAccesoPedido(grupoPagoId),
     });
   } catch (err: any) {
     console.error('Error al registrar carrito multi-hijo:', err);
@@ -7943,11 +8347,17 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 150, 10 * 60
     if (grupoExistente) {
       const { data: filasGrupo, error: errorGrupo } = await supabase
         .from('pedidos')
-        .select('id, estado')
+        .select('id, estado, mp_preference_id, nave_payment_request_id')
         .eq('grupo_pago_id', String(grupoExistente));
       if (errorGrupo) throw errorGrupo;
       if (!filasGrupo || filasGrupo.length === 0 || filasGrupo.some((f: any) => f.estado !== 'pendiente_pago')) {
         return res.status(409).json({ success: false, error: 'No pudimos sumar la reserva a tu compra. Volvé a intentarlo.' });
+      }
+      // Auditoría 2026-09-26 (C3, CRÍTICO): si el grupo ya tiene un link de pago generado, ese link
+      // cobra el total VIEJO. Sumarle filas después permitía pagar $15.000 y quedar con varios kits
+      // pagados. En el flujo normal del portal la reserva se suma ANTES de generar el link.
+      if (filasGrupo.some((f: any) => f.mp_preference_id || f.nave_payment_request_id)) {
+        return res.status(409).json({ success: false, error: 'Esta compra ya tiene un link de pago generado. Armá la reserva como una compra aparte.' });
       }
       grupoPagoId = String(grupoExistente);
     }
@@ -7995,6 +8405,7 @@ app.post('/api/reservas/crear', limitarFrecuencia('reservas-crear', 150, 10 * 60
       grupoPagoId,
       total: totalGrupo,
       pedidoFriendlyIds: filas.map((f) => f.pedido_friendly_id),
+      accesoToken: tokenAccesoPedido(grupoPagoId),
     });
   } catch (err: any) {
     console.error('[Reservas] Error al crear la reserva:', err);
@@ -8081,7 +8492,7 @@ app.post('/api/reservas/:id/elegir-fotos', limitarFrecuencia('reservas-elegir', 
 
     const { data: pedido, error } = await supabase
       .from('pedidos')
-      .select('id, estado, seleccion_pendiente, colegio_id, curso_codigo')
+      .select('id, estado, seleccion_pendiente, colegio_id, curso_codigo, alumno_nombre')
       .eq('id', String(req.params.id))
       .single();
     if (error || !pedido) return res.status(404).json({ success: false, error: 'No encontramos tu reserva.' });
@@ -8098,13 +8509,18 @@ app.post('/api/reservas/:id/elegir-fotos', limitarFrecuencia('reservas-elegir', 
     };
     const { data: fotosValidas } = await supabase
       .from('fotos')
-      .select('id, categoria')
+      .select('id, categoria, alumno_nombre')
       .eq('colegio_id', seccion.colegioId)
       .eq('codigo_curso', cursoCodigo)
       .in('id', Object.values(ids).filter(Boolean));
     const categoriaDe = (id: string) => (fotosValidas || []).find((f: any) => f.id === id)?.categoria;
     if (categoriaDe(ids.grupalId) !== 'grupal' || categoriaDe(ids.individualId) !== 'individual' || categoriaDe(ids.docenteId) !== 'docente') {
       return res.status(400).json({ success: false, error: 'Elegí una foto grupal, una individual y una con la seño de este curso.' });
+    }
+    // Auditoría 2026-09-26 (M6): la individual etiquetada con otro alumno no se puede elegir.
+    const individualElegida: any = (fotosValidas || []).find((f: any) => f.id === ids.individualId);
+    if (individualElegida?.alumno_nombre && !nombresCompatibles(individualElegida.alumno_nombre, pedido.alumno_nombre)) {
+      return res.status(400).json({ success: false, error: 'La foto individual elegida corresponde a otro alumno. Elegí la de tu hijo/a.' });
     }
 
     const { data: actualizado, error: errorUpdate } = await supabase
@@ -8205,35 +8621,54 @@ app.post(['/api/mercadopago/webhook', '/mercadopago/webhook'], async (req, res) 
         }
       } else if (paymentInfo.status === 'rejected' || paymentInfo.status === 'cancelled') {
         if (pedidoId && supabase) {
-          console.log(`[Mercado Pago Webhook] Marcando pedido ${pedidoId} como rechazado/cancelado.`);
-          // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, ALTO): a esta rama
-          // le faltaba el mismo ".neq('estado', 'pagado')" que sí tiene la rama "approved" de
-          // arriba. Mercado Pago puede reintentar/entregar tarde una notificación de un intento
-          // de pago viejo (rechazado) DESPUÉS de que un intento posterior ya haya sido aprobado
-          // y el pedido esté "pagado" — sin este guard, esa notificación tardía podía revertir
-          // en silencio un pedido ya pagado (y con fotos ya en camino) de vuelta a "cancelado".
-          const { data: dataCancelado } = await supabase
-            .from('pedidos')
-            .update({
-              estado: 'cancelado',
-              mp_payment_id: String(paymentId),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', pedidoId)
-            .neq('estado', 'pagado')
-            .select('id');
-          // Igual que en la rama "approved": si no hay ningún pedido individual con ese id,
-          // puede tratarse de un carrito multi-hijo — se cancelan todas las filas del grupo.
-          if (!dataCancelado || dataCancelado.length === 0) {
-            await supabase
+          // Auditoría 2026-09-19: ".neq('estado','pagado')" para que un rechazo tardío de un intento
+          // viejo no revierta un pedido ya pagado.
+          // Auditoría 2026-09-26 (M4): además, un rechazo sólo cancela si (a) el pedido sigue siendo
+          // de Mercado Pago (si la familia pasó a transferencia/Nave, un rechazo viejo de MP no lo
+          // anula — antes eso además le impedía subir el comprobante) y (b) no hay OTRO intento de
+          // MP aprobado o todavía en curso para la misma referencia (ej. la tarjeta rebotó y pagó
+          // en efectivo en Rapipago, que queda "pending" hasta acreditarse).
+          let hayOtroIntentoVivo = false;
+          try {
+            const busqueda = await payment.search({ options: { external_reference: String(pedidoId), sort: 'date_created', criteria: 'desc' } });
+            hayOtroIntentoVivo = (busqueda?.results || []).some((p) =>
+              String(p.id) !== String(paymentId) && ['approved', 'pending', 'in_process', 'authorized'].includes(String(p.status))
+            );
+          } catch (errBusqueda) {
+            console.warn('[Mercado Pago Webhook] No se pudieron revisar otros intentos; no se cancela por las dudas.', errBusqueda);
+            hayOtroIntentoVivo = true;
+          }
+          if (!hayOtroIntentoVivo) {
+            console.log(`[Mercado Pago Webhook] Marcando pedido ${pedidoId} como rechazado/cancelado.`);
+            const { data: dataCancelado } = await supabase
               .from('pedidos')
-              .update({
-                estado: 'cancelado',
-                mp_payment_id: String(paymentId),
-                updated_at: new Date().toISOString(),
-              })
-              .eq('grupo_pago_id', pedidoId)
-              .neq('estado', 'pagado');
+              .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+              .eq('id', pedidoId)
+              .eq('metodo_pago', 'mercadopago')
+              .neq('estado', 'pagado')
+              .select('id');
+            if (!dataCancelado || dataCancelado.length === 0) {
+              await supabase
+                .from('pedidos')
+                .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+                .eq('grupo_pago_id', pedidoId)
+                .eq('metodo_pago', 'mercadopago')
+                .neq('estado', 'pagado');
+            }
+          }
+        }
+      } else if (paymentInfo.status === 'refunded' || paymentInfo.status === 'charged_back') {
+        // Auditoría 2026-09-26 (A4): un pago reembolsado o con contracargo deja de ser un pago. Antes
+        // se ignoraba y el pedido seguía "pagado" con el link HD renovándose. Se cancelan sólo las
+        // filas que se pagaron con ESTE pago, y queda una alerta (puede haber un kit impreso en curso).
+        if (supabase) {
+          const { data: revertidos } = await supabase
+            .from('pedidos')
+            .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+            .eq('mp_payment_id', String(paymentId))
+            .select('id, pedido_friendly_id, estado_lab');
+          if (revertidos && revertidos.length > 0) {
+            await registrarAlertaPago(supabase, `reembolso-mp:${paymentId}`, `Mercado Pago informó "${paymentInfo.status}" para el pago ${paymentId}: se cancelaron ${revertidos.map((r: any) => r.pedido_friendly_id || r.id).join(', ')} (la descarga HD dejó de estar disponible). Si ya estaba en laboratorio, frenalo.`, { paymentId, pedidos: revertidos });
           }
         }
       }
@@ -8273,11 +8708,12 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
     const totalCalculado = Number(cobro.filas[0].total);
 
     const credenciales = getNaveCredenciales();
-    if (!credenciales) {
+    // Ver naveHabilitado (C1): fuera de producción Nave no se ofrece ni se puede usar a mano.
+    if (!credenciales || !naveHabilitado()) {
       return res.status(200).json({
         success: false,
         notConfigured: true,
-        error: 'NAVE_CLIENT_ID / NAVE_CLIENT_SECRET / NAVE_POS_ID no están configuradas en las variables de entorno del servidor.',
+        error: 'El pago con Nave no está disponible en este momento. Elegí Mercado Pago o transferencia.',
       });
     }
 
@@ -8317,7 +8753,7 @@ app.post('/api/nave/crear-intencion', limitarFrecuencia('nave-crear-intencion', 
         user_id: pedidoId,
       },
       additional_info: {
-        callback_url: `${appUrl}/?nave_status=vuelta&pedido_id=${pedidoId}`,
+        callback_url: `${appUrl}/?nave_status=vuelta&pedido_id=${pedidoId}${tokenAccesoPedido(String(pedidoId)) ? `&t=${tokenAccesoPedido(String(pedidoId))}` : ''}`,
       },
     };
     if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
@@ -8396,11 +8832,12 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
     });
 
     const credenciales = getNaveCredenciales();
-    if (!credenciales) {
+    // Ver naveHabilitado (C1): fuera de producción Nave no se ofrece ni se puede usar a mano.
+    if (!credenciales || !naveHabilitado()) {
       return res.status(200).json({
         success: false,
         notConfigured: true,
-        error: 'NAVE_CLIENT_ID / NAVE_CLIENT_SECRET / NAVE_POS_ID no están configuradas en las variables de entorno del servidor.',
+        error: 'El pago con Nave no está disponible en este momento. Elegí Mercado Pago o transferencia.',
       });
     }
 
@@ -8429,7 +8866,7 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
         user_id: grupoPagoId,
       },
       additional_info: {
-        callback_url: `${appUrl}/?nave_status=vuelta&grupo_pago_id=${grupoPagoId}${sufijoReserva}`,
+        callback_url: `${appUrl}/?nave_status=vuelta&grupo_pago_id=${grupoPagoId}${sufijoReserva}${tokenAccesoPedido(String(grupoPagoId)) ? `&t=${tokenAccesoPedido(String(grupoPagoId))}` : ''}`,
       },
     };
     if (tutorEmail && String(tutorEmail).includes('@')) body.buyer.user_email = tutorEmail;
@@ -8483,8 +8920,9 @@ app.post('/api/nave/crear-intencion-multiple', limitarFrecuencia('nave-crear-int
 app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('nave-webhook', 5000, 5 * 60 * 1000), async (req, res) => {
   try {
     const credenciales = getNaveCredenciales();
-    if (!credenciales) {
-      console.warn('[Nave Webhook] Notificación recibida pero NAVE_CLIENT_ID/SECRET/POS_ID no están configuradas.');
+    if (!credenciales || !naveHabilitado()) {
+      // Ver naveHabilitado (C1): un aviso de sandbox (o sin credenciales) nunca toca pedidos reales.
+      console.warn('[Nave Webhook] Notificación ignorada: Nave no está habilitado en producción.');
       return res.status(200).send('OK');
     }
 
@@ -8512,53 +8950,76 @@ app.post(['/api/nave/webhook', '/api/nave/webhook-sandbox'], limitarFrecuencia('
     }
 
     const estadoNave: string | undefined = pago?.status?.name;
-    const pedidoId: string | undefined = pago?.external_payment_id || req.body?.external_payment_id;
+    // Auditoría 2026-09-26 (A1, ALTO): antes, si la respuesta de Nave no traía external_payment_id,
+    // se usaba el que viniera en el cuerpo del POST — que NO está firmado (cualquiera puede
+    // mandarlo). Con un payment_id real aprobado (por ejemplo, de un pedido barato propio), un aviso
+    // falso podía marcar pagado OTRO pedido. Ahora la referencia sale SÓLO de datos de Nave: su
+    // external_payment_id, o el id de la intención de pago cruzado contra la que guardamos nosotros
+    // al crearla (nave_payment_request_id).
+    let pedidoId: string | undefined = pago?.external_payment_id ? String(pago.external_payment_id) : undefined;
+    const supabase = getServerSupabase();
+    if (!pedidoId && supabase) {
+      const idIntencion = pago?.payment_request_id || pago?.payment_request?.id;
+      if (idIntencion) {
+        const { data: filaIntencion } = await supabase
+          .from('pedidos')
+          .select('id, grupo_pago_id')
+          .eq('nave_payment_request_id', String(idIntencion))
+          .limit(1)
+          .maybeSingle();
+        if (filaIntencion) pedidoId = filaIntencion.grupo_pago_id || filaIntencion.id;
+      }
+    }
+    if (!pedidoId) {
+      console.warn(`[Nave Webhook] El pago ${paymentId} no trae una referencia verificable: no se toca ningún pedido (lo levanta el control automático).`);
+      return res.status(200).send('OK');
+    }
     console.log(`[Nave Webhook] Pago ${paymentId} — estado: ${estadoNave}, pedido: ${pedidoId}`);
 
-    const supabase = getServerSupabase();
-
     if (estadoNave === 'APPROVED') {
-      if (pedidoId && supabase) {
-        // Auditoría 2026-09-23: misma lógica compartida que el webhook de Mercado Pago (ver
-        // marcarReferenciaComoPagada / procesarPedidosRecienPagados) — incluye el control de que
-        // el monto cobrado alcance para lo que vale el pedido y el marcado idempotente.
-        const montoPagado = Number(pago?.transactions?.[0]?.amount?.value);
+      if (supabase) {
+        const montoPagado = leerMontoNave(pago);
         const orderRows = await marcarReferenciaComoPagada(supabase, String(pedidoId), montoPagado, {
           nave_payment_id: String(paymentId),
         });
         await procesarPedidosRecienPagados(supabase, orderRows);
       }
-    } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '')) {
-      if (pedidoId && supabase) {
-        console.log(`[Nave Webhook] Marcando pedido ${pedidoId} como cancelado (estado Nave: ${estadoNave}).`);
-        // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, ALTO): a diferencia
-        // de la rama "approved" de arriba, acá no había ningún guard contra una notificación
-        // tardía de un intento de pago ya superado. PERO ojo — a diferencia de Mercado Pago, acá
-        // "REJECTED"/"CANCELLED" (intento fallido antes de pagar) y
-        // "PURCHASE_REVERSED"/"CHARGEBACK_REVIEW"/"CHARGED_BACK" (contracargo DESPUÉS de haber
-        // cobrado) son casos distintos: el contracargo debe poder cancelar un pedido que hoy
-        // está "pagado" — ahí SÍ es el resultado correcto. El guard sólo aplica a
-        // REJECTED/CANCELLED, para no revertir en silencio un pedido que un intento posterior ya
-        // dejó pagado.
-        const esContracargo = ['PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK'].includes(estadoNave || '');
-        let queryIndividual = supabase
-          .from('pedidos')
-          .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
-          .eq('id', pedidoId);
-        if (!esContracargo) queryIndividual = queryIndividual.neq('estado', 'pagado');
-        const { data: dataCancelado } = await queryIndividual.select('id');
-        if (!dataCancelado || dataCancelado.length === 0) {
-          let queryGrupo = supabase
+    } else if (['REJECTED', 'CANCELLED', 'PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK', 'REFUNDED'].includes(estadoNave || '')) {
+      if (supabase) {
+        // REJECTED/CANCELLED (intento fallido antes de pagar) nunca revierte un pedido pagado ni uno
+        // que ya no es de Nave. Contracargo / reversión / reembolso (DESPUÉS de cobrar) sí cancela,
+        // pero sólo las filas pagadas con ESTE pago, y deja alerta.
+        const esReversion = ['PURCHASE_REVERSED', 'CHARGEBACK_REVIEW', 'CHARGED_BACK', 'REFUNDED'].includes(estadoNave || '');
+        if (esReversion) {
+          const { data: revertidos } = await supabase
             .from('pedidos')
-            .update({ estado: 'cancelado', nave_payment_id: String(paymentId), updated_at: new Date().toISOString() })
-            .eq('grupo_pago_id', pedidoId);
-          if (!esContracargo) queryGrupo = queryGrupo.neq('estado', 'pagado');
-          await queryGrupo;
+            .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+            .eq('nave_payment_id', String(paymentId))
+            .select('id, pedido_friendly_id');
+          if (revertidos && revertidos.length > 0) {
+            await registrarAlertaPago(supabase, `reversion-nave:${paymentId}`, `Nave informó "${estadoNave}" para el pago ${paymentId}: se cancelaron ${revertidos.map((r: any) => r.pedido_friendly_id || r.id).join(', ')}. Si ya estaba en laboratorio, frenalo.`, { paymentId, pedidos: revertidos });
+          }
+        } else {
+          console.log(`[Nave Webhook] Marcando pedido ${pedidoId} como cancelado (estado Nave: ${estadoNave}).`);
+          const { data: dataCancelado } = await supabase
+            .from('pedidos')
+            .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+            .eq('id', pedidoId)
+            .eq('metodo_pago', 'nave')
+            .neq('estado', 'pagado')
+            .select('id');
+          if (!dataCancelado || dataCancelado.length === 0) {
+            await supabase
+              .from('pedidos')
+              .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
+              .eq('grupo_pago_id', pedidoId)
+              .eq('metodo_pago', 'nave')
+              .neq('estado', 'pagado');
+          }
         }
       }
     }
-    // PENDING no tiene resultado final todavía, y REFUNDED es un reembolso sobre un pedido que
-    // ya se dio por pagado/entregado — ninguno de los dos ameríta tocar el estado acá solo.
+    // PENDING no tiene resultado final todavía: no se toca nada.
 
     return res.status(200).send('OK');
   } catch (error: any) {
@@ -8899,24 +9360,47 @@ app.get('/api/admin/zoho/historial', requireAdminAuth, async (req: Request, res:
   res.json({ success: true, envios: data });
 });
 
-// Respaldo de pagos (Nave y Mercado Pago): si un pedido sigue "pendiente_pago" pero ya se generó
-// un link de pago, se reconsulta directo a la pasarela y se autocorrige (marcar pagado + .zip +
-// correo, o cancelado). Lo usan /api/pedidos/:id/status (mientras la familia mira la pantalla) y
-// el control automático /api/cron/conciliar-pagos (cada 10 minutos, aunque nadie tenga la web
-// abierta). Devuelve el estado final del pedido.
-async function conciliarPagoPendiente(supabase: SupabaseClient, data: any): Promise<string> {
+// Auditoría 2026-09-26 (B1): el portal consulta /status cada ~10 s mientras la familia espera, y
+// cada consulta le preguntaba a Mercado Pago / Nave. Con cientos de familias a la vez eso choca
+// con los límites de las pasarelas. Se consulta a la pasarela como mucho cada 30 s por referencia
+// (el control automático cada 10 minutos fuerza la consulta igual).
+const ultimaConsultaPasarela = new Map<string, number>();
+setInterval(() => {
+  const limite = Date.now() - 10 * 60 * 1000;
+  for (const [clave, ts] of ultimaConsultaPasarela.entries()) if (ts < limite) ultimaConsultaPasarela.delete(clave);
+}, 5 * 60 * 1000).unref?.();
+
+// Respaldo de pagos (Nave y Mercado Pago): si un pedido sigue "pendiente_pago" (o "cancelado") pero
+// ya se generó un link de pago, se reconsulta directo a la pasarela y se autocorrige (marcar
+// pagado + .zip + correo, o cancelado). Lo usan /api/pedidos/:id/status (mientras la familia mira
+// la pantalla) y el control automático /api/cron/conciliar-pagos (cada 10 minutos, aunque nadie
+// tenga la web abierta). Devuelve el estado final del pedido.
+//
+// Auditoría 2026-09-26:
+//  - C3: Nave ya no pasa monto NaN (que salteaba el control): se lee el monto real de la intención.
+//  - M3: se revisa CADA pasarela en la que hubo un intento (mp_preference_id / nave_payment_request_id),
+//    aunque la familia después haya cambiado de medio de pago: si terminó pagando el link viejo,
+//    el pago igual se registra. Pero sólo se CANCELA por un rechazo si el pedido sigue siendo de
+//    esa pasarela (un rechazo viejo de MP no anula un pedido que ahora es por transferencia).
+async function conciliarPagoPendiente(supabase: SupabaseClient, data: any, opciones: { forzar?: boolean } = {}): Promise<string> {
   let estadoFinal: string = data.estado;
-  // Nave no firma sus webhooks (ver comentario en /api/nave/webhook) y, en teoría, una
-  // notificación puede perderse — la propia documentación de Nave recomienda esta consulta
-  // activa como respaldo ("Consultar una intención de pago... alternativa cuando la
-  // notificación no se recibe"). Se aprovecha este endpoint (que el Portal de Familias ya
-  // consulta con polling mientras el pago está pendiente) para hacer ese respaldo: si el
-  // pedido es de Nave, sigue pendiente, y tenemos el id de la intención, se reconsulta contra
-  // Nave y se autocorrige el estado en la base antes de responder.
-  // "cancelado" también se revisa: un intento cancelado puede haberse pagado después (la familia
-  // reintentó) y si ese aviso de la pasarela se perdió, el pago quedaría sin registrar.
-  const revisable = data.estado === 'pendiente_pago' || data.estado === 'cancelado';
-  if (data.metodo_pago === 'nave' && revisable && data.nave_payment_request_id) {
+  const esRevisable = (estado: string) => estado === 'pendiente_pago' || estado === 'cancelado';
+  if (!esRevisable(estadoFinal)) return estadoFinal;
+  const referencia: string = data.grupo_pago_id || data.id;
+  if (!opciones.forzar) {
+    const ultima = ultimaConsultaPasarela.get(referencia);
+    if (ultima && Date.now() - ultima < 30000) return estadoFinal;
+  }
+  ultimaConsultaPasarela.set(referencia, Date.now());
+  const columnaReferencia: 'id' | 'grupo_pago_id' = data.grupo_pago_id ? 'grupo_pago_id' : 'id';
+  const releerEstado = async () => {
+    const { data: releido } = await supabase.from('pedidos').select('estado').eq('id', data.id).maybeSingle();
+    return releido?.estado || estadoFinal;
+  };
+
+  // Nave no firma sus webhooks y la propia documentación recomienda esta consulta activa como
+  // respaldo ("Consultar una intención de pago... alternativa cuando la notificación no se recibe").
+  if (data.nave_payment_request_id && naveHabilitado()) {
     try {
       const accessToken = await obtenerNaveAccessToken();
       if (accessToken) {
@@ -8926,23 +9410,28 @@ async function conciliarPagoPendiente(supabase: SupabaseClient, data: any): Prom
         });
         const intencion: any = await resp.json().catch(() => null);
         const estadoIntencion = intencion?.status?.name;
-        // Auditoría 2026-09-23: antes esto actualizaba sólo `.eq('id', id)` — en un carrito
-        // multi-hijo (varias filas con el mismo grupo_pago_id y UNA sola intención de Nave) sólo
-        // el hermano que estaba en pantalla quedaba pagado y los demás seguían "pendiente_pago".
-        // Además, al marcarlo pagado acá no se armaba el .zip ni se mandaba el correo, y el
-        // webhook que llegaba después ya no lo procesaba (lo encontraba "pagado"). Ahora usa la
-        // misma lógica compartida que los webhooks.
-        const referencia = data.grupo_pago_id || data.id;
         if (resp.ok && estadoIntencion === 'SUCCESS_PROCESSED') {
-          const pagoAprobadoId = intencion?.payment_attempts?.payments?.find((p: any) => p.status === 'APPROVED')?.payment_id;
-          const filasPagadas = await marcarReferenciaComoPagada(supabase, referencia, NaN, pagoAprobadoId ? { nave_payment_id: String(pagoAprobadoId) } : {});
+          const pagoAprobado = intencion?.payment_attempts?.payments?.find((p: any) => p.status === 'APPROVED');
+          const montoCobrado = Number.isFinite(leerMontoNave(pagoAprobado)) ? leerMontoNave(pagoAprobado) : leerMontoNave(intencion);
+          const filasPagadas = await marcarReferenciaComoPagada(
+            supabase,
+            referencia,
+            montoCobrado,
+            pagoAprobado?.payment_id ? { nave_payment_id: String(pagoAprobado.payment_id) } : {}
+          );
           await procesarPedidosRecienPagados(supabase, filasPagadas);
-          estadoFinal = 'pagado';
-        } else if (data.estado === 'pendiente_pago' && resp.ok && (estadoIntencion === 'FAILURE_PROCESSED' || estadoIntencion === 'EXPIRED' || estadoIntencion === 'BLOCKED')) {
+          estadoFinal = await releerEstado();
+        } else if (
+          data.estado === 'pendiente_pago' &&
+          data.metodo_pago === 'nave' &&
+          resp.ok &&
+          (estadoIntencion === 'FAILURE_PROCESSED' || estadoIntencion === 'EXPIRED' || estadoIntencion === 'BLOCKED')
+        ) {
           await supabase
             .from('pedidos')
             .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
-            .eq(data.grupo_pago_id ? 'grupo_pago_id' : 'id', referencia)
+            .eq(columnaReferencia, referencia)
+            .eq('metodo_pago', 'nave')
             .neq('estado', 'pagado');
           estadoFinal = 'cancelado';
         }
@@ -8952,54 +9441,37 @@ async function conciliarPagoPendiente(supabase: SupabaseClient, data: any): Prom
     }
   }
 
-  // Auditoría 2026-09-19 (bug real encontrado en auditoría de código, MEDIO): Mercado Pago SÍ
-  // firma sus webhooks (a diferencia de Nave), pero un webhook igual puede perderse por una
-  // caída puntual, un timeout, o quedar bloqueado por un error de configuración temporal — y
-  // hasta ahora no había ningún respaldo: un pedido pagado en Mercado Pago cuyo webhook no
-  // llegara se quedaba en "pendiente_pago" para siempre del lado nuestro, aunque el dinero sí
-  // se hubiera acreditado. Mismo criterio que el respaldo de Nave de arriba: si el pedido es
-  // de Mercado Pago, sigue pendiente y ya se intentó generar una preferencia de pago
-  // (mp_preference_id), se reconsulta directo contra la API de Mercado Pago por
-  // external_reference (el id del pedido, o el grupo_pago_id si es un carrito multi-hijo) y se
-  // autocorrige el estado antes de responder.
-  if (data.metodo_pago === 'mercadopago' && (estadoFinal === 'pendiente_pago' || estadoFinal === 'cancelado') && data.mp_preference_id) {
+  // Mercado Pago SÍ firma sus webhooks, pero un webhook igual puede perderse. Se busca por
+  // external_reference (el id del pedido, o el grupo_pago_id si es un carrito multi-hijo).
+  if (esRevisable(estadoFinal) && data.mp_preference_id) {
     try {
       const mpConfig = getMercadoPagoConfig();
       if (mpConfig) {
-        const referenciaBusqueda = data.grupo_pago_id || data.id;
         const resultadoBusqueda = await new Payment(mpConfig).search({
-          options: { external_reference: referenciaBusqueda, sort: 'date_created', criteria: 'desc' },
+          options: { external_reference: referencia, sort: 'date_created', criteria: 'desc' },
         });
         const pagos = resultadoBusqueda?.results || [];
         const pagoAprobado = pagos.find((p) => p.status === 'approved');
-        // Auditoría 2026-09-23 (bug real): antes alcanzaba con que CUALQUIER intento viejo
-        // estuviera rechazado para cancelar el pedido — ej. la tarjeta rebotó y la familia pagó
-        // después en efectivo (Rapipago/Pago Fácil, queda "pending" hasta acreditarse): el portal
-        // le mostraba "pago rechazado" aunque tuviera un pago en curso. Sólo cuenta el intento
-        // MÁS RECIENTE (la búsqueda viene ordenada por fecha, descendente).
+        // Sólo cuenta el intento MÁS RECIENTE para cancelar, y nunca si hay otro intento todavía en
+        // curso (ej. pago en efectivo en Rapipago/Pago Fácil, que queda "pending" hasta acreditarse).
         const ultimoPago = pagos[0];
-        const pagoRechazado = ultimoPago && (ultimoPago.status === 'rejected' || ultimoPago.status === 'cancelled') ? ultimoPago : undefined;
+        const hayPagoEnCurso = pagos.some((p) => p.status === 'pending' || p.status === 'in_process' || p.status === 'authorized');
+        const pagoRechazado = !hayPagoEnCurso && ultimoPago && (ultimoPago.status === 'rejected' || ultimoPago.status === 'cancelled') ? ultimoPago : undefined;
         if (pagoAprobado) {
-          // Auditoría 2026-09-23: misma lógica compartida que el webhook (control de monto +
-          // .zip HD + correo). Antes acá sólo se cambiaba el estado y el correo con las fotos no
-          // salía nunca por este camino.
           const filasPagadas = await marcarReferenciaComoPagada(
             supabase,
-            data.grupo_pago_id || data.id,
+            referencia,
             Number(pagoAprobado.transaction_amount),
             pagoAprobado.id ? { mp_payment_id: String(pagoAprobado.id) } : {}
           );
           await procesarPedidosRecienPagados(supabase, filasPagadas, pagoAprobado.payer?.email);
-          const { data: releido } = await supabase.from('pedidos').select('estado').eq('id', data.id).maybeSingle();
-          estadoFinal = releido?.estado || estadoFinal;
-        } else if (pagoRechazado && estadoFinal === 'pendiente_pago') {
-          const filtroActualizacion = data.grupo_pago_id
-            ? { columna: 'grupo_pago_id' as const, valor: data.grupo_pago_id }
-            : { columna: 'id' as const, valor: data.id };
+          estadoFinal = await releerEstado();
+        } else if (pagoRechazado && estadoFinal === 'pendiente_pago' && data.metodo_pago === 'mercadopago') {
           await supabase
             .from('pedidos')
             .update({ estado: 'cancelado', updated_at: new Date().toISOString() })
-            .eq(filtroActualizacion.columna, filtroActualizacion.valor)
+            .eq(columnaReferencia, referencia)
+            .eq('metodo_pago', 'mercadopago')
             .neq('estado', 'pagado');
           estadoFinal = 'cancelado';
         }
@@ -9068,10 +9540,15 @@ app.get('/api/pedidos/:id/status', limitarFrecuencia('pedidos-status', 1500, 10 
     const esAprobado = estadoFinal === 'pagado' || estadoFinal === 'entregado';
     const esRechazado = estadoFinal === 'cancelado';
 
-    // Auditoría 2026-09-19: refirma el link de descarga HD contra el mismo .zip ya generado en
-    // cada consulta (ver refirmarLinkDescargaHDSiExiste) — así nunca se le devuelve a la familia
-    // un link firmado hace más de 90 días que ya dejó de funcionar.
-    const linkDescargaHD = await refirmarLinkDescargaHDSiExiste(supabase, data);
+    // Auditoría 2026-09-26 (C2 + A4): el link HD sólo viaja con la llave de acceso del pedido
+    // (tokenAccesoPedido) y sólo si está cobrado. Antes alcanzaba con el UUID.
+    const tieneLlave = tokenAccesoValido(req.query.t, [data.id, data.grupo_pago_id, String(id)]);
+    let linkDescargaHD: string | undefined;
+    if (tieneLlave && pedidoHabilitaDescarga(estadoFinal)) {
+      // El link se genera cuando el pago se confirma, así que puede no estar en la fila leída arriba.
+      const { data: conLink } = await supabase.from('pedidos').select('id, pedido_friendly_id, link_descarga_hd').eq('id', data.id).maybeSingle();
+      linkDescargaHD = await refirmarLinkDescargaHDSiExiste(supabase, conLink || data);
+    }
 
     // Monto del pedido (o de todo el carrito, si es un pago combinado): el portal lo usa para
     // completar la pantalla de confirmación cuando la familia vuelve del pago en otro navegador
@@ -9159,14 +9636,16 @@ app.post('/api/pedidos/:id/cambiar-metodo-pago', limitarFrecuencia('pedidos-camb
       ? { columna: 'grupo_pago_id' as const, valor: pedidoActual.grupo_pago_id }
       : { columna: 'id' as const, valor: pedidoActual.id };
 
-    // Se limpian los identificadores del método anterior (el intento de pago viejo queda
-    // abandonado, no debería seguir influyendo en la reconciliación automática del /status).
+    // Auditoría 2026-09-26 (M3): antes acá se BORRABAN los ids del intento anterior
+    // (mp_preference_id / nave_payment_request_id). Pero ese link viejo sigue siendo pagable: si la
+    // familia terminaba pagándolo y el aviso de la pasarela se perdía, el control automático ya no
+    // tenía cómo encontrar el pago. Ahora se conservan; la conciliación registra un pago aprobado
+    // en cualquier pasarela donde hubo intento, pero sólo cancela por un rechazo de la pasarela
+    // que el pedido tiene elegida en ese momento.
     const { error: errorUpdate } = await supabase
       .from('pedidos')
       .update({
         metodo_pago: metodoPago,
-        nave_payment_request_id: null,
-        mp_preference_id: null,
         updated_at: new Date().toISOString(),
       })
       .eq(filtroActualizacion.columna, filtroActualizacion.valor)
@@ -9205,18 +9684,23 @@ app.get('/api/pedidos/existente', limitarFrecuencia('pedidos-existente', 500, 10
     // respuesta era siempre `existe: false`. Ahora se reciben colegio/grado/turno/división y el
     // código de curso se recalcula acá con la misma fórmula que usa /api/pedidos/crear. Además se
     // filtra por colegio (el código de curso se repite entre colegios distintos).
-    const colegioId = String(req.query.colegioId || '').trim().slice(0, 100);
-    const grado = String(req.query.grado || '').trim().slice(0, 60);
-    const turno = String(req.query.turno || '').trim().slice(0, 60);
-    const division = String(req.query.division || '').trim().slice(0, 60);
+    // Auditoría 2026-09-26 (C2, CRÍTICO): antes bastaba con colegio + grado/turno/división + nombre
+    // del chico (datos que cualquier compañero conoce) y se devolvía el UUID del pedido, con el que
+    // /api/pedidos/:id/status entregaba el link de las fotos HD. Ahora exige el código secreto de la
+    // sección (el mismo que abre la galería) y el curso sale de ese código, no de lo que mande el
+    // navegador. Además /status ya no entrega el link sin la llave de acceso del pedido.
     const alumnoNombre = String(req.query.alumnoNombre || '').trim().slice(0, 200);
-    if (!colegioId || !grado || !turno || !alumnoNombre) {
+    const codigo = String(req.query.codigo || '').trim().slice(0, 40);
+    if (!codigo || !alumnoNombre) {
       return res.status(400).json({ success: false, error: 'Faltan datos del alumno.' });
     }
-    const cursoCodigo = determinarCodigoCursoServidor(grado, turno, division);
 
     const supabase = getServerSupabase();
     if (!supabase) return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
+    const seccion = await buscarSeccionPorCodigoSecreto(supabase, codigo);
+    if (!seccion) return res.status(403).json({ success: false, error: 'Código de acceso incorrecto.' });
+    const colegioId = seccion.colegioId;
+    const cursoCodigo = determinarCodigoCursoServidor(seccion.grado, seccion.turno, seccion.division);
 
     const nombreBuscado = normalizarNombrePorPalabras(alumnoNombre);
     const { data, error } = await supabase
@@ -9341,10 +9825,13 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 40, 30 * 60 *
       return res.status(404).json({ success: false, error: 'No se encontró ningún pedido registrado con ese número o teléfono.' });
     }
 
-    // Auditoría 2026-09-19: ver comentario de refirmarLinkDescargaHDSiExiste en
-    // /api/pedidos/:id/status — mismo criterio acá, para que este buscador tampoco devuelva un
-    // link de descarga vencido después de 90 días.
-    const linkDescargaHD = encontradoPorTelefono ? undefined : await refirmarLinkDescargaHDSiExiste(supabase, fila);
+    // Auditoría 2026-09-26 (A2, ALTO): este buscador ya NO devuelve el link de descarga HD. El
+    // número de pedido (IFS-2026-XXXX, ~9.000 combinaciones) se puede adivinar probando, y con eso
+    // se obtenían las fotos HD de cualquier chico. Ahora, si el pedido está cobrado y tiene su .zip,
+    // se ofrece "Reenviarme el link por email": el link se manda SÓLO al email de la familia que
+    // hizo el pedido (POST /api/pedidos/reenviar-link).
+    void encontradoPorTelefono;
+    const puedeReenviarLink = pedidoHabilitaDescarga(fila.estado) && Boolean(fila.link_descarga_hd) && !fila.seleccion_pendiente;
     const telefonoCompleto = String(fila.familias?.whatsapp || '');
     // El teléfono se muestra siempre enmascarado: la familia ya lo conoce, y el número de pedido
     // (4 dígitos) no es un secreto lo bastante fuerte como para devolver un dato de contacto.
@@ -9364,13 +9851,61 @@ app.get('/api/pedidos/buscar', limitarFrecuencia('pedidos-buscar', 40, 30 * 60 *
         total: Number(fila.total) || 0,
         fecha: fila.created_at,
         estado: fila.estado,
-        linkDescargaHD: linkDescargaHD || null,
+        linkDescargaHD: null,
+        puedeReenviarLink,
         reservaPendiente: Boolean(fila.seleccion_pendiente),
       },
     });
   } catch (err: any) {
     console.error('Error al buscar pedido:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Error al buscar el pedido' });
+  }
+});
+
+// Auditoría 2026-09-26 (A2): reenvía el link de descarga HD de un pedido cobrado, SIEMPRE al email
+// de la familia que lo hizo (nunca a uno que se escriba acá) — así el número de pedido deja de
+// alcanzar para obtener las fotos. Límite bajo: cada pedido admite un reenvío cada 10 minutos.
+const ultimoReenvioLink = new Map<string, number>();
+app.post('/api/pedidos/reenviar-link', limitarFrecuencia('pedidos-reenviar-link', 10, 30 * 60 * 1000), async (req: Request, res: Response) => {
+  try {
+    const numero = String(req.body?.numero || '').trim().toUpperCase().slice(0, 60);
+    if (!FORMATO_PEDIDO_FRIENDLY_ID.test(numero)) {
+      return res.status(400).json({ success: false, error: 'Ingresá el número de pedido completo (ej. IFS-2026-1234).' });
+    }
+    const supabase = getServerSupabase();
+    if (!supabase) return res.status(503).json({ success: false, error: 'Servicio de base de datos no disponible' });
+    const { data: fila } = await supabase
+      .from('pedidos')
+      .select('*, familias(nombre, email)')
+      .eq('pedido_friendly_id', numero)
+      .maybeSingle();
+    // Misma respuesta genérica si no existe o no corresponde, para no confirmar números válidos.
+    const respuestaGenerica = { success: true, mensaje: 'Si el pedido está pagado, te mandamos el link de descarga al email con el que lo hiciste.' };
+    const email = String(fila?.familias?.email || '');
+    if (!fila || !pedidoHabilitaDescarga(fila.estado) || fila.seleccion_pendiente || !email.includes('@')) {
+      return res.json(respuestaGenerica);
+    }
+    const ultimo = ultimoReenvioLink.get(fila.id);
+    if (ultimo && Date.now() - ultimo < 10 * 60 * 1000) return res.json(respuestaGenerica);
+    ultimoReenvioLink.set(fila.id, Date.now());
+    const link = (await refirmarLinkDescargaHDSiExiste(supabase, fila)) || (await generarYSubirZipHDParaPedido(supabase, fila));
+    if (!link) return res.json(respuestaGenerica);
+    const resultado = await enviarCorreoFotosHD({
+      to: email,
+      tutorNombre: fila.familias?.nombre || 'Familia',
+      alumnoNombre: fila.alumno_nombre || 'tu hijo/a',
+      colegioNombre: fila.colegio_nombre || 'tu colegio',
+      cursoCodigo: fila.curso_codigo || undefined,
+      kitNombre: fila.kit_nombre || undefined,
+      pedidoId: fila.pedido_friendly_id || fila.id,
+      total: Number(fila.total) || 0,
+      linkDescargaHD: link,
+    });
+    if (!resultado?.success) console.warn('[reenviar-link] No se pudo reenviar el correo HD:', resultado?.error);
+    return res.json({ ...respuestaGenerica, emailDestino: enmascararEmailServidor(email) });
+  } catch (err: any) {
+    console.error('[reenviar-link] Error:', err);
+    return res.status(500).json({ success: false, error: 'No pudimos reenviar el link. Probá de nuevo en unos minutos.' });
   }
 });
 

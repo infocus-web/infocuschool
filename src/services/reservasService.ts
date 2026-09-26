@@ -1,3 +1,4 @@
+import { guardarLlavePedido } from '../utils/accesoPedido';
 /**
  * Pago anticipado: la familia paga el kit antes de que estén las fotos de su curso y las elige
  * después, sin volver a pagar. Ver "PAGO ANTICIPADO" en server.ts.
@@ -36,6 +37,7 @@ export async function crearReserva(datos: {
     });
     const data = await res.json();
     if (!res.ok || !data.success) return { success: false, error: data.error || 'No se pudo registrar la reserva.' };
+    guardarLlavePedido([data.grupoPagoId], data.accesoToken);
     return data;
   } catch {
     return { success: false, error: 'Error de conexión. Revisá tu internet e intentá de nuevo.' };

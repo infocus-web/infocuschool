@@ -1,6 +1,7 @@
 import { FOTOS_MUESTRA, KITS_DISPONIBLES } from '../data/colegiosData';
 import { enviarFotosPorEmail } from './emailService';
 import { fetchAdminAutenticado } from './adminAuthService';
+import { guardarLlavePedido } from '../utils/accesoPedido';
 import { Foto } from '../types';
 
 export interface ArchivoFotoLab {
@@ -601,6 +602,9 @@ export async function registrarPedidoDesdePortal(params: {
     const dataSync = await resSync.json().catch(() => null);
     if (resSync.ok && dataSync?.success) {
       sincronizado = true;
+      // Llave de acceso del pedido (ver src/utils/accesoPedido.ts): sin ella el servidor no
+      // devuelve el link de descarga HD en la consulta de estado.
+      guardarLlavePedido([dataSync.pedidoId, nuevoPedido.supabaseId], dataSync.accesoToken);
       // Auditoría 2026-09-23: el servidor garantiza que el número de pedido (IFS-2026-XXXX) no se
       // repita — si el que se propuso acá ya existía, devuelve otro. Se adopta el definitivo en
       // el pedido y en el localStorage para que la familia vea el mismo número que le llega por
@@ -726,6 +730,7 @@ export async function registrarCarritoMultipleDesdePortal(params: {
     });
     const data = await res.json().catch(() => null);
     if (res.ok && data?.success) {
+      guardarLlavePedido([data.grupoPagoId, ...(Array.isArray(data.pedidoIds) ? data.pedidoIds : [])], data.accesoToken);
       // Auditoría 2026-09-23: números de pedido definitivos (únicos) según el servidor.
       if (Array.isArray(data.pedidoFriendlyIds) && data.pedidoFriendlyIds.length === pedidoFriendlyIds.length) {
         pedidoFriendlyIds = data.pedidoFriendlyIds.map((fid: unknown, idx: number) => (typeof fid === 'string' && fid) || pedidoFriendlyIds[idx]);
@@ -1030,6 +1035,27 @@ export interface PedidoSeguimiento {
   linkDescargaHD?: string;
   /** Pago anticipado: kit pagado (o por pagar) que todavía espera que la familia elija las fotos. */
   reservaPendiente?: boolean;
+  /** El pedido está cobrado y tiene descarga HD: se puede pedir que se reenvíe el link por email. */
+  puedeReenviarLink?: boolean;
+}
+
+/**
+ * Auditoría 2026-09-26 (A2): el buscador ya no devuelve el link HD (el número de pedido se puede
+ * adivinar). En su lugar, el servidor reenvía el link al email de la familia que hizo el pedido.
+ */
+export async function reenviarLinkDescargaPorEmail(numero: string): Promise<{ success: boolean; mensaje?: string; emailDestino?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/pedidos/reenviar-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ numero }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) return { success: false, error: data?.error || 'No pudimos reenviar el link. Probá de nuevo en unos minutos.' };
+    return data;
+  } catch {
+    return { success: false, error: 'Error de conexión. Revisá tu internet e intentá de nuevo.' };
+  }
 }
 
 /**
@@ -1081,17 +1107,16 @@ export interface PedidoExistenteResumen {
 // contra `pedidos.curso_codigo` (el código determinístico de curso) — nunca coincidían y el aviso
 // no aparecía jamás. Ahora se mandan colegio/grado/turno/división y el servidor recalcula el
 // código de curso con la misma fórmula con la que guarda los pedidos.
+// Auditoría 2026-09-26 (C2): el servidor ahora exige el código secreto de la sección (el mismo que
+// abre la galería) y deduce colegio y curso de ese código.
 export async function verificarPedidoExistente(datos: {
-  colegioId?: string;
-  grado?: string;
-  turno?: string;
-  division?: string;
+  codigo?: string | null;
   alumnoNombre?: string;
 }): Promise<PedidoExistenteResumen | null> {
-  const { colegioId, grado, turno, division, alumnoNombre } = datos;
-  if (!colegioId || !grado || !turno || !alumnoNombre) return null;
+  const { codigo, alumnoNombre } = datos;
+  if (!codigo || !alumnoNombre) return null;
   try {
-    const params = new URLSearchParams({ colegioId, grado, turno, division: division || '', alumnoNombre });
+    const params = new URLSearchParams({ codigo, alumnoNombre });
     const res = await fetch(`/api/pedidos/existente?${params.toString()}`);
     const data = await res.json().catch(() => null);
     if (!res.ok || !data?.success || !data.existe || !data.pedido) return null;

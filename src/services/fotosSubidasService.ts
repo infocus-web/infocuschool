@@ -1,5 +1,4 @@
 import { Foto, CategoriaFoto } from '../types';
-import { eliminarFotoDeStorage } from './supabaseClient';
 import { fetchAdminAutenticado } from './adminAuthService';
 
 /**
@@ -137,50 +136,25 @@ export async function obtenerFotosActivasAdmin(params: {
 }
 
 /**
- * El campo web se guarda como URL pública completa (para poder mostrarla directamente),
- * pero Storage necesita la ruta relativa dentro del bucket para poder borrar el archivo.
+ * Panel admin: elimina una foto (fila en Supabase + sus tres archivos reales en Storage).
+ * Auditoría 2026-09-26 (M8/M9): el borrado de archivos lo hace ahora el SERVIDOR (original HD,
+ * muestra con marca de agua y miniatura) — antes el navegador borraba sólo la miniatura y el HD y
+ * la muestra quedaba publicada. Si la foto está en un pedido ya pagado, el servidor responde 409
+ * (`enUso`) y el panel pide confirmación antes de reintentar con `forzar`.
  */
-function extraerPathStorageWeb(valor?: string | null): string | undefined {
-  if (!valor) return undefined;
-  const marcador = '/fotos-web/';
-  const idx = valor.indexOf(marcador);
-  const path = idx === -1 ? valor : valor.slice(idx + marcador.length);
-  // Las URLs guardadas pueden traer "?v=..." al final (para evitar caché del navegador tras
-  // pisar el archivo) — hay que sacarlo para quedarnos con la ruta real dentro del bucket.
-  const idxQuery = path.indexOf('?');
-  return idxQuery === -1 ? path : path.slice(0, idxQuery);
-}
-
-/** Panel admin: elimina una foto (fila en Supabase + los archivos reales en Storage) */
-export async function eliminarFotoActivaAdmin(foto: FotoRegistrada): Promise<{ success: boolean; error?: string }> {
+export async function eliminarFotoActivaAdmin(
+  foto: FotoRegistrada,
+  opciones: { forzar?: boolean } = {}
+): Promise<{ success: boolean; error?: string; enUso?: boolean }> {
   try {
-    let advertenciaStorage: string | undefined;
-    if (foto.pathStorageWeb || foto.pathStorageHD) {
-      // Auditoría 2026-09-22: antes se ignoraba por completo el resultado de
-      // eliminarFotoDeStorage (que a su vez, hasta este mismo audit, reportaba éxito sin revisar
-      // la respuesta del servidor). Si el borrado del archivo en el bucket fallaba, el registro
-      // en la tabla `fotos` se borraba igual y el panel mostraba "eliminada" sin avisar que el
-      // archivo real (en un bucket de lectura pública) seguía existiendo, accesible por su URL.
-      const resultadoStorage = await eliminarFotoDeStorage(extraerPathStorageWeb(foto.pathStorageWeb), foto.pathStorageHD || undefined);
-      if (!resultadoStorage.ok) {
-        advertenciaStorage = resultadoStorage.error || 'No se pudo eliminar el archivo del almacenamiento.';
-        console.warn('eliminarFotoActivaAdmin: el borrado en storage falló, se continúa borrando el registro:', advertenciaStorage);
-      }
-    }
-    const res = await fetchAdminAutenticado(`/api/admin/fotos/${encodeURIComponent(foto.id)}`, {
+    const res = await fetchAdminAutenticado(`/api/admin/fotos/${encodeURIComponent(foto.id)}${opciones.forzar ? '?forzar=1' : ''}`, {
       method: 'DELETE',
     });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { success: false, error: data.error || 'No se pudo eliminar la foto.' };
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) {
+      return { success: false, error: data?.error || 'No se pudo eliminar la foto.', enUso: Boolean(data?.enUso) };
     }
-    // Se borró el registro del catálogo (que es lo que el admin ve y lo que evita que se siga
-    // mostrando/entregando la foto), pero si el archivo en el bucket no se pudo borrar, se avisa
-    // igual con success:true + error para que quede visible en el panel y se pueda reintentar o
-    // limpiar el bucket a mano — en vez de reportar un éxito silenciosamente incompleto.
-    if (advertenciaStorage) {
-      return { success: true, error: `Foto quitada del catálogo, pero el archivo no se pudo borrar del almacenamiento: ${advertenciaStorage}` };
-    }
+    if (data.advertencia) return { success: true, error: data.advertencia };
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Error de red al eliminar la foto.' };
@@ -360,5 +334,34 @@ export async function obtenerGaleriaPublica(params: { codigo?: string | null }):
   } catch (err) {
     console.error('Error al obtener la galería de fotos:', err);
     return { fotos: [], seccion: null };
+  }
+}
+
+/**
+ * Auditoría 2026-09-26 (M8): limpieza de archivos huérfanos del almacenamiento (fotos que ya no
+ * están en el catálogo y .zip de pedidos no cobrados). Con `aplicar: false` sólo cuenta.
+ */
+export interface ResultadoLimpiezaHuerfanos {
+  success: boolean;
+  aplicado?: boolean;
+  muestrasPublicasHuerfanas?: number;
+  originalesHdHuerfanos?: number;
+  zipsSinPedidoCobrado?: number;
+  borrados?: number;
+  error?: string;
+}
+
+export async function limpiarArchivosHuerfanosAdmin(aplicar: boolean): Promise<ResultadoLimpiezaHuerfanos> {
+  try {
+    const res = await fetchAdminAutenticado('/api/admin/storage/limpiar-huerfanos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ aplicar }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.success) return { success: false, error: data?.error || 'No se pudo revisar el almacenamiento.' };
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Error de red al revisar el almacenamiento.' };
   }
 }

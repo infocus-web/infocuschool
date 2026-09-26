@@ -3,6 +3,7 @@ import { CheckCircle2, Clock, Loader2, X, XCircle } from 'lucide-react';
 import { volvioSinPagar } from '../utils/pagoRetorno';
 import { crearPreferenciaMercadoPagoMultiple } from '../services/mercadoPagoService';
 import { crearIntencionPagoNaveMultiple } from '../services/naveService';
+import { urlEstadoPedido } from '../utils/accesoPedido';
 
 interface Props {
   grupoPagoId: string;
@@ -51,7 +52,7 @@ export default function ReservaRetorno({ grupoPagoId, onCerrar, onElegirOtroMedi
     const consultar = async () => {
       intentos += 1;
       try {
-        const res = await fetch(`/api/pedidos/${encodeURIComponent(grupoPagoId)}/status`);
+        const res = await fetch(urlEstadoPedido(grupoPagoId));
         const data = await res.json();
         if (cancelado) return;
         if (data?.pedidoFriendlyId) setPedido(data.pedidoFriendlyId);

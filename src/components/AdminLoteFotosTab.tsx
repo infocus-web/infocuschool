@@ -22,6 +22,7 @@ import {
 import {
   registrarFotosAdmin,
   obtenerFotosActivasAdmin,
+  limpiarArchivosHuerfanosAdmin,
   eliminarFotoActivaAdmin,
   regenerarMiniaturasAdmin,
   regenerarMarcaAguaAdmin,
@@ -284,10 +285,14 @@ export default function AdminLoteFotosTab() {
     );
     let exitosas = 0;
     let fallidas = 0;
+    let enUso = 0;
     for (const foto of aBorrar) {
       const resultado = await eliminarFotoActivaAdmin(foto);
       if (resultado.success) exitosas++;
-      else fallidas++;
+      else {
+        fallidas++;
+        if (resultado.enUso) enUso++;
+      }
     }
     setCursoEliminandoCarpeta(null);
 
@@ -298,7 +303,7 @@ export default function AdminLoteFotosTab() {
     }
 
     if (fallidas > 0) {
-      setErrorMessage(`Carpeta "${etiqueta}": se eliminaron ${exitosas} foto(s), ${fallidas} no se pudieron eliminar.`);
+      setErrorMessage(`Carpeta "${etiqueta}": se eliminaron ${exitosas} foto(s), ${fallidas} no se pudieron eliminar${enUso > 0 ? ` (${enUso} están en pedidos ya pagados: borralas de a una para confirmar)` : ''}.`);
       setTimeout(() => setErrorMessage(null), 6000);
     } else {
       setStatusMessage(`Carpeta "${etiqueta}" eliminada: ${exitosas} foto(s) borradas.`);
@@ -416,7 +421,9 @@ export default function AdminLoteFotosTab() {
   // una copia útil, así que no hace falta quemarle el texto encima — la protección real
   // (marca de agua quemada en los píxeles) sigue estando en la versión ampliada.
   const generarMiniaturaLimpia = (img: HTMLImageElement): string => {
-    const MAX_DIMENSION_THUMB = 500;
+    // Auditoría 2026-09-26 (M7): 320 px (antes 500). Esta copia no lleva marca de agua y es
+    // pública; a 500 px ya servía para compartir en redes sin comprar. 320 alcanza para la grilla.
+    const MAX_DIMENSION_THUMB = 320;
     let anchoDestino = img.width;
     let altoDestino = img.height;
     if (anchoDestino > MAX_DIMENSION_THUMB || altoDestino > MAX_DIMENSION_THUMB) {
@@ -447,14 +454,22 @@ export default function AdminLoteFotosTab() {
 
       // Genera, a partir de la misma imagen cargada una sola vez, la versión ampliada
       // (con marca de agua quemada) y la miniatura liviana (limpia, sin marca de agua)
-      const { watermarked, miniatura } = await new Promise<{ watermarked: string; miniatura: string }>((resolve) => {
+      // Auditoría 2026-09-26 (M10): si el navegador no puede abrir la imagen (HEIC en Chrome/Windows,
+      // archivo dañado, RAW), antes se seguía igual con la URL cruda y la subida explotaba a mitad
+      // del lote (con originales ya subidos y sin registrar). Ahora esa foto queda marcada con error
+      // y no se sube; el resto del lote sigue normal.
+      const { watermarked, miniatura, legible } = await new Promise<{ watermarked: string; miniatura: string; legible: boolean }>((resolve) => {
         const img = new Image();
         img.onload = () => {
-          const wm = applyWatermarkToCanvas(img);
-          const mini = generarMiniaturaLimpia(img);
-          resolve({ watermarked: wm, miniatura: mini });
+          try {
+            const wm = applyWatermarkToCanvas(img);
+            const mini = generarMiniaturaLimpia(img);
+            resolve({ watermarked: wm, miniatura: mini, legible: wm.startsWith('data:') && mini.startsWith('data:') });
+          } catch {
+            resolve({ watermarked: rawUrl, miniatura: rawUrl, legible: false });
+          }
         };
-        img.onerror = () => resolve({ watermarked: rawUrl, miniatura: rawUrl });
+        img.onerror = () => resolve({ watermarked: rawUrl, miniatura: rawUrl, legible: false });
         img.src = rawUrl;
       });
 
@@ -466,7 +481,8 @@ export default function AdminLoteFotosTab() {
         thumbUrl: miniatura,
         tipo: tipoFotoLote,
         nombreOriginal: file.name,
-        estado: 'procesada',
+        estado: legible ? 'procesada' : 'error',
+        errorMensaje: legible ? undefined : 'Formato no soportado por el navegador (usá JPG o PNG). Esta foto no se va a subir.',
         alumnoNombre: alumnoEncontrado ? alumnoEncontrado.nombre : undefined
       });
     }
@@ -512,75 +528,86 @@ export default function AdminLoteFotosTab() {
         break;
       }
       const item = colaActualizada[i];
+      // M10: una foto que el navegador no pudo procesar no se sube (evita cortar el lote entero).
+      if (item.file && item.estado === 'error' && !item.watermarkedUrl.startsWith('data:')) {
+        fallidas++;
+        continue;
+      }
       if (item.file && item.estado !== 'subida') {
-        item.estado = 'subiendo';
-        setFotosLote([...colaActualizada]);
+        try {
+          item.estado = 'subiendo';
+          setFotosLote([...colaActualizada]);
 
-        // Nombre saneado para la clave de Storage (ver sanitizarNombreParaStorage más arriba)
-        // — el nombre original (con espacios, "ñ", etc.) se sigue mostrando tal cual en el
-        // panel, sólo la clave del archivo en Storage usa la versión saneada.
-        const extensionOriginal = (item.nombreOriginal.match(/\.[^./]+$/)?.[0] || '.jpg');
-        const nombreBaseOriginal = item.nombreOriginal.replace(/\.[^./]+$/, '');
-        // Auditoría 2026-09-24 (bug real, CRÍTICO): la ruta era sólo "2026/<curso>/originales/
-        // <nombre de archivo>" y se sube pisando lo que haya. Dos fotos con el mismo nombre de
-        // archivo (DSC_0001.jpg de dos cámaras, la grupal y la individual, una segunda tanda, o dos
-        // colegios con el mismo código de curso) terminaban en el MISMO archivo: la segunda borraba
-        // a la primera y las dos fichas del catálogo apuntaban a la misma foto — una familia podía
-        // recibir en su descarga HD la foto de otro chico. Ahora la ruta lleva el colegio y un
-        // sufijo único por foto (el nombre original se conserva para poder reconocerla).
-        const nombreBaseSaneado = sanitizarNombreParaStorage(nombreBaseOriginal);
-        const sufijoUnico = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-        const carpetaColegio = sanitizarNombreParaStorage(colegioSeleccionado || 'colegio');
-        const nombreUnico = `${nombreBaseSaneado}_${sufijoUnico}`;
-        const pathHD = `2026/${carpetaColegio}/${cursoSeleccionado}/originales/${nombreUnico}${extensionOriginal}`;
-        const pathWeb = `2026/${carpetaColegio}/${cursoSeleccionado}/muestras/${nombreUnico}.jpg`;
-        const pathThumb = `2026/${carpetaColegio}/${cursoSeleccionado}/miniaturas/${nombreUnico}.jpg`;
+          // Nombre saneado para la clave de Storage (ver sanitizarNombreParaStorage más arriba)
+          // — el nombre original (con espacios, "ñ", etc.) se sigue mostrando tal cual en el
+          // panel, sólo la clave del archivo en Storage usa la versión saneada.
+          const extensionOriginal = (item.nombreOriginal.match(/\.[^./]+$/)?.[0] || '.jpg');
+          const nombreBaseOriginal = item.nombreOriginal.replace(/\.[^./]+$/, '');
+          // Auditoría 2026-09-24 (bug real, CRÍTICO): la ruta era sólo "2026/<curso>/originales/
+          // <nombre de archivo>" y se sube pisando lo que haya. Dos fotos con el mismo nombre de
+          // archivo (DSC_0001.jpg de dos cámaras, la grupal y la individual, una segunda tanda, o dos
+          // colegios con el mismo código de curso) terminaban en el MISMO archivo: la segunda borraba
+          // a la primera y las dos fichas del catálogo apuntaban a la misma foto — una familia podía
+          // recibir en su descarga HD la foto de otro chico. Ahora la ruta lleva el colegio y un
+          // sufijo único por foto (el nombre original se conserva para poder reconocerla).
+          const nombreBaseSaneado = sanitizarNombreParaStorage(nombreBaseOriginal);
+          const sufijoUnico = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+          const carpetaColegio = sanitizarNombreParaStorage(colegioSeleccionado || 'colegio');
+          const nombreUnico = `${nombreBaseSaneado}_${sufijoUnico}`;
+          const pathHD = `2026/${carpetaColegio}/${cursoSeleccionado}/originales/${nombreUnico}${extensionOriginal}`;
+          const pathWeb = `2026/${carpetaColegio}/${cursoSeleccionado}/muestras/${nombreUnico}.jpg`;
+          const pathThumb = `2026/${carpetaColegio}/${cursoSeleccionado}/miniaturas/${nombreUnico}.jpg`;
 
-        // 1. Upload HD (el archivo original, sin tocar) al bucket privado
-        const resHD = await uploadFotoHD(item.file, pathHD);
-        // 2. Upload al bucket público de la copia YA reducida y con la marca de agua quemada
-        //    en los píxeles (item.watermarkedUrl), no el archivo original — así lo que queda
-        //    en la dirección pública nunca es la foto limpia. Esta es la que se ve al ampliar.
-        const blobWeb = dataUrlABlob(item.watermarkedUrl);
-        const resWeb = await uploadFotoWeb(blobWeb, pathWeb);
-        // 3. Upload de la miniatura chica y limpia (sin marca de agua) para la grilla de la galería
-        const blobThumb = dataUrlABlob(item.thumbUrl);
-        const resThumb = await uploadFotoWeb(blobThumb, pathThumb);
+          // 1. Upload HD (el archivo original, sin tocar) al bucket privado
+          const resHD = await uploadFotoHD(item.file, pathHD);
+          // 2. Upload al bucket público de la copia YA reducida y con la marca de agua quemada
+          //    en los píxeles (item.watermarkedUrl), no el archivo original — así lo que queda
+          //    en la dirección pública nunca es la foto limpia. Esta es la que se ve al ampliar.
+          const blobWeb = dataUrlABlob(item.watermarkedUrl);
+          const resWeb = await uploadFotoWeb(blobWeb, pathWeb);
+          // 3. Upload de la miniatura chica y limpia (sin marca de agua) para la grilla de la galería
+          const blobThumb = dataUrlABlob(item.thumbUrl);
+          const resThumb = await uploadFotoWeb(blobThumb, pathThumb);
 
-        if (resHD.error || resWeb.error || resThumb.error) {
+          if (resHD.error || resWeb.error || resThumb.error) {
+            item.estado = 'error';
+            item.errorMensaje = resWeb.error || resThumb.error || resHD.error;
+            fallidas++;
+          } else {
+            item.estado = 'subida';
+            item.errorMensaje = undefined;
+            exitosas++;
+
+            // "?v=..." al final de la URL: como el nombre de archivo en Storage siempre es el
+            // mismo para una foto dada (se sube con upsert:true, pisando la anterior si ya
+            // existía), el navegador puede quedarse con la versión vieja en su caché de
+            // imágenes aunque el archivo del servidor ya haya cambiado — pasó varias veces
+            // durante las pruebas de la marca de agua. Agregar un parámetro con la hora de
+            // subida hace que cada versión tenga una URL distinta, así el navegador siempre
+            // pide la imagen de nuevo en vez de reusar una vieja.
+            const versionCache = Date.now();
+            const urlWeb = resWeb.publicUrl ? `${resWeb.publicUrl}?v=${versionCache}` : pathWeb;
+            const urlThumb = resThumb.publicUrl ? `${resThumb.publicUrl}?v=${versionCache}` : pathThumb;
+
+            // Preparar para registrar en el catálogo de fotos activas (Supabase)
+            fotosParaRegistrar.push({
+              colegioId: colegioSeleccionado,
+              categoria: item.tipo,
+              grado: gradoSeleccionado,
+              turno: turnoSeleccionado,
+              division: divisionSeleccionada,
+              storagePathHD: pathHD,
+              storagePathWeb: urlWeb,
+              storagePathThumb: urlThumb,
+              alumnoNombre: item.alumnoNombre
+            });
+          }
+
+        } catch (errFoto: any) {
           item.estado = 'error';
-          item.errorMensaje = resWeb.error || resThumb.error || resHD.error;
+          item.errorMensaje = errFoto?.message || 'Error inesperado al subir esta foto.';
           fallidas++;
-        } else {
-          item.estado = 'subida';
-          item.errorMensaje = undefined;
-          exitosas++;
-
-          // "?v=..." al final de la URL: como el nombre de archivo en Storage siempre es el
-          // mismo para una foto dada (se sube con upsert:true, pisando la anterior si ya
-          // existía), el navegador puede quedarse con la versión vieja en su caché de
-          // imágenes aunque el archivo del servidor ya haya cambiado — pasó varias veces
-          // durante las pruebas de la marca de agua. Agregar un parámetro con la hora de
-          // subida hace que cada versión tenga una URL distinta, así el navegador siempre
-          // pide la imagen de nuevo en vez de reusar una vieja.
-          const versionCache = Date.now();
-          const urlWeb = resWeb.publicUrl ? `${resWeb.publicUrl}?v=${versionCache}` : pathWeb;
-          const urlThumb = resThumb.publicUrl ? `${resThumb.publicUrl}?v=${versionCache}` : pathThumb;
-
-          // Preparar para registrar en el catálogo de fotos activas (Supabase)
-          fotosParaRegistrar.push({
-            colegioId: colegioSeleccionado,
-            categoria: item.tipo,
-            grado: gradoSeleccionado,
-            turno: turnoSeleccionado,
-            division: divisionSeleccionada,
-            storagePathHD: pathHD,
-            storagePathWeb: urlWeb,
-            storagePathThumb: urlThumb,
-            alumnoNombre: item.alumnoNombre
-          });
         }
-
         setUploadProgress({ actual: i + 1, total: colaActualizada.length });
         setFotosLote([...colaActualizada]);
       }
@@ -637,6 +664,43 @@ export default function AdminLoteFotosTab() {
   // versión con marca de agua. Genera la miniatura faltante a partir del original guardado,
   // sin tener que volver a subir nada. Se llama al endpoint en bucle porque el servidor
   // procesa de a un lote chico por vez (para no exceder el tiempo de una función serverless).
+  // Auditoría 2026-09-26 (M8): primero cuenta y pide confirmación; recién ahí borra.
+  const [limpiandoHuerfanos, setLimpiandoHuerfanos] = useState(false);
+  const handleLimpiarHuerfanos = async () => {
+    setLimpiandoHuerfanos(true);
+    setErrorMessage(null);
+    try {
+      const conteo = await limpiarArchivosHuerfanosAdmin(false);
+      if (!conteo.success) {
+        setErrorMessage(conteo.error || 'No se pudo revisar el almacenamiento.');
+        return;
+      }
+      const total = (conteo.muestrasPublicasHuerfanas || 0) + (conteo.originalesHdHuerfanos || 0) + (conteo.zipsSinPedidoCobrado || 0);
+      if (total === 0) {
+        setStatusMessage('No hay archivos huérfanos: el almacenamiento coincide con el catálogo.');
+        setTimeout(() => setStatusMessage(null), 5000);
+        return;
+      }
+      const confirmar = window.confirm(
+        `Se encontraron archivos que ya no están en el catálogo:\n\n` +
+        `• ${conteo.muestrasPublicasHuerfanas || 0} muestras/miniaturas públicas\n` +
+        `• ${conteo.originalesHdHuerfanos || 0} originales HD\n` +
+        `• ${conteo.zipsSinPedidoCobrado || 0} .zip de pedidos no cobrados\n\n` +
+        `¿Borrarlos? No se puede deshacer. (No lo hagas mientras se está subiendo un lote de fotos.)`
+      );
+      if (!confirmar) return;
+      const resultado = await limpiarArchivosHuerfanosAdmin(true);
+      if (!resultado.success) {
+        setErrorMessage(resultado.error || 'No se pudieron borrar los archivos huérfanos.');
+        return;
+      }
+      setStatusMessage(`Listo: se borraron ${resultado.borrados || 0} archivo(s) huérfano(s).`);
+      setTimeout(() => setStatusMessage(null), 6000);
+    } finally {
+      setLimpiandoHuerfanos(false);
+    }
+  };
+
   const handleRegenerarMiniaturas = async () => {
     const confirmar = window.confirm(
       'Esto va a generar la miniatura limpia (sin marca de agua) para todas las fotos que ya subiste antes de este cambio — incluidas las de prueba duplicadas. Puede tardar unos minutos. ¿Continuar?'
@@ -717,7 +781,13 @@ export default function AdminLoteFotosTab() {
     const confirmar = window.confirm('¿Deseás eliminar esta foto de Supabase y del catálogo del curso?');
     if (!confirmar) return;
 
-    const resultado = await eliminarFotoActivaAdmin(foto);
+    let resultado = await eliminarFotoActivaAdmin(foto);
+    // Auditoría 2026-09-26 (M9): la foto está en pedidos ya pagados — se pide confirmación explícita.
+    if (!resultado.success && resultado.enUso) {
+      const forzar = window.confirm(`${resultado.error}\n\n¿Borrarla igual?`);
+      if (!forzar) return;
+      resultado = await eliminarFotoActivaAdmin(foto, { forzar: true });
+    }
     if (!resultado.success) {
       setErrorMessage(resultado.error || 'No se pudo eliminar la foto.');
       setTimeout(() => setErrorMessage(null), 5000);
@@ -788,10 +858,14 @@ export default function AdminLoteFotosTab() {
     let exitosas = 0;
     let fallidas = 0;
 
+    let enUso = 0;
     for (const foto of aBorrar) {
       const resultado = await eliminarFotoActivaAdmin(foto);
       if (resultado.success) exitosas++;
-      else fallidas++;
+      else {
+        fallidas++;
+        if (resultado.enUso) enUso++;
+      }
     }
 
     setBorrandoSeleccionadas(false);
@@ -801,7 +875,7 @@ export default function AdminLoteFotosTab() {
     await recargarResumenCursos();
 
     if (fallidas > 0) {
-      setErrorMessage(`Se eliminaron ${exitosas} foto(s). ${fallidas} no se pudieron eliminar.`);
+      setErrorMessage(`Se eliminaron ${exitosas} foto(s). ${fallidas} no se pudieron eliminar${enUso > 0 ? ` (${enUso} están en pedidos ya pagados: borralas de a una para confirmar)` : ''}.`);
       setTimeout(() => setErrorMessage(null), 6000);
     } else {
       setStatusMessage(`${exitosas} foto(s) eliminadas de Supabase.`);
@@ -815,8 +889,7 @@ export default function AdminLoteFotosTab() {
   // fotos originales y borrar todo el storage del negocio. Ya no hace falta ninguna de esas
   // políticas: la app ahora sube/borra/limpia todo a través del servidor (con sesión de admin
   // y la Service Role Key, que no necesita RLS). Este script queda solo para (re)crear los
-  // buckets si hiciera falta, y para la única política real que sigue haciendo falta: que
-  // cualquiera pueda VER las miniaturas de fotos-web (la galería pública con marca de agua).
+  // buckets si hiciera falta (sin ninguna política pública: ver auditoría 2026-09-26 abajo).
   const sqlPoliticas = `-- ==========================================
 -- CONFIGURACIÓN DE BUCKETS PARA SUPABASE STORAGE
 -- Ejecutar en Supabase -> SQL Editor -> Run
@@ -831,11 +904,10 @@ VALUES
   ('fotos-hd', 'fotos-hd', false)
 ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public;
 
--- 2. Permitir ver fotos-web públicamente (las miniaturas con marca de agua, para las familias)
-CREATE POLICY "Permitir lectura publica fotos-web"
-ON storage.objects FOR SELECT
-TO public
-USING (bucket_id = 'fotos-web');
+-- 2. NO hace falta ninguna política de lectura: un bucket público ya sirve cada archivo por su URL.
+--    (Auditoría 2026-09-26: la vieja política "Permitir lectura publica fotos-web" permitía LISTAR
+--    todo el bucket con la clave pública y bajar las fotos de todos los cursos. No la vuelvas a crear.)
+DROP POLICY IF EXISTS "Permitir lectura publica fotos-web" ON storage.objects;
 
 -- NO agregar políticas de INSERT/UPDATE/DELETE ni de SELECT sobre fotos-hd acá: eso reabriría
 -- el agujero de seguridad de la auditoría 2026-09-09. Todo eso pasa por el servidor.`;
@@ -967,6 +1039,15 @@ USING (bucket_id = 'fotos-web');
                   ? `Actualizando marca de agua... (${progresoMarcaAgua?.procesadas || 0} listas, ${progresoMarcaAgua?.restantes ?? '…'} restantes)`
                   : 'Aliviar Marca de Agua'}
               </span>
+            </button>
+            <button
+              onClick={handleLimpiarHuerfanos}
+              disabled={limpiandoHuerfanos}
+              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-[10px] font-bold rounded-lg transition-all border border-slate-700 flex items-center gap-1 cursor-pointer"
+              title="Borrar del almacenamiento las fotos que ya no están en el catálogo y los .zip de pedidos no cobrados (primero muestra cuántos hay)"
+            >
+              <Trash2 className="w-3 h-3 text-rose-400" />
+              <span>{limpiandoHuerfanos ? 'Revisando…' : 'Limpiar Archivos Huérfanos'}</span>
             </button>
           </div>
         </div>

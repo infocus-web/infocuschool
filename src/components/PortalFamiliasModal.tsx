@@ -58,6 +58,7 @@ import {
   cambiarMetodoPagoPedido,
   PedidoEscolarCompleto,
   buscarPedidoPorSeguimiento,
+  reenviarLinkDescargaPorEmail,
   ErrorLimiteBusqueda,
   verificarPedidoExistente,
   PedidoExistenteResumen,
@@ -81,6 +82,8 @@ import { crearReserva, elegirFotosDeReserva, obtenerEstadoReserva, obtenerReserv
 import ReservaKitAnticipada from './ReservaKitAnticipada';
 import { irAConsultasConDatos } from '../utils/consultaPrefill';
 import { Colegio, KitProducto, Foto } from '../types';
+import { urlEstadoPedido } from '../utils/accesoPedido';
+import { fotoVisibleParaAlumno } from '../utils/nombresAlumno';
 
 interface PortalFamiliasModalProps {
   isOpen: boolean;
@@ -257,6 +260,9 @@ export default function PortalFamiliasModal({
   const [modalMode, setModalMode] = useState<'pedido' | 'seguimiento'>('pedido');
   const [trackingQuery, setTrackingQuery] = useState('');
   const [searchedOrder, setSearchedOrder] = useState<any | null>(null);
+  // Auditoría 2026-09-26 (A2): "Reenviarme el link por email" en el seguimiento de pedido.
+  const [reenviandoLink, setReenviandoLink] = useState(false);
+  const [mensajeReenvioLink, setMensajeReenvioLink] = useState<string | null>(null);
   const [trackingError, setTrackingError] = useState('');
   const [buscandoSeguimiento, setBuscandoSeguimiento] = useState(false);
   // Auditoría 2026-09-22 (pedido de Pablo: "por qué me deja volver a comprar si ya tengo un
@@ -559,7 +565,7 @@ export default function PortalFamiliasModal({
     setVerificandoPago(true);
     setMensajeEstadoPago(null);
     try {
-      const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/status`);
+      const res = await fetch(urlEstadoPedido(id));
       if (res.status === 404) {
         if (!pedidoSinRegistrarRef.current) descartarPedidoInexistente(id);
         return;
@@ -1340,7 +1346,7 @@ export default function PortalFamiliasModal({
     }
     let cancelado = false;
     setVerificandoPedidoExistente(true);
-    verificarPedidoExistente({ colegioId: selectedColegio.id, grado, turno, division, alumnoNombre: nombreAlumno })
+    verificarPedidoExistente({ codigo: codigoSeccionValidado, alumnoNombre: nombreAlumno })
       .then((existente) => {
         if (!cancelado) setPedidoExistente(existente);
       })
@@ -2147,7 +2153,9 @@ export default function PortalFamiliasModal({
           entregaEstimada: 'Entrega en el colegio coordinada con la dirección',
           descargaLista: infoEstado.descarga,
           linkDescargaHD: pedidoServidor.linkDescargaHD,
+          puedeReenviarLink: Boolean(pedidoServidor.puedeReenviarLink),
         });
+        setMensajeReenvioLink(null);
         return;
       }
     } catch (err) {
@@ -2450,6 +2458,29 @@ export default function PortalFamiliasModal({
 
                   {/* Actions */}
                   <div className="pt-2 flex flex-col sm:flex-row gap-3 items-center justify-between border-t border-slate-100">
+                    {searchedOrder.descargaLista && !searchedOrder.linkDescargaHD && searchedOrder.puedeReenviarLink && (
+                      <div className="w-full sm:w-auto flex flex-col gap-1">
+                        <button
+                          type="button"
+                          disabled={reenviandoLink}
+                          onClick={async () => {
+                            setReenviandoLink(true);
+                            const r = await reenviarLinkDescargaPorEmail(String(searchedOrder.id || ''));
+                            setReenviandoLink(false);
+                            setMensajeReenvioLink(
+                              r.success
+                                ? `${r.mensaje || 'Te mandamos el link de descarga por email.'}${r.emailDestino ? ` (${r.emailDestino})` : ''} Revisá también Spam.`
+                                : r.error || 'No pudimos reenviar el link.'
+                            );
+                          }}
+                          className="w-full sm:w-auto px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-2"
+                        >
+                          <Download className="w-3.5 h-3.5 text-amber-400" />
+                          <span>{reenviandoLink ? 'Enviando…' : 'Enviarme el link de descarga por email'}</span>
+                        </button>
+                        {mensajeReenvioLink && <p className="text-[11px] text-slate-600">{mensajeReenvioLink}</p>}
+                      </div>
+                    )}
                     {searchedOrder.descargaLista && searchedOrder.linkDescargaHD && (
                       <a
                         href={searchedOrder.linkDescargaHD}
@@ -3438,13 +3469,13 @@ export default function PortalFamiliasModal({
                   la cantidad real de fotos de la categoría activa, así 3 fotos ocupan 3 columnas
                   completas sin dejar espacio de más. */}
               <div className={`grid grid-cols-1 gap-4 ${(() => {
-                const cantidad = fotosDisponibles.filter((f) => f.categoria === categoriaActiva).length;
+                const cantidad = fotosDisponibles.filter((f) => f.categoria === categoriaActiva && fotoVisibleParaAlumno(f, nombreAlumno)).length;
                 if (cantidad >= 4) return 'sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4';
                 if (cantidad === 3) return 'sm:grid-cols-2 lg:grid-cols-3';
                 if (cantidad === 2) return 'sm:grid-cols-2';
                 return '';
               })()}`}>
-                {fotosDisponibles.filter((f) => f.categoria === categoriaActiva).map((foto) => {
+                {fotosDisponibles.filter((f) => f.categoria === categoriaActiva && fotoVisibleParaAlumno(f, nombreAlumno)).map((foto) => {
                   const isSelected =
                     foto.id === fotoSeleccionadaIndividual ||
                     foto.id === fotoSeleccionadaGrupal ||
