@@ -2119,6 +2119,8 @@ function recortarJson(valor: unknown, maxCaracteres: number): any {
   }
 }
 
+const avisosErrorEnviados: number[] = [];
+
 app.post('/api/errores/reportar', limitarFrecuencia('errores-reportar', 30, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const supabase = getServerSupabase();
@@ -2144,8 +2146,13 @@ app.post('/api/errores/reportar', limitarFrecuencia('errores-reportar', 30, 10 *
     });
     if (error) throw error;
 
-    const resend = getResendClient();
+    // Auditoría 2026-09-27: como mucho 20 avisos por email por hora (el reporte queda guardado
+    // igual en el panel); evita que alguien llene la casilla mandando reportes en cadena.
+    const ahoraAviso = Date.now();
+    avisosErrorEnviados.splice(0, avisosErrorEnviados.length, ...avisosErrorEnviados.filter((t) => ahoraAviso - t < 60 * 60 * 1000));
+    const resend = avisosErrorEnviados.length < 20 ? getResendClient() : null;
     if (resend) {
+      avisosErrorEnviados.push(ahoraAviso);
       const destino = casillaAvisosAdmin();
       const fallas = Array.isArray(detalle?.eventos)
         ? detalle.eventos
@@ -4111,6 +4118,27 @@ async function crearBuscadorEnNomina(supabase: SupabaseClient, colegioId: string
 // (con la Service Role Key) — el navegador nunca consulta esas tablas directamente.
 // Auditoría 2026-09-23: este endpoint público no tenía límite de frecuencia (manda correos y
 // escribe en la base), a diferencia del resto de los formularios públicos.
+/** Auditoría 2026-09-27: aviso al admin de una inscripción del padrón que quedó para revisar. */
+async function avisarAdminInscripcionParaRevisar(datos: { padreNombre: string; alumno: string; curso: string; colegio: string; hermanos: string[] }) {
+  const resend = getResendClient();
+  if (!resend) return;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
+  const hermanosTxt = datos.hermanos.length
+    ? `<p>Hermanos sin confirmar en la nómina: ${datos.hermanos.map(escapeHtml).join(', ')}</p>`
+    : '';
+  const { error } = await resend.emails.send({
+    from: fromEmail,
+    to: [casillaAvisosAdmin()],
+    subject: `Inscripción para revisar: ${datos.alumno}`,
+    html: `<div style="font-family:Arial,sans-serif">
+<p>Una familia del padrón se inscribió pero el curso no coincide con la nómina, así que quedó <strong>pendiente</strong>.</p>
+<p><strong>${escapeHtml(datos.padreNombre)}</strong> — ${escapeHtml(datos.alumno)} — ${escapeHtml(datos.curso)} — ${escapeHtml(datos.colegio)}</p>
+${hermanosTxt}
+<p>Revisala en el panel → Inscriptos y aprobala si el curso es correcto.</p></div>`,
+  });
+  if (error) console.warn('[Resend] Aviso de inscripción para revisar rechazado:', error);
+}
+
 app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar', 150, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const {
@@ -4215,6 +4243,9 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
       const nominaHermano = await cursoEnNomina(`${h?.alumnoNombre || ''} ${h?.alumnoApellido || ''}`, h?.grado);
       return {
         ...h,
+        // Auditoría 2026-09-27: si el curso del hermano no se pudo confirmar con el padrón ni con la
+        // nómina, la inscripción no se aprueba sola (ver `cursoVerificado` más abajo).
+        verificadoEnNomina: Boolean((matchHermano?.grado && String(matchHermano.grado).trim()) || nominaHermano),
         colegioId, // nunca el que venga en el hermano: siempre el colegio de esta inscripción
         grado: (matchHermano?.grado && String(matchHermano.grado).trim()) || nominaHermano?.grado || h?.grado,
         turno: (matchHermano?.turno && String(matchHermano.turno).trim()) || nominaHermano?.turno || h?.turno,
@@ -4311,9 +4342,25 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
     // correo puede. Si la fila del padrón no tiene email cargado, no se puede entregar el código
     // de forma segura por acá — la inscripción queda "pendiente" para que el fotógrafo la revise
     // y envíe el código a mano desde el panel, en vez de exponerlo.
+    // Auditoría 2026-09-27: el padrón se autocarga desde un link que el colegio comparte con todas
+    // las familias, así que una fila de padrón no prueba el curso. Sólo se aprueba sola si el curso
+    // del alumno (y el de cada hermano) coincide con el padrón o con la nómina oficial; si no,
+    // queda pendiente para que el fotógrafo la revise desde el panel.
+    const cursoVerificado =
+      Boolean((matchPadre?.grado && String(matchPadre.grado).trim()) || cursoNominaPrincipal) &&
+      hermanosReconciliados.every((h: any) => h.verificadoEnNomina);
     let emailEnviado = false;
     let emailDestinoNotificacion: string | null = null;
-    if (estado !== 'aceptado' && matchPadre) {
+    if (estado !== 'aceptado' && matchPadre && !cursoVerificado) {
+      void avisarAdminInscripcionParaRevisar({
+        padreNombre: String(padreNombre).trim(),
+        alumno: `${String(alumnoNombre).trim()} ${String(alumnoApellido || '').trim()}`.trim(),
+        curso: `${gradoAprobado} ${divisionAprobada} (${turnoAprobado})`,
+        colegio: colegioReal.nombre,
+        hermanos: hermanosReconciliados.filter((h: any) => !h.verificadoEnNomina).map((h: any) => `${h.alumnoNombre || ''} ${h.alumnoApellido || ''}`.trim()),
+      }).catch((e) => console.warn('No se pudo avisar la inscripción para revisar:', e));
+    }
+    if (estado !== 'aceptado' && matchPadre && cursoVerificado) {
       const emailOficialPadron = matchPadre.email ? String(matchPadre.email).trim().toLowerCase() : '';
       if (emailOficialPadron && emailOficialPadron.includes('@')) {
         estado = 'aceptado';
@@ -4531,6 +4578,43 @@ app.post('/api/inscripciones/validar', limitarFrecuencia('inscripciones-validar'
 // puede informar el estado igual. Pero si esa familia YA tiene un código asignado, esta ruta
 // nunca lo devuelve por acá: como mucho reenvía el código al correo de confianza YA guardado
 // (nunca a uno nuevo) y responde sin datos de la familia.
+/** Auditoría 2026-09-27: copia de una fila de `inscripciones` sin los DNI de los alumnos. */
+function inscripcionSinDnis(fila: any, dniTutorConocido?: string) {
+  const { padre_dni: _dniTutor, alumno_dni: _dniAlumno, hermanos: hermanosFila, ...resto } = fila || {};
+  const hermanos = Array.isArray(hermanosFila)
+    ? hermanosFila.map(({ alumnoDni: _dniHermano, ...h }: any) => h)
+    : [];
+  return { ...resto, hermanos, ...(dniTutorConocido ? { padre_dni: dniTutorConocido } : {}) };
+}
+
+/**
+ * Auditoría 2026-09-27: el primer ingreso de una familia (por nombre, porque todavía no tenía DNI
+ * guardado) fija el DNI del tutor. Se le avisa al email de la inscripción para que, si no fue
+ * ella, lo informe y el admin lo corrija.
+ */
+async function avisarPrimerIngresoConDni(fila: any) {
+  const to = String(fila?.email || '').trim().toLowerCase();
+  if (!to.includes('@')) return;
+  const resend = getResendClient();
+  if (!resend) return;
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'Retrato Escolar <fotos@retratoescolar.com.ar>';
+  const nombre = escapeHtml(String(fila?.padre_nombre || '').trim() || 'Familia');
+  const dni = String(fila?.padre_dni || '');
+  const dniParcial = dni.length > 3 ? `${'•'.repeat(dni.length - 3)}${dni.slice(-3)}` : '•••';
+  const { error } = await resend.emails.send({
+    from: fromEmail,
+    replyTo: resendReplyTo,
+    to: [to],
+    subject: 'Retrato Escolar: primer ingreso a tu cuenta familiar',
+    html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#1e293b">
+<p>Hola <strong>${nombre}</strong>,</p>
+<p>Se ingresó por primera vez a tu cuenta familiar de Retrato Escolar y quedó registrado el DNI terminado en <strong>${escapeHtml(dniParcial)}</strong>. Desde ahora, para entrar se usa ese DNI junto con el código del curso.</p>
+<p>Si fuiste vos, no tenés que hacer nada. <strong>Si no fuiste vos</strong>, respondé este email y lo corregimos.</p>
+<p style="font-size:12px;color:#64748b">Retrato Escolar · retratoescolar.com.ar</p></div>`,
+  });
+  if (error) console.warn('[Resend] Aviso de primer ingreso rechazado:', error);
+}
+
 app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 150, 10 * 60 * 1000), async (req: Request, res: Response) => {
   try {
     const { query, tutorNombre, dni } = req.body || {};
@@ -4624,8 +4708,23 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
         if (porNombre.length === 1) {
           match = porNombre[0];
           try {
-            await supabase.from('inscripciones').update({ padre_dni: dniInput }).eq('id', match.id);
-            match.padre_dni = dniInput;
+            // Auditoría 2026-09-27: se guarda sólo si la fila sigue sin DNI (evita que dos primeros
+            // ingresos simultáneos se pisen) y se avisa por email a la familia, así si no fueron
+            // ellos se enteran enseguida y el admin lo puede corregir.
+            const { data: guardadas } = await supabase
+              .from('inscripciones')
+              .update({ padre_dni: dniInput })
+              .eq('id', match.id)
+              .is('padre_dni', null)
+              .select('id');
+            if (guardadas && guardadas.length > 0) {
+              match.padre_dni = dniInput;
+              void avisarPrimerIngresoConDni(match).catch((e) =>
+                console.warn('No se pudo avisar el primer ingreso con DNI:', e)
+              );
+            } else {
+              match = null;
+            }
           } catch (e) {
             console.warn('No se pudo guardar el DNI del tutor en /api/inscripciones/buscar:', e);
           }
@@ -4641,7 +4740,9 @@ app.post('/api/inscripciones/buscar', limitarFrecuencia('inscripciones-buscar', 
         });
       }
 
-      return res.json({ success: true, inscripcion: match });
+      // Auditoría 2026-09-27: no se devuelven los DNI de los chicos ni el DNI guardado (sólo el
+      // que la familia acaba de escribir, que ya lo conoce).
+      return res.json({ success: true, inscripcion: inscripcionSinDnis(match, dniInput) });
     }
 
     // Paso 2: no era el código. Buscar por contacto (teléfono o email) — ver auditoría arriba,
@@ -4966,6 +5067,27 @@ app.post('/api/admin/inscripciones/:id/rechazar', requireAdminAuth, async (req: 
     return res.json({ success: true, inscripcion: data });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err?.message || 'Error al rechazar inscripción' });
+  }
+});
+
+// Auditoría 2026-09-27: el DNI del tutor queda fijado en el primer ingreso. Si lo fijó otra
+// persona (o la familia se equivocó), el admin lo borra y el próximo ingreso lo vuelve a registrar.
+app.post('/api/admin/inscripciones/:id/borrar-dni', requireAdminAuth, async (req: Request, res: Response) => {
+  try {
+    const supabase = getServerSupabase();
+    if (!supabase) {
+      return res.status(500).json({ success: false, error: 'Supabase no configurado en el servidor' });
+    }
+    const { data, error } = await supabase
+      .from('inscripciones')
+      .update({ padre_dni: null, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return res.json({ success: true, inscripcion: data });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Error al borrar el DNI' });
   }
 });
 
@@ -5963,12 +6085,20 @@ app.post(
 // ==============================================================================
 
 // Envío público: cualquier familia puede dejar su solicitud, sin login
+const ultimoReenvioCodigoPorInscripcion = new Map<string, number>();
+
 app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 60, 15 * 60 * 1000), async (req: Request, res: Response) => {
   try {
-    const { nombreSolicitante, contacto, alumnoNombre, colegioId, colegioNombre, grado, division, turno, mensaje } = req.body || {};
+    const { nombreSolicitante, contacto, alumnoNombre, colegioId: colegioIdRecibido, colegioNombre, grado, division, turno, mensaje } = req.body || {};
+    // Auditoría 2026-09-27: topes de largo y colegio con formato válido (antes un valor raro
+    // terminaba en un error 500 de la base).
+    const recortar = (v: unknown, max: number) => (v ? String(v).trim().slice(0, max) || null : null);
+    const colegioId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(colegioIdRecibido || ''))
+      ? String(colegioIdRecibido)
+      : null;
 
-    const nombre = String(nombreSolicitante || '').trim();
-    const contactoLimpio = String(contacto || '').trim();
+    const nombre = String(nombreSolicitante || '').trim().slice(0, 120);
+    const contactoLimpio = String(contacto || '').trim().slice(0, 160);
     if (!nombre || !contactoLimpio) {
       return res.status(400).json({ success: false, error: 'Faltan tu nombre y el email con el que te registraste' });
     }
@@ -6006,6 +6136,18 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 60, 
       if (errorBusqueda) throw errorBusqueda;
       const inscripcion = coincidencias?.[0];
       if (inscripcion?.codigo_asignado && inscripcion.email) {
+        // Auditoría 2026-09-27: como mucho un reenvío cada 10 minutos por familia (evita usar el
+        // formulario para llenarle la casilla de correos a alguien).
+        const ahora = Date.now();
+        const ultimo = ultimoReenvioCodigoPorInscripcion.get(inscripcion.id) || 0;
+        const respuestaReenvio = {
+          success: true,
+          envioAutomatico: true,
+          mensaje: 'Te enviamos tu código de acceso al correo registrado. Revisá también la carpeta Spam o Correo no deseado.',
+        };
+        if (ahora - ultimo < 10 * 60 * 1000) return res.json(respuestaReenvio);
+        ultimoReenvioCodigoPorInscripcion.set(inscripcion.id, ahora);
+        if (ultimoReenvioCodigoPorInscripcion.size > 5000) ultimoReenvioCodigoPorInscripcion.clear();
         const alumnos = [
           { nombre: inscripcion.alumno_nombre, apellido: inscripcion.alumno_apellido || '', grado: inscripcion.grado, division: inscripcion.division, turno: inscripcion.turno },
           ...(Array.isArray(inscripcion.hermanos) ? inscripcion.hermanos : []).map((h: any) => ({
@@ -6024,13 +6166,12 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 60, 
           alumnos,
           solicitaFotoHermanos: Boolean(inscripcion.solicita_foto_hermanos),
         });
-        if (!resultadoEmail.success) throw new Error(resultadoEmail.error || 'No se pudo reenviar el código por email');
+        if (!resultadoEmail.success) {
+          ultimoReenvioCodigoPorInscripcion.delete(inscripcion.id);
+          throw new Error(resultadoEmail.error || 'No se pudo reenviar el código por email');
+        }
 
-        return res.json({
-          success: true,
-          envioAutomatico: true,
-          mensaje: 'Te enviamos tu código de acceso al correo registrado. Revisá también la carpeta Spam o Correo no deseado.',
-        });
+        return res.json(respuestaReenvio);
       }
     }
 
@@ -6039,12 +6180,12 @@ app.post('/api/solicitudes-codigo', limitarFrecuencia('solicitudes-codigo', 60, 
       .insert({
         nombre_solicitante: nombre,
         contacto: contactoLimpio,
-        alumno_nombre: alumnoNombre ? String(alumnoNombre).trim() : null,
-        colegio_id: colegioId || null,
-        colegio_nombre: colegioNombre || null,
-        grado: grado || null,
-        division: division || null,
-        turno: turno || null,
+        alumno_nombre: recortar(alumnoNombre, 120),
+        colegio_id: colegioId,
+        colegio_nombre: recortar(colegioNombre, 160),
+        grado: recortar(grado, 60),
+        division: recortar(division, 20),
+        turno: recortar(turno, 30),
         mensaje: mensaje ? String(mensaje).trim().slice(0, 500) : null,
       })
       .select()

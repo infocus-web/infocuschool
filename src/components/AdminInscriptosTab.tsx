@@ -22,6 +22,7 @@ import {
   obtenerInscripcionesAdmin,
   aprobarInscripcionAdmin,
   rechazarInscripcionAdmin,
+  borrarDniTutorAdmin,
   eliminarInscripcionAdmin,
   generarEnlaceWhatsAppAprobacion,
   generarMensajeWhatsAppAprobacion,
@@ -281,6 +282,23 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
       tipo: 'info'
     });
     setTimeout(() => setToastNotificacion(null), 5000);
+  };
+
+  const handleBorrarDni = async (item: InscripcionFamilia) => {
+    const confirmado = window.confirm(
+      `¿Borrar el DNI de ingreso de ${item.padreNombre}? Usalo si la familia avisa que no fue ella quien ingresó o si cargó mal el DNI. El próximo ingreso con nombre + DNI lo vuelve a registrar.`
+    );
+    if (!confirmado) return;
+    setProcesandoId(item.id);
+    const resultado = await borrarDniTutorAdmin(item.id);
+    setProcesandoId(null);
+    setToastNotificacion(
+      resultado.success
+        ? { titulo: 'DNI borrado', mensaje: 'La familia vuelve a ingresar con nombre y DNI.', tipo: 'info' }
+        : { titulo: 'No se pudo borrar el DNI', mensaje: resultado.error || 'Error desconocido.', tipo: 'error' }
+    );
+    setTimeout(() => setToastNotificacion(null), 5000);
+    if (resultado.success) await cargarInscripciones();
   };
 
   const handleAprobarTodosLosPendientes = async () => {
@@ -663,6 +681,17 @@ export default function AdminInscriptosTab({ onProbarCodigo }: AdminInscriptosTa
                             <p className="text-[10px] text-slate-400">
                               {item.fechaAprobacion || item.fechaInscripcion}
                             </p>
+                            {item.padreDni && (
+                              <button
+                                type="button"
+                                onClick={() => handleBorrarDni(item)}
+                                disabled={procesando}
+                                className="text-[10px] text-slate-500 hover:text-red-600 underline cursor-pointer disabled:opacity-60"
+                                title="Borra el DNI registrado en el primer ingreso"
+                              >
+                                DNI de ingreso: …{item.padreDni.slice(-3)} · borrar
+                              </button>
+                            )}
                           </div>
                         )}
                         <span className="text-[10px] font-mono text-slate-400 block">
